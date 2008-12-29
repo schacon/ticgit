@@ -1,5 +1,6 @@
 require 'ticgit'
 require 'optparse'
+require 'set'
 
 # used Cap as a model for this - thanks Jamis
 
@@ -211,11 +212,17 @@ module TicGit
         opts.on("-o ORDER", "--order ORDER", "Field to order by - one of : assigned,state,date") do |v|
           @options[:order] = v
         end
-        opts.on("-t TAG", "--tag TAG", "List only tickets with specific tag") do |v|
-          @options[:tag] = v
+        opts.on("-t TAG[,TAG]", "--tags TAG[,TAG]", Array,
+                "List only tickets with specific tag(s)",
+                "Prefix the tag with '-' to negate") do |v|
+          @options[:tags] ||= Set.new
+          @options[:tags].merge v
         end
-        opts.on("-s STATE", "--state STATE", "List only tickets in a specific state") do |v|
-          @options[:state] = v
+        opts.on("-s STATE[,STATE]", "--states STATE[,STATE]", Array,
+                "List only tickets in a specific state(s)",
+                "Prefix the state with '-' to negate") do |v|
+          @options[:states] ||= Set.new
+          @options[:states].merge v
         end
         opts.on("-a ASSIGNED", "--assigned ASSIGNED", "List only tickets assigned to someone") do |v|
           @options[:assigned] = v
