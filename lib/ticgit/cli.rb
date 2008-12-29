@@ -243,28 +243,27 @@ module TicGit
       
       if tickets = tic.ticket_list(options)
         counter = 0
+        cols = [80, window_cols].max
       
         puts
         puts [' ', just('#', 4, 'r'), 
               just('TicId', 6),
-              just('Title', 25), 
+              just('Title', cols - 56), 
               just('State', 5),
               just('Date', 5),
               just('Assgn', 8),
               just('Tags', 20) ].join(" ")
-            
-        a = []
-        80.times { a << '-'}
-        puts a.join('')
+
+        puts "-" * cols
 
         tickets.each do |t|
           counter += 1
           tic.current_ticket == t.ticket_name ? add = '*' : add = ' '
-          puts [add, just(counter, 4, 'r'), 
-                t.ticket_id[0,6], 
-                just(t.title, 25), 
+          puts [add, just(counter, 4, 'r'),
+                t.ticket_id[0,6],
+                just(t.title, cols - 56),
                 just(t.state, 5),
-                t.opened.strftime("%m/%d"), 
+                t.opened.strftime("%m/%d"),
                 just(t.assigned_name, 8),
                 just(t.tags.join(','), 20) ].join(" ")
         end
@@ -373,10 +372,10 @@ module TicGit
         return false
       else
         return message
-      end   
+      end
     end
     
-    def parse_options! #:nodoc:      
+    def parse_options! #:nodoc:
       if args.empty?
         warn "Please specify at least one action to execute."
         puts " list state show new checkout comment tag assign "
@@ -386,6 +385,31 @@ module TicGit
       @action = args.first
     end
     
+    def self.window_width
+      @@window_width
+    end
+    
+    class << self
+      attr :window_lines, true
+      attr :window_cols, true
+      def reset_window_width
+        rows, cols = 25, 80
+        buf = [0,0,0,0].pack("S4")
+        if STDOUT.ioctl(0x40087468, buf) >= 0
+          rows, cols = buf.unpack("S2")
+        end
+        self.window_lines = rows
+        self.window_cols = cols
+      end
+    end
+
+    def window_lines
+      TicGit::CLI.window_lines
+    end
+
+    def window_cols
+      TicGit::CLI.window_cols
+    end
     
     def just(value, size, side = 'l')
       value = value.to_s
@@ -401,3 +425,6 @@ module TicGit
     
   end
 end
+
+TicGit::CLI.reset_window_width
+Signal.trap("SIGWINCH") { TicGit::CLI.reset_window_width }
