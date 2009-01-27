@@ -2,6 +2,7 @@
 
 require 'tempfile'
 
+
 commit_log   = `git log -1`.chomp
 m, commit_id = * commit_log.match(/commit\W*([A-Fa-f0-9]+)/)
 
