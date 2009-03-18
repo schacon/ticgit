@@ -37,3 +37,5 @@ end
 task :default => "pkg/#{spec.name}-#{spec.version}.gem" do
     puts "generated latest version"
 end
+
+Dir['tasks/**/*.rake'].each { |rake| load rake }
