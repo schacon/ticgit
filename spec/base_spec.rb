@@ -27,93 +27,101 @@ describe TicGit::Base do
     list.size.should eql(2)
   end
   
-  it "should be able to change the state of a ticket" do
-    @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
-    @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
-    tic = @ticgit.ticket_list.first
-    @ticgit.ticket_change('resolved', tic.ticket_id)
-    tic = @ticgit.ticket_show(tic.ticket_id)
-    tic.state.should eql('resolved')
+  describe "assigning tickets" do
+    it "should be able to change to whom the ticket is assigned" do
+      @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
+      @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
+      tic = @ticgit.ticket_list.first
+      @ticgit.ticket_assign('pope', tic.ticket_id)
+      tic = @ticgit.ticket_show(tic.ticket_id)
+      tic.assigned.should eql('pope')
+    end
+  
+    it "should not be able to change to whom the ticket is assigned if it is already assigned to that user" do
+      @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
+      @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
+      tic = @ticgit.ticket_list.first
+      tic_id = tic.ticket_id
+      lambda {
+        @ticgit.ticket_assign(tic.assigned, tic_id)
+        @ticgit.ticket_show(tic_id)
+      }.should_not change(@ticgit.ticket_recent(tic_id), :size)
+    end
+  
+    it "should default to the current user when changing to whom the ticket is assigned" do
+      @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
+      @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
+      tic = @ticgit.ticket_list.first
+      @ticgit.ticket_checkout(tic.ticket_id)
+      @ticgit.ticket_assign()
+      tic = @ticgit.ticket_show(tic.ticket_id)
+      tic.assigned.should eql(tic.email)
+    end
   end
   
-  it "should not be able to change the state of a ticket to something invalid" do
-    @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
-    @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
-    tic = @ticgit.ticket_list.first
-    @ticgit.ticket_change('resolve', tic.ticket_id)
-    tic = @ticgit.ticket_show(tic.ticket_id)
-    tic.state.should_not eql('resolve')
+  describe "ticket states" do
+    it "should be able to change the state of a ticket" do
+      @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
+      @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
+      tic = @ticgit.ticket_list.first
+      @ticgit.ticket_change('resolved', tic.ticket_id)
+      tic = @ticgit.ticket_show(tic.ticket_id)
+      tic.state.should eql('resolved')
+    end
+
+    it "should not be able to change the state of a ticket to something invalid" do
+      @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
+      @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
+      tic = @ticgit.ticket_list.first
+      @ticgit.ticket_change('resolve', tic.ticket_id)
+      tic = @ticgit.ticket_show(tic.ticket_id)
+      tic.state.should_not eql('resolve')
+    end
+    
+    it "should only show open tickets by default" do
+      @ticgit.ticket_new('my third ticket')
+      tics = @ticgit.ticket_list
+      states = tics.map { |t| t.state }.uniq
+      states.size.should eql(1)
+      states.first.should eql('open')
+    end
   end
   
-  it "should be able to change to whom the ticket is assigned" do
-    @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
-    @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
-    tic = @ticgit.ticket_list.first
-    @ticgit.ticket_assign('pope', tic.ticket_id)
-    tic = @ticgit.ticket_show(tic.ticket_id)
-    tic.assigned.should eql('pope')
+  describe "filtering tickets" do
+    it "should be able to filter tickets on state" do
+      @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
+      @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
+      @ticgit.ticket_new('my third ticket')
+      tic = @ticgit.ticket_list.first
+      @ticgit.ticket_change('resolved', tic.ticket_id)
+      tics = @ticgit.ticket_list(:state => 'resolved')
+      tics.size.should eql(1)
+      tics = @ticgit.ticket_list(:state => 'open')
+      tics.size.should eql(2)
+    end
+  
+    it "should be able to save and recall filtered ticket lists" do
+      @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
+      @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
+      tic = @ticgit.ticket_list.first
+      @ticgit.ticket_change('resolved', tic.ticket_id)
+      tics = @ticgit.ticket_list(:state => 'resolved', :save => 'resolve')
+      tics.size.should eql(1)
+      rtics = @ticgit.ticket_list(:saved => 'resolve')
+      tics.size.should eql(1)
+    end
   end
   
-  it "should not be able to change to whom the ticket is assigned if it is already assigned to that user" do
-    @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
-    @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
-    tic = @ticgit.ticket_list.first
-    tic_id = tic.ticket_id
-    lambda {
-      @ticgit.ticket_assign(tic.assigned, tic_id)
-      @ticgit.ticket_show(tic_id)
-    }.should_not change(@ticgit.ticket_recent(tic_id), :size)
-  end
+  describe "commenting on tickets" do 
+    it "should be able to comment on tickets" do
+      t = @ticgit.ticket_new('my fourth ticket')
+      t.comments.size.should eql(0)
   
-  it "should default to the current user when changing to whom the ticket is assigned" do
-    @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
-    @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
-    tic = @ticgit.ticket_list.first
-    @ticgit.ticket_checkout(tic.ticket_id)
-    @ticgit.ticket_assign()
-    tic = @ticgit.ticket_show(tic.ticket_id)
-    tic.assigned.should eql(tic.email)
-  end
-  
-  it "should only show open tickets by default" do
-    @ticgit.ticket_new('my third ticket')
-    tics = @ticgit.ticket_list
-    states = tics.map { |t| t.state }.uniq
-    states.size.should eql(1)
-    states.first.should eql('open')
-  end
-  
-  it "should be able to filter tickets on state" do
-    @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
-    @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
-    @ticgit.ticket_new('my third ticket')
-    tic = @ticgit.ticket_list.first
-    @ticgit.ticket_change('resolved', tic.ticket_id)
-    tics = @ticgit.ticket_list(:state => 'resolved')
-    tics.size.should eql(1)
-    tics = @ticgit.ticket_list(:state => 'open')
-    tics.size.should eql(2)
-  end
-  
-  it "should be able to save and recall filtered ticket lists" do
-    @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
-    @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
-    tic = @ticgit.ticket_list.first
-    @ticgit.ticket_change('resolved', tic.ticket_id)
-    tics = @ticgit.ticket_list(:state => 'resolved', :save => 'resolve')
-    tics.size.should eql(1)
-    rtics = @ticgit.ticket_list(:saved => 'resolve')
-    tics.size.should eql(1)
-  end
-  
-  it "should be able to comment on tickets" do
-    t = @ticgit.ticket_new('my fourth ticket')
-    t.comments.size.should eql(0)
-  
-    @ticgit.ticket_comment('my new comment', t.ticket_id)
-    t = @ticgit.ticket_show(t.ticket_id)
-    t.comments.size.should eql(1)
-    t.comments.first.comment.should eql('my new comment')
+      @ticgit.ticket_comment('my new comment', t.ticket_id)
+      t = @ticgit.ticket_show(t.ticket_id)
+      t.comments.size.should eql(1)
+      t.comments.first.comment.should eql('my new comment')
+    end
   end
   
   it "should retrieve specific tickets" do
@@ -148,42 +156,44 @@ describe TicGit::Base do
     @ticgit.ticket_show('2').ticket_id.should eql(tics[1].ticket_id)
   end
 
-  it "should be able to tag a ticket" do
-    @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
-    @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
-    t = @ticgit.ticket_list.last
-    t.tags.size.should eql(0)
-    @ticgit.ticket_tag('newtag', t.ticket_id)
-    t = @ticgit.ticket_show(t.ticket_id)
-    t.tags.size.should eql(1)
-    t.tags.first.should eql('newtag')
-  end
+  describe "tagging tickets" do
+    it "should be able to tag a ticket" do
+      @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
+      @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
+      t = @ticgit.ticket_list.last
+      t.tags.size.should eql(0)
+      @ticgit.ticket_tag('newtag', t.ticket_id)
+      t = @ticgit.ticket_show(t.ticket_id)
+      t.tags.size.should eql(1)
+      t.tags.first.should eql('newtag')
+    end
 
-  it "should not be able to tag a ticket with a blank tag" do
-    t = @ticgit.ticket_new('my fourth ticket', :tags => [' '])
-    t.tags.size.should eql(0)
+    it "should not be able to tag a ticket with a blank tag" do
+      t = @ticgit.ticket_new('my fourth ticket', :tags => [' '])
+      t.tags.size.should eql(0)
   
-    @ticgit.ticket_tag(' ', t.ticket_id)
-    t = @ticgit.ticket_show(t.ticket_id)
-    t.tags.size.should eql(0)
+      @ticgit.ticket_tag(' ', t.ticket_id)
+      t = @ticgit.ticket_show(t.ticket_id)
+      t.tags.size.should eql(0)
 
-    @ticgit.ticket_tag('', t.ticket_id)
-    t = @ticgit.ticket_show(t.ticket_id)
-    t.tags.size.should eql(0)
+      @ticgit.ticket_tag('', t.ticket_id)
+      t = @ticgit.ticket_show(t.ticket_id)
+      t.tags.size.should eql(0)
 
-    @ticgit.ticket_tag(',mytag', t.ticket_id)
-    t = @ticgit.ticket_show(t.ticket_id)
-    t.tags.size.should eql(1)
-    t.tags.first.should eql('mytag')
-  end
+      @ticgit.ticket_tag(',mytag', t.ticket_id)
+      t = @ticgit.ticket_show(t.ticket_id)
+      t.tags.size.should eql(1)
+      t.tags.first.should eql('mytag')
+    end
 
-  it "should be able to remove a tag from a ticket" do
-    t = @ticgit.ticket_new('my next ticket', :tags => ['scotty', 'chacony'])
-    t.tags.size.should eql(2)
+    it "should be able to remove a tag from a ticket" do
+      t = @ticgit.ticket_new('my next ticket', :tags => ['scotty', 'chacony'])
+      t.tags.size.should eql(2)
   
-    @ticgit.ticket_tag('scotty', t.ticket_id, :remove => true)
-    t.tags.size.should eql(2)
-    t.tags.first.should eql('chacony')
+      @ticgit.ticket_tag('scotty', t.ticket_id, :remove => true)
+      t.tags.size.should eql(2)
+      t.tags.first.should eql('chacony')
+    end
   end
 
   it "should save state to disk after a new ticket" do
