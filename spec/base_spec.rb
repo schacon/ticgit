@@ -20,6 +20,15 @@ describe TicGit::Base do
       @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
       @ticgit.tickets.size.should eql(1)
     end
+    
+    it "should be able to list existing tickets" do
+      @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
+      @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
+      list = @ticgit.ticket_list
+      list.first.should be_an_instance_of(TicGit::Ticket)
+      list.size.should eql(2)
+    end
+    
   end
   
   describe "all" do
@@ -30,16 +39,9 @@ describe TicGit::Base do
       @ticgit = TicGit.open(@path, @orig_test_opts)
     end
     
-
-    it "should be able to list existing tickets" do
+    it "should be able to change the state of a ticket" do
       @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
       @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
-      list = @ticgit.ticket_list
-      list.first.should be_an_instance_of(TicGit::Ticket)
-      list.size.should eql(2)
-    end
-
-    it "should be able to change the state of a ticket" do
       tic = @ticgit.ticket_list.first
       @ticgit.ticket_change('resolved', tic.ticket_id)
       tic = @ticgit.ticket_show(tic.ticket_id)
