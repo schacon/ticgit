@@ -29,6 +29,15 @@ describe TicGit::Base do
       list.size.should eql(2)
     end
     
+    it "should be able to change the state of a ticket" do
+      @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
+      @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
+      tic = @ticgit.ticket_list.first
+      @ticgit.ticket_change('resolved', tic.ticket_id)
+      tic = @ticgit.ticket_show(tic.ticket_id)
+      tic.state.should eql('resolved')
+    end
+    
   end
   
   describe "all" do
@@ -39,16 +48,9 @@ describe TicGit::Base do
       @ticgit = TicGit.open(@path, @orig_test_opts)
     end
     
-    it "should be able to change the state of a ticket" do
+    it "should not be able to change the state of a ticket to something invalid" do
       @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
       @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
-      tic = @ticgit.ticket_list.first
-      @ticgit.ticket_change('resolved', tic.ticket_id)
-      tic = @ticgit.ticket_show(tic.ticket_id)
-      tic.state.should eql('resolved')
-    end
-
-    it "should not be able to change the state of a ticket to something invalid" do
       tic = @ticgit.ticket_list.first
       @ticgit.ticket_change('resolve', tic.ticket_id)
       tic = @ticgit.ticket_show(tic.ticket_id)
@@ -88,6 +90,8 @@ describe TicGit::Base do
     end
   
     it "should be able to filter tickets on state" do
+      tic = @ticgit.ticket_list.first
+      @ticgit.ticket_change('resolved', tic.ticket_id)
       tics = @ticgit.ticket_list(:state => 'resolved')
       tics.size.should eql(1)
       tics = @ticgit.ticket_list(:state => 'open')
