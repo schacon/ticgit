@@ -38,6 +38,24 @@ describe TicGit::Base do
       tic.state.should eql('resolved')
     end
     
+    it "should not be able to change the state of a ticket to something invalid" do
+      @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
+      @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
+      tic = @ticgit.ticket_list.first
+      @ticgit.ticket_change('resolve', tic.ticket_id)
+      tic = @ticgit.ticket_show(tic.ticket_id)
+      tic.state.should_not eql('resolve')
+    end
+    
+    it "should be able to change to whom the ticket is assigned" do
+      @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
+      @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
+      tic = @ticgit.ticket_list.first
+      @ticgit.ticket_assign('pope', tic.ticket_id)
+      tic = @ticgit.ticket_show(tic.ticket_id)
+      tic.assigned.should eql('pope')
+    end
+    
   end
   
   describe "all" do
@@ -47,24 +65,10 @@ describe TicGit::Base do
       @orig_test_opts = test_opts
       @ticgit = TicGit.open(@path, @orig_test_opts)
     end
-    
-    it "should not be able to change the state of a ticket to something invalid" do
-      @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
-      @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
-      tic = @ticgit.ticket_list.first
-      @ticgit.ticket_change('resolve', tic.ticket_id)
-      tic = @ticgit.ticket_show(tic.ticket_id)
-      tic.state.should_not eql('resolve')
-    end
-
-    it "should be able to change to whom the ticket is assigned" do
-      tic = @ticgit.ticket_list.first
-      @ticgit.ticket_assign('pope', tic.ticket_id)
-      tic = @ticgit.ticket_show(tic.ticket_id)
-      tic.assigned.should eql('pope')
-    end
 
     it "should not be able to change to whom the ticket is assigned if it is already assigned to that user" do
+      @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
+      @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
       tic = @ticgit.ticket_list.first
       tic_id = tic.ticket_id
       lambda {
