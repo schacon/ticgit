@@ -23,7 +23,9 @@ end
 
 Then /^the output of `(.*)` should contain \/(.*)\/$/ do |cmd, regex|
   in_project_folder do
-    capture_output cmd
+    if !File.exist?(output_of(cmd))
+      capture_output cmd
+    end
     output_of(cmd).should match(/#{regex}/)
   end
 end
