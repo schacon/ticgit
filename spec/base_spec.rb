@@ -97,16 +97,6 @@ describe TicGit::Base do
       tics.size.should eql(2)
     end
     
-  end
-  
-  describe "all" do
-    before(:all) do 
-      @path = setup_new_git_repo
-      puts @path
-      @orig_test_opts = test_opts
-      @ticgit = TicGit.open(@path, @orig_test_opts)
-    end
-
     it "should be able to save and recall filtered ticket lists" do
       @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
       @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
@@ -116,6 +106,16 @@ describe TicGit::Base do
       tics.size.should eql(1)
       rtics = @ticgit.ticket_list(:saved => 'resolve')
       tics.size.should eql(1)
+    end
+
+  end
+  
+  describe "all" do
+    before(:all) do 
+      @path = setup_new_git_repo
+      puts @path
+      @orig_test_opts = test_opts
+      @ticgit = TicGit.open(@path, @orig_test_opts)
     end
 
     it "should be able to comment on tickets" do
@@ -150,6 +150,8 @@ describe TicGit::Base do
     end
 
     it "should resolve order number from most recent list into ticket" do 
+      @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
+      @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
       tics = @ticgit.ticket_list(:state => 'open')
       @ticgit.ticket_show('1').ticket_id.should eql(tics[0].ticket_id)
       @ticgit.ticket_show('2').ticket_id.should eql(tics[1].ticket_id)
