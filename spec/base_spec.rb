@@ -77,6 +77,14 @@ describe TicGit::Base do
       tic.assigned.should eql(tic.email)
     end
     
+    it "should only show open tickets by default" do
+      @ticgit.ticket_new('my third ticket')
+      tics = @ticgit.ticket_list
+      states = tics.map { |t| t.state }.uniq
+      states.size.should eql(1)
+      states.first.should eql('open')
+    end
+    
   end
   
   describe "all" do
@@ -86,18 +94,11 @@ describe TicGit::Base do
       @orig_test_opts = test_opts
       @ticgit = TicGit.open(@path, @orig_test_opts)
     end
-
-    it "should only show open tickets by default" do
-      @ticgit.ticket_new('my third ticket')
-      tics = @ticgit.ticket_list
-      states = tics.map { |t| t.state }.uniq
-      states.size.should eql(1)
-      states.first.should eql('open')
-    end
   
     it "should be able to filter tickets on state" do
       @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
       @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
+      @ticgit.ticket_new('my third ticket')
       tic = @ticgit.ticket_list.first
       @ticgit.ticket_change('resolved', tic.ticket_id)
       tics = @ticgit.ticket_list(:state => 'resolved')
