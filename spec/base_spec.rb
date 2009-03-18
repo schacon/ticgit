@@ -107,17 +107,7 @@ describe TicGit::Base do
       rtics = @ticgit.ticket_list(:saved => 'resolve')
       tics.size.should eql(1)
     end
-
-  end
-  
-  describe "all" do
-    before(:all) do 
-      @path = setup_new_git_repo
-      puts @path
-      @orig_test_opts = test_opts
-      @ticgit = TicGit.open(@path, @orig_test_opts)
-    end
-
+    
     it "should be able to comment on tickets" do
       t = @ticgit.ticket_new('my fourth ticket')
       t.comments.size.should eql(0)
@@ -127,8 +117,19 @@ describe TicGit::Base do
       t.comments.size.should eql(1)
       t.comments.first.comment.should eql('my new comment')
     end
+    
+  end
+  
+  describe "all" do
+    before(:all) do 
+      @path = setup_new_git_repo
+      puts @path
+      @orig_test_opts = test_opts
+      @ticgit = TicGit.open(@path, @orig_test_opts)
+    end
   
     it "should retrieve specific tickets" do
+      t = @ticgit.ticket_new('my fourth ticket')
       tid = @ticgit.ticket_list.last.ticket_id
       tic = @ticgit.ticket_show(tid)
       tic.ticket_id.should eql(tid)
