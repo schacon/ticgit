@@ -35,7 +35,6 @@ module TicGit
       
       title, date = self.parse_ticket_name(ticket_name)
       
-      t.title = title
       t.opened = date
       
       ticket_hash['files'].each do |fname, value|
@@ -55,7 +54,10 @@ module TicGit
           end
           if data[0] == 'STATE'
             t.state = data[1]
-          end          
+          end
+          if data[0] == 'TITLE'
+            t.title = base.git.gblob(value).contents
+          end
         end
       end
       
@@ -80,6 +82,7 @@ module TicGit
           base.new_file('TICKET_ID', ticket_name)
           base.new_file('ASSIGNED_' + email, email)
           base.new_file('STATE_' + state, state)
+          base.new_file('TITLE', title)
 
           # add initial comment
           #COMMENT_080315060503045__schacon_at_gmail

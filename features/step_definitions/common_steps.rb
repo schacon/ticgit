@@ -6,11 +6,13 @@ Given /^I am in a clean git repository$/ do
     system "git add a"
     system "git commit -m 'Initial commit.'"
   end
+  ENV['RUBYLIB'] = @lib_path
 end
 
 When /^I execute ti "(.*)"$/ do |cmd|
   in_project_folder do
-    capture_output "ti #{cmd}"
+    capture_output "#{ti_cmd} #{cmd}"
+    $?.exitstatus.should == 0
   end
 end
 
@@ -18,11 +20,12 @@ When /^refresh my ti list index$/ do
   # running `ti list` generates the index that lets us refer to tickets by 
   # simple numbers (e.g., 1, 2, 3...) instead of by their tic ids (fee1e0, 851749, ...)
   in_project_folder do
-    system "ti list > /dev/null"
+    system "#{ti_cmd} list > /dev/null"
   end
 end
 
-Then /^the output of `(.*)` (should|should not) contain "(.*)"$/ do |cmd, should, text|
+Then /^the output of ti "(.*)" (should|should not) contain "(.*)"$/ do |cmd, should, text|
+  cmd = "#{ti_cmd} #{cmd}"
   in_project_folder do
     if !File.exist?(output_file_for(cmd))
       capture_output cmd
@@ -35,7 +38,8 @@ Then /^the output of `(.*)` (should|should not) contain "(.*)"$/ do |cmd, should
   end
 end
 
-Then /^the output of `(.*)` (should|should not) contain \/(.*)\/$/ do |cmd, should, regex|
+Then /^the output of ti "(.*)" (should|should not) contain \/(.*)\/$/ do |cmd, should, regex|
+  cmd = "#{ti_cmd} #{cmd}"
   in_project_folder do
     if !File.exist?(output_file_for(cmd))
       capture_output cmd

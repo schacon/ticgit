@@ -6,7 +6,7 @@ Feature: Create tickets
   Scenario: Create one ticket
     Given I am in a clean git repository
     When I execute ti "new -t 'Add support for MS Word activity streams'"
-    Then the output of `ti list` should contain "add support for ms word"
+    Then the output of ti "list" should contain "Add support for MS Word"
   
   Scenario: Create many ticket
     Given I am in a clean git repository
@@ -14,8 +14,8 @@ Feature: Create tickets
     And I execute ti "new -t 'Keynote activity streams'"
     And I execute ti "new -t 'Excel activity streams'"
     And I execute ti "new -t 'IntelliJ activity streams'"
-    Then the output of `ti list` should contain "ms word activity streams"
-    And the output of `ti list` should contain "keynote activity streams"
-    And the output of `ti list` should contain "excel activity streams"
-    And the output of `ti list` should contain "intellij activity streams"
+    Then the output of ti "list" should contain "MS Word activity streams"
+    And the output of ti "list" should contain "Keynote activity streams"
+    And the output of ti "list" should contain "Excel activity streams"
+    And the output of ti "list" should contain "IntelliJ activity streams"
   
