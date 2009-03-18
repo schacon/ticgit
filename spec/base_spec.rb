@@ -56,16 +56,6 @@ describe TicGit::Base do
       tic.assigned.should eql('pope')
     end
     
-  end
-  
-  describe "all" do
-    before(:all) do 
-      @path = setup_new_git_repo
-      puts @path
-      @orig_test_opts = test_opts
-      @ticgit = TicGit.open(@path, @orig_test_opts)
-    end
-
     it "should not be able to change to whom the ticket is assigned if it is already assigned to that user" do
       @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
       @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
@@ -76,8 +66,20 @@ describe TicGit::Base do
         @ticgit.ticket_show(tic_id)
       }.should_not change(@ticgit.ticket_recent(tic_id), :size)
     end
+    
+  end
+  
+  describe "all" do
+    before(:all) do 
+      @path = setup_new_git_repo
+      puts @path
+      @orig_test_opts = test_opts
+      @ticgit = TicGit.open(@path, @orig_test_opts)
+    end
 
     it "should default to the current user when changing to whom the ticket is assigned" do
+      @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
+      @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
       tic = @ticgit.ticket_list.first
       @ticgit.ticket_checkout(tic.ticket_id)
       @ticgit.ticket_assign()
