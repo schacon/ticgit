@@ -3,7 +3,7 @@ module TicGit
   
     attr_reader :base, :opts
     attr_accessor :ticket_id, :ticket_name
-    attr_accessor :title, :state, :milestone, :assigned, :opened
+    attr_accessor :title, :state, :milestone, :assigned, :opened, :points
     attr_accessor :comments, :tags, :attachments # arrays
     
     def initialize(base, options = {})
@@ -57,6 +57,9 @@ module TicGit
           end
           if data[0] == 'TITLE'
             t.title = base.git.gblob(value).contents
+          end
+          if data[0] == 'POINTS'
+            t.points = base.git.gblob(value).contents.to_i
           end
         end
       end
@@ -148,6 +151,18 @@ module TicGit
         base.git.remove(File.join(ticket_name,'ASSIGNED_' + assigned))
         base.git.add
         base.git.commit("assigned #{new_assigned} to ticket #{ticket_name}")
+      end
+    end
+    
+    def change_points(new_points)
+      return false if new_points == points
+      
+      base.in_branch do |wd|
+        Dir.chdir(ticket_name) do
+          base.new_file('POINTS', new_points)
+        end
+        base.git.add
+        base.git.commit("set points to #{new_points} for ticket #{ticket_name}")
       end
     end
     
