@@ -118,6 +118,30 @@ describe TicGit::Base do
       t.comments.first.comment.should eql('my new comment')
     end
     
+    it "should retrieve specific tickets" do
+      t = @ticgit.ticket_new('my fourth ticket')
+      tid = @ticgit.ticket_list.last.ticket_id
+      tic = @ticgit.ticket_show(tid)
+      tic.ticket_id.should eql(tid)
+    end
+    
+    it "should be able to checkout a ticket" do
+      t = @ticgit.ticket_new('my fourth ticket')
+      tid = @ticgit.ticket_list.last.ticket_id
+      @ticgit.ticket_checkout(tid)
+      @ticgit.ticket_show.ticket_id.should eql(tid)
+    end
+  
+    it "should resolve partial shas into ticket" do 
+      t = @ticgit.ticket_new('my fourth ticket')
+      tid = @ticgit.ticket_list.last.ticket_id
+      @ticgit.ticket_checkout(tid[0, 5])
+      @ticgit.ticket_show.ticket_id.should eql(tid)
+    
+      @ticgit.ticket_checkout(tid[0, 20])
+      @ticgit.ticket_show.ticket_id.should eql(tid)
+    end
+  
   end
   
   describe "all" do
@@ -126,28 +150,6 @@ describe TicGit::Base do
       puts @path
       @orig_test_opts = test_opts
       @ticgit = TicGit.open(@path, @orig_test_opts)
-    end
-  
-    it "should retrieve specific tickets" do
-      t = @ticgit.ticket_new('my fourth ticket')
-      tid = @ticgit.ticket_list.last.ticket_id
-      tic = @ticgit.ticket_show(tid)
-      tic.ticket_id.should eql(tid)
-    end
-  
-    it "should be able to checkout a ticket" do
-      tid = @ticgit.ticket_list.last.ticket_id
-      @ticgit.ticket_checkout(tid)
-      @ticgit.ticket_show.ticket_id.should eql(tid)
-    end
-  
-    it "should resolve partial shas into ticket" do 
-      tid = @ticgit.ticket_list.last.ticket_id
-      @ticgit.ticket_checkout(tid[0, 5])
-      @ticgit.ticket_show.ticket_id.should eql(tid)
-    
-      @ticgit.ticket_checkout(tid[0, 20])
-      @ticgit.ticket_show.ticket_id.should eql(tid)
     end
 
     it "should resolve order number from most recent list into ticket" do 
