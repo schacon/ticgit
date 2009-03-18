@@ -67,16 +67,6 @@ describe TicGit::Base do
       }.should_not change(@ticgit.ticket_recent(tic_id), :size)
     end
     
-  end
-  
-  describe "all" do
-    before(:all) do 
-      @path = setup_new_git_repo
-      puts @path
-      @orig_test_opts = test_opts
-      @ticgit = TicGit.open(@path, @orig_test_opts)
-    end
-
     it "should default to the current user when changing to whom the ticket is assigned" do
       @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
       @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
@@ -85,6 +75,16 @@ describe TicGit::Base do
       @ticgit.ticket_assign()
       tic = @ticgit.ticket_show(tic.ticket_id)
       tic.assigned.should eql(tic.email)
+    end
+    
+  end
+  
+  describe "all" do
+    before(:all) do 
+      @path = setup_new_git_repo
+      puts @path
+      @orig_test_opts = test_opts
+      @ticgit = TicGit.open(@path, @orig_test_opts)
     end
 
     it "should only show open tickets by default" do
@@ -96,6 +96,8 @@ describe TicGit::Base do
     end
   
     it "should be able to filter tickets on state" do
+      @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
+      @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
       tic = @ticgit.ticket_list.first
       @ticgit.ticket_change('resolved', tic.ticket_id)
       tics = @ticgit.ticket_list(:state => 'resolved')
