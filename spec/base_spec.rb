@@ -141,17 +141,7 @@ describe TicGit::Base do
       @ticgit.ticket_checkout(tid[0, 20])
       @ticgit.ticket_show.ticket_id.should eql(tid)
     end
-  
-  end
-  
-  describe "all" do
-    before(:all) do 
-      @path = setup_new_git_repo
-      puts @path
-      @orig_test_opts = test_opts
-      @ticgit = TicGit.open(@path, @orig_test_opts)
-    end
-
+    
     it "should resolve order number from most recent list into ticket" do 
       @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
       @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
@@ -161,6 +151,8 @@ describe TicGit::Base do
     end
   
     it "should be able to tag a ticket" do
+      @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
+      @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
       t = @ticgit.ticket_list.last
       t.tags.size.should eql(0)
       @ticgit.ticket_tag('newtag', t.ticket_id)
@@ -200,6 +192,16 @@ describe TicGit::Base do
       time = File.stat(@ticgit.state).size
       t = @ticgit.ticket_new('my next ticket', :tags => ['scotty', 'chacony'])
       File.stat(@ticgit.state).size.should_not eql(time)
+    end
+    
+  end
+  
+  describe "all" do
+    before(:all) do 
+      @path = setup_new_git_repo
+      puts @path
+      @orig_test_opts = test_opts
+      @ticgit = TicGit.open(@path, @orig_test_opts)
     end
   end
 
