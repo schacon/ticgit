@@ -85,16 +85,6 @@ describe TicGit::Base do
       states.first.should eql('open')
     end
     
-  end
-  
-  describe "all" do
-    before(:all) do 
-      @path = setup_new_git_repo
-      puts @path
-      @orig_test_opts = test_opts
-      @ticgit = TicGit.open(@path, @orig_test_opts)
-    end
-  
     it "should be able to filter tickets on state" do
       @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
       @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
@@ -106,8 +96,22 @@ describe TicGit::Base do
       tics = @ticgit.ticket_list(:state => 'open')
       tics.size.should eql(2)
     end
+    
+  end
+  
+  describe "all" do
+    before(:all) do 
+      @path = setup_new_git_repo
+      puts @path
+      @orig_test_opts = test_opts
+      @ticgit = TicGit.open(@path, @orig_test_opts)
+    end
 
     it "should be able to save and recall filtered ticket lists" do
+      @ticgit.ticket_new('my new ticket').should be_an_instance_of(TicGit::Ticket)
+      @ticgit.ticket_new('my second ticket').should be_an_instance_of(TicGit::Ticket)
+      tic = @ticgit.ticket_list.first
+      @ticgit.ticket_change('resolved', tic.ticket_id)
       tics = @ticgit.ticket_list(:state => 'resolved', :save => 'resolve')
       tics.size.should eql(1)
       rtics = @ticgit.ticket_list(:saved => 'resolve')
