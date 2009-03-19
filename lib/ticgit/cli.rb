@@ -392,7 +392,7 @@ module TicGit
     
     def parse_options! #:nodoc:      
       if args.empty?
-        warn "Please specify at least one action to execute."
+        puts "Please specify at least one action to execute."
         puts " list state show new checkout comment tag assign points "
         exit
       end
