@@ -12,7 +12,9 @@ end
 When /^I execute ti "(.*)"$/ do |cmd|
   in_project_folder do
     capture_output "#{ti_cmd} #{cmd}"
-    $?.exitstatus.should == 0
+    if $?.exitstatus != 0
+      fail output_of("#{ti_cmd} #{cmd}")
+    end
   end
 end
 

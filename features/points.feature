@@ -7,7 +7,7 @@ Feature: Ticket points
     Given I am in a clean git repository
     When I execute ti "new -t 'Add support for MS Word activity streams'"
     And refresh my ti list index
-    And I execute ti "est 1 3"
+    And I execute ti "points 1 3"
     Then the output of ti "show 1" should contain /Points *: *3/
   
   Scenario: Default points
