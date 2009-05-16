@@ -29,7 +29,7 @@ module TicGit
     
     def execute!
       case action
-      when 'list':
+      when 'list'
         handle_ticket_list
       when 'state'
         handle_ticket_state
