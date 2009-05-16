@@ -144,7 +144,7 @@ module TicGit
 
 
     def handle_ticket_checkout
-      tid = ARGV[1].chomp
+      tid = ARGV[1].to_s.chomp
       tic.ticket_checkout(tid)
     end
 
