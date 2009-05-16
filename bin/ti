@@ -5,7 +5,10 @@
 # author : Scott Chacon (schacon@gmail.com)
 #
 
-require 'rubygems'
-require 'ticgit'
-#require File.dirname(__FILE__) + '/../lib/ticgit'
+begin; require 'rubygems' rescue LoadError; end
+require 'pathname'
+this = Pathname(__FILE__)
+ticgit = (this.symlink? ? this.readlink : this) + '../../lib/ticgit'
+
+require ticgit
 TicGit::CLI.execute
