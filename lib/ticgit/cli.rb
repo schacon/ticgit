@@ -11,7 +11,7 @@ module TicGit
     def self.execute
       parse(ARGV).execute!
     end
-    
+
     def self.parse(args)
       cli = new(args)
       cli.parse_options!
@@ -25,8 +25,8 @@ module TicGit
     rescue NoRepoFound
       puts "No repo found"
       exit
-    end    
-    
+    end
+
     def execute!
       case action
       when 'list'
@@ -80,7 +80,7 @@ module TicGit
         puts commit.sha[0, 7] + "  " + commit.date.strftime("%m/%d %H:%M") + "\t" + commit.message
       end
     end
-    
+
     def parse_ticket_tag
       @options = {}
       OptionParser.new do |opts|
@@ -90,25 +90,25 @@ module TicGit
         end
       end.parse!
     end
-    
+
     def handle_ticket_tag
       parse_ticket_tag
-      
+
       if options[:remove]
         puts 'remove'
       end
-      
+
       tid = nil
       if ARGV.size > 2
         tid = ARGV[1].chomp
         tic.ticket_tag(ARGV[2].chomp, tid, options)
       elsif ARGV.size > 1
         tic.ticket_tag(ARGV[1], nil, options)
-      else  
+      else
         puts 'You need to at least specify one tag to add'
       end
     end
-    
+
     def parse_ticket_comment
       @options = {}
       OptionParser.new do |opts|
@@ -118,7 +118,7 @@ module TicGit
         end
         opts.on("-f FILE", "--file FILE", "A file that contains the comment you would like to add") do |v|
           raise ArgumentError, "Only 1 of -f/--file and -m/--message can be specified" if @options[:message]
-          raise ArgumentError, "File #{v} doesn't exist" unless File.file?(v) 
+          raise ArgumentError, "File #{v} doesn't exist" unless File.file?(v)
           raise ArgumentError, "File #{v} must be <= 2048 bytes" unless File.size(v) <= 2048
           @options[:file] = v
         end
@@ -127,10 +127,10 @@ module TicGit
 
     def handle_ticket_comment
       parse_ticket_comment
-      
+
       tid = nil
       tid = ARGV[1].chomp if ARGV[1]
-      
+
       if(m = options[:message])
         tic.ticket_comment(m, tid)
       elsif(f = options[:file])
@@ -142,12 +142,12 @@ module TicGit
       end
     end
 
-    
+
     def handle_ticket_checkout
       tid = ARGV[1].chomp
       tic.ticket_checkout(tid)
     end
-    
+
     def handle_ticket_state
       if ARGV.size > 2
         tid = ARGV[1].chomp
@@ -165,15 +165,15 @@ module TicGit
         else
           puts 'Invalid State - please choose from : ' + tic.tic_states.join(", ")
         end
-      else  
+      else
         puts 'You need to at least specify a new state for the current ticket'
       end
     end
-    
+
     def valid_state(state)
       tic.tic_states.include?(state)
     end
-    
+
     def parse_ticket_assign
       @options = {}
       OptionParser.new do |opts|
@@ -228,24 +228,24 @@ module TicGit
         end
       end.parse!
     end
-    
+
     def handle_ticket_list
       parse_ticket_list
-      
+
       options[:saved] = ARGV[1] if ARGV[1]
-      
+
       if tickets = tic.ticket_list(options)
         counter = 0
-      
+
         puts
-        puts [' ', just('#', 4, 'r'), 
+        puts [' ', just('#', 4, 'r'),
               just('TicId', 6),
-              just('Title', 25), 
+              just('Title', 25),
               just('State', 5),
               just('Date', 5),
               just('Assgn', 8),
               just('Tags', 20) ].join(" ")
-            
+
         a = []
         80.times { a << '-'}
         puts a.join('')
@@ -253,34 +253,34 @@ module TicGit
         tickets.each do |t|
           counter += 1
           tic.current_ticket == t.ticket_name ? add = '*' : add = ' '
-          puts [add, just(counter, 4, 'r'), 
-                t.ticket_id[0,6], 
-                just(t.title, 25), 
+          puts [add, just(counter, 4, 'r'),
+                t.ticket_id[0,6],
+                just(t.title, 25),
                 just(t.state, 5),
-                t.opened.strftime("%m/%d"), 
+                t.opened.strftime("%m/%d"),
                 just(t.assigned_name, 8),
                 just(t.tags.join(','), 20) ].join(" ")
         end
         puts
       end
-      
+
     end
-    
+
     ## SHOW TICKETS ##
-    
+
     def handle_ticket_show
       if t = @tic.ticket_show(ARGV[1])
         ticket_show(t)
       end
     end
-    
+
     def ticket_show(t)
       days_ago = ((Time.now - t.opened) / (60 * 60 * 24)).round.to_s
       puts
       puts just('Title', 10) + ': ' + t.title
       puts just('TicId', 10) + ': ' + t.ticket_id
       puts
-      puts just('Assigned', 10) + ': ' + t.assigned.to_s 
+      puts just('Assigned', 10) + ': ' + t.assigned.to_s
       puts just('Opened', 10) + ': ' + t.opened.to_s + ' (' + days_ago + ' days)'
       puts just('State', 10) + ': ' + t.state.upcase
       if !t.tags.empty?
@@ -291,11 +291,11 @@ module TicGit
         puts 'Comments (' + t.comments.size.to_s + '):'
         t.comments.reverse.each do |c|
           puts '  * Added ' + c.added.strftime("%m/%d %H:%M") + ' by ' + c.user
-          
+
           wrapped = c.comment.split("\n").collect do |line|
             line.length > 80 ? line.gsub(/(.{1,80})(\s+|$)/, "\\1\n").strip : line
           end * "\n"
-          
+
           wrapped = wrapped.split("\n").map { |line| "\t" + line }
           if wrapped.size > 6
             puts wrapped[0, 6].join("\n")
@@ -307,9 +307,9 @@ module TicGit
         end
       end
     end
-    
+
     ## NEW TICKETS ##
-    
+
     def parse_ticket_new
       @options = {}
       OptionParser.new do |opts|
@@ -319,7 +319,7 @@ module TicGit
         end
       end.parse!
     end
-    
+
     def handle_ticket_new
       parse_ticket_new
       if(t = options[:title])
@@ -354,22 +354,22 @@ module TicGit
         end
       end
     end
-    
+
     def get_editor_message(message_file = nil)
       message_file = Tempfile.new('ticgit_message').path if !message_file
-      
+
       editor = ENV["EDITOR"] || 'vim'
       system("#{editor} #{message_file}");
       message = File.readlines(message_file)
-      message = message.select { |line| line[0, 1] != '#' } # removing comments   
+      message = message.select { |line| line[0, 1] != '#' } # removing comments
       if message.empty?
         return false
       else
         return message
-      end   
+      end
     end
-    
-    def parse_options! #:nodoc:      
+
+    def parse_options! #:nodoc:
       if args.empty?
         warn "Please specify at least one action to execute."
         puts " list state show new checkout comment tag assign "
@@ -378,8 +378,8 @@ module TicGit
 
       @action = args.first
     end
-    
-    
+
+
     def just(value, size, side = 'l')
       value = value.to_s
       if value.size > size
@@ -391,6 +391,6 @@ module TicGit
         return value.ljust(size)
       end
     end
-    
+
   end
 end

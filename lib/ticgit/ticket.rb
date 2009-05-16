@@ -1,24 +1,24 @@
 module TicGit
   class Ticket
-  
+
     attr_reader :base, :opts
     attr_accessor :ticket_id, :ticket_name
     attr_accessor :title, :state, :milestone, :assigned, :opened
     attr_accessor :comments, :tags, :attachments # arrays
-    
+
     def initialize(base, options = {})
-      options[:user_name] ||= base.git.config('user.name') 
-      options[:user_email] ||= base.git.config('user.email')      
-      
+      options[:user_name] ||= base.git.config('user.name')
+      options[:user_email] ||= base.git.config('user.email')
+
       @base = base
       @opts = options || {}
-      
+
       @state = 'open' # by default
       @comments = []
       @tags = []
       @attachments = []
     end
-  
+
     def self.create(base, title, options = {})
       t = Ticket.new(base, options)
       t.title = title
@@ -26,18 +26,18 @@ module TicGit
       t.save_new
       t
     end
-    
+
     def self.open(base, ticket_name, ticket_hash, options = {})
       tid = nil
 
       t = Ticket.new(base, options)
       t.ticket_name = ticket_name
-      
+
       title, date = self.parse_ticket_name(ticket_name)
-      
+
       t.title = title
       t.opened = date
-      
+
       ticket_hash['files'].each do |fname, value|
         if fname == 'TICKET_ID'
           tid = value
@@ -55,26 +55,26 @@ module TicGit
           end
           if data[0] == 'STATE'
             t.state = data[1]
-          end          
+          end
         end
       end
-      
+
       t.ticket_id = tid
       t
     end
-    
-    
+
+
     def self.parse_ticket_name(name)
       epoch, title, rand = name.split('_')
       title = title.gsub('-', ' ')
       return [title, Time.at(epoch.to_i)]
     end
-    
+
     # write this ticket to the git database
     def save_new
       base.in_branch do |wd|
         base.logger.info "saving #{ticket_name}"
-        
+
         Dir.mkdir(ticket_name)
         Dir.chdir(ticket_name) do
           base.new_file('TICKET_ID', ticket_name)
@@ -96,24 +96,24 @@ module TicGit
                 end
               end
             end
-          end            
+          end
         end
-	      
+
         base.git.add
         base.git.commit("added ticket #{ticket_name}")
       end
       # ticket_id
     end
-    
+
     def self.clean_string(string)
       string.downcase.gsub(/[^a-z0-9]+/i, '-')
     end
-    
+
     def add_comment(comment)
       return false if !comment
       base.in_branch do |wd|
         Dir.chdir(ticket_name) do
-          base.new_file(comment_name(email), comment) 
+          base.new_file(comment_name(email), comment)
         end
         base.git.add
         base.git.commit("added comment to ticket #{ticket_name}")
@@ -123,7 +123,7 @@ module TicGit
     def change_state(new_state)
       return false if !new_state
       return false if new_state == state
-      
+
       base.in_branch do |wd|
         Dir.chdir(ticket_name) do
           base.new_file('STATE_' + new_state, new_state)
@@ -147,7 +147,7 @@ module TicGit
         base.git.commit("assigned #{new_assigned} to ticket #{ticket_name}")
       end
     end
-    
+
     def add_tag(tag)
       return false if !tag
       added = false
@@ -170,7 +170,7 @@ module TicGit
         end
       end
     end
-    
+
     def remove_tag(tag)
       return false if !tag
       removed = false
@@ -188,27 +188,27 @@ module TicGit
         end
       end
     end
-    
+
     def path
       File.join(state, ticket_name)
     end
-    
+
     def comment_name(email)
       'COMMENT_' + Time.now.to_i.to_s + '_' + email
     end
-    
+
     def email
       opts[:user_email] || 'anon'
     end
-    
+
     def assigned_name
       assigned.split('@').first rescue ''
     end
-    
+
     def self.create_ticket_name(title)
       [Time.now.to_i.to_s, Ticket.clean_string(title), rand(999).to_i.to_s].join('_')
     end
 
-    
+
   end
 end
