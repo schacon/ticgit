@@ -1,29 +1,10 @@
 require 'ticgit'
+require 'ticgit/command'
 
 # used Cap as a model for this - thanks Jamis
 
 module TicGit
   class CLI
-    COMMANDS = {}
-
-    def self.register(mod_name, *commands)
-      autoload(mod_name, "ticgit/command/#{mod_name.downcase}")
-      commands.each{|cmd| COMMANDS[cmd] = mod_name }
-    end
-
-    register 'Assign', 'assign'
-    register 'Attach', 'attach'
-    register 'Checkout', 'checkout', 'co'
-    register 'Comment', 'comment'
-    register 'List', 'list'
-    register 'Milestone','milestone'
-    register 'New', 'new'
-    register 'Points', 'points'
-    register 'Recent', 'recent'
-    register 'Show', 'show'
-    register 'State', 'state'
-    register 'Tag', 'tag'
-
     def self.execute
       parse(ARGV).execute!
     end
@@ -47,44 +28,50 @@ module TicGit
     end
 
     def execute!
-      COMMANDS.each do |name, mod_name|
-        if name === action
-          mod = self.class.const_get(mod_name)
-          extend(mod)
+      if mod = Command.get(action)
+        extend(mod)
 
-          if respond_to?(:parser)
-            option_parser = parser
-            option_parser.on('-h', '--help', 'Show this message'){
-              puts option_parser
-              exit
-            }
+        if respond_to?(:parser)
+          option_parser = Command.parser(action, &method(:parser))
+        else
+          option_parser = Command.parser(action)
+        end
 
-            option_parser.parse!(args)
-          end
+        option_parser.parse!(args)
 
-          execute if respond_to?(:execute)
+        execute if respond_to?(:execute)
+      else
+        puts usage
 
+        if args.empty? and !action
           exit
+        else
+          puts('%p is not a command' % action)
+          exit 1
         end
       end
-
-      puts 'not a command'
-      usage
-      exit
     end
 
     def parse_options! #:nodoc:
       if args.empty?
         warn "Please specify at least one action to execute."
-        usage
-        exit
+        puts
+        puts usage(args)
+        exit 1
       end
 
       @action = args.shift
     end
 
-    def usage
-      puts COMMANDS.keys.sort.join(' ')
+    def usage(args = nil)
+      old_args = args || [action, *self.args].compact
+
+      if respond_to?(:parser)
+        Command.parser('COMMAND', &method(:parser))
+        # option_parser.parse!(args)
+      else
+        Command.usage(old_args.first, old_args)
+      end
     end
 
     def get_editor_message(message_file = nil)

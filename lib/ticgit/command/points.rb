@@ -1,14 +1,12 @@
 module TicGit
-  class CLI
+  module Command
     # Assigns points to a ticket
     #
     # Usage:
     # ti points {1} {points}   (assigns points to a specified ticket)
     module Points
-      def parser
-        OptionParser.new do |opts|
-          opts.banner = "ti points [ticket_id] points\t(assigns points to a specified ticket"
-        end
+      def parser(opts)
+        opts.banner = "ti points [ticket_id] points"
       end
 
       def execute
@@ -19,7 +17,7 @@ module TicGit
           tid = args[0]
           new_points = args[0].strip
         else
-          puts parser
+          puts usage
           exit 1
         end
 

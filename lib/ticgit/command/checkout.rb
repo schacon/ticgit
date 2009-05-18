@@ -1,10 +1,8 @@
 module TicGit
-  class CLI
+  module Command
     module Checkout
-      def parser
-        OptionParser.new do |opts|
-          opts.banner = "ti checkout [ticid]"
-        end
+      def parser(opts)
+        opts.banner = "ti checkout [ticid]"
       end
 
       def execute

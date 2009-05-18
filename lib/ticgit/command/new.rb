@@ -1,14 +1,11 @@
 module TicGit
-  class CLI
+  module Command
     module New
-      def parser
-        OptionParser.new do |opts|
-          opts.banner = "Usage: ti new [options]"
-          opts.on("-t TITLE", "--title TITLE",
-                  "Title to use for the name of the new ticket"){|v|
-            options.title = v
-          }
-        end
+      def parser(opts)
+        opts.banner = "Usage: ti new [options]"
+        opts.on_head(
+          "-t TITLE", "--title TITLE",
+          "Title to use for the name of the new ticket"){|v| options.title = v }
       end
 
       def execute

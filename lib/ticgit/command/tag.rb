@@ -1,13 +1,11 @@
 module TicGit
-  class CLI
+  module Command
     module Tag
-      def parser
-        OptionParser.new do |opts|
-          opts.banner = "Usage: ti tag [tic_id] [options] [tag_name] "
-          opts.on("-d", "Remove this tag from the ticket") do |v|
-            options.remove = v
-          end
-        end
+      def parser(opts)
+        opts.banner = "Usage: ti tag [tic_id] [options] [tag_name] "
+        opts.on_head(
+          "-d", "--delete",
+          "Remove this tag from the ticket"){|v| options.remove = v }
       end
 
       def execute

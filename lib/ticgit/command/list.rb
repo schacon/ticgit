@@ -1,43 +1,49 @@
 module TicGit
-  class CLI
+  module Command
+    # List tickets
     module List
-      ## LIST TICKETS ##
-      def parser
-        OptionParser.new do |opts|
-          opts.banner = "Usage: ti list [options]"
-          opts.on("-o ORDER", "--order ORDER",
-                  "Field to order by - one of : assigned,state,date"){|v|
-            options.order = v
-          }
+      def parser(o)
+        o.banner = "Usage: ti list [options]"
+        o.on_head(
+          "-o ORDER", "--order ORDER",
+          "Field to order by - one of : assigned,state,date"){|v|
+          options.order = v
+        }
 
-          opts.on("-t TAG[,TAG]", "--tags TAG[,TAG]", Array,
-                  "List only tickets with specific tag(s)",
-                  "Prefix the tag with '-' to negate"){|v|
-            options.tags ||= Set.new
-            options.tags.merge v
-          }
-          opts.on("-s STATE[,STATE]", "--states STATE[,STATE]", Array,
-                  "List only tickets in a specific state(s)",
-                  "Prefix the state with '-' to negate"){|v|
-            options.states ||= Set.new
-            options.states.merge v
-          }
-          opts.on("-a ASSIGNED", "--assigned ASSIGNED",
-                  "List only tickets assigned to someone"){|v|
-            options.assigned = v
-          }
-          opts.on("-S SAVENAME", "--saveas SAVENAME",
-                  "Save this list as a saved name"){|v|
-            options.save = v
-          }
-          opts.on("-l", "--list", "Show the saved queries"){|v|
-            options.list = true
-          }
-        end
+        o.on_head(
+          "-t TAG[,TAG]", "--tags TAG[,TAG]", Array,
+          "List only tickets with specific tag(s)",
+          "Prefix the tag with '-' to negate"){|v|
+          options.tags ||= Set.new
+          options.tags.merge v
+        }
+
+        o.on_head(
+          "-s STATE[,STATE]", "--states STATE[,STATE]", Array,
+          "List only tickets in a specific state(s)",
+          "Prefix the state with '-' to negate"){|v|
+          options.states ||= Set.new
+          options.states.merge v
+        }
+
+        o.on_head(
+          "-a ASSIGNED", "--assigned ASSIGNED",
+          "List only tickets assigned to someone"){|v|
+          options.assigned = v
+        }
+
+        o.on_head("-S SAVENAME", "--saveas SAVENAME",
+                     "Save this list as a saved name"){|v|
+          options.save = v
+        }
+
+        o.on_head("-l", "--list", "Show the saved queries"){|v|
+          options.list = true
+        }
       end
 
       def execute
-        options.saved = ARGV[1] if ARGV[1]
+        options.saved = args[0] if args[0]
 
         if tickets = tic.ticket_list(options.to_hash)
           counter = 0

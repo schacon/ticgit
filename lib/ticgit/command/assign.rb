@@ -1,5 +1,5 @@
 module TicGit
-  class CLI
+  module Command
     # Assigns a ticket to someone
     #
     # Usage:
@@ -8,16 +8,16 @@ module TicGit
     # ti assign -c {1}      (assign ticket to current user and checkout the ticket)
     # ti assign -u {name}   (assign ticket to specified user)
     module Assign
-      def parse
-        OptionParser.new do |opts|
-          opts.banner = "Usage: ti assign [options] [ticket_id]"
-          opts.on("-u USER", "--user USER", "Assign the ticket to this user"){|v|
-            options.user = v
-          }
-          opts.on("-c TICKET", "--checkout TICKET", "Checkout this ticket"){|v|
-            options.checkout = v
-          }
-        end
+      def parser(opts)
+        opts.banner = "Usage: ti assign [options] [ticket_id]"
+        opts.on_head(
+          "-u USER", "--user USER", "Assign the ticket to this user"){|v|
+          options.user = v
+        }
+        opts.on_head(
+          "-c TICKET", "--checkout TICKET", "Checkout this ticket"){|v|
+          options.checkout = v
+        }
       end
 
       def handle_ticket_assign

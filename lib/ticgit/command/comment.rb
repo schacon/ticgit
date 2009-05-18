@@ -1,21 +1,21 @@
 module TicGit
-  class CLI
+  module Command
     module Comment
-      def parser
-        OptionParser.new do |opts|
-          opts.banner = "Usage: ti comment [tic_id] [options]"
-          opts.on("-m MESSAGE", "--message MESSAGE",
-                  "Message you would like to add as a comment"){|v|
-            options.message = v
-          }
-          opts.on("-f FILE", "--file FILE",
-                  "A file that contains the comment you would like to add"){|v|
-            raise ArgumentError, "Only 1 of -f/--file and -m/--message can be specified" if options.message
-            raise ArgumentError, "File #{v} doesn't exist" unless File.file?(v)
-            raise ArgumentError, "File #{v} must be <= 2048 bytes" unless File.size(v) <= 2048
-            options.file = v
-          }
-        end
+      def parser(opts)
+        opts.banner = "Usage: ti comment [tic_id] [options]"
+        opts.on_head(
+          "-m MESSAGE", "--message MESSAGE",
+          "Message you would like to add as a comment"){|v|
+          options.message = v
+        }
+        opts.on_head(
+          "-f FILE", "--file FILE",
+          "A file that contains the comment you would like to add"){|v|
+          raise ArgumentError, "Only 1 of -f/--file and -m/--message can be specified" if options.message
+          raise ArgumentError, "File #{v} doesn't exist" unless File.file?(v)
+          raise ArgumentError, "File #{v} must be <= 2048 bytes" unless File.size(v) <= 2048
+          options.file = v
+        }
       end
 
       def execute
