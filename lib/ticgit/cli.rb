@@ -43,10 +43,38 @@ module TicGit
     end
 
     def execute!
+<<<<<<< HEAD:lib/ticgit/cli.rb
       COMMANDS.each do |name, meth|
         if name === action
           return send(meth)
         end
+=======
+      case action
+      when 'list':
+        handle_ticket_list
+      when 'state'
+        handle_ticket_state
+      when 'assign'
+        handle_ticket_assign
+      when 'show'
+        handle_ticket_show
+      when 'new'
+        handle_ticket_new
+      when 'checkout', 'co'
+        handle_ticket_checkout
+      when 'comment'
+        handle_ticket_comment
+      when 'tag'
+        handle_ticket_tag
+      when 'recent'
+        handle_ticket_recent
+      when 'milestone'
+        handle_ticket_milestone
+      when 'points'
+        handle_ticket_points
+      else
+        puts 'not a command'
+>>>>>>> remotes/avh4/master:lib/ticgit/cli.rb
       end
 
       puts 'not a command'
@@ -206,6 +234,20 @@ module TicGit
       tic_id = ARGV.size > 1 ? ARGV[1].chomp : nil
       tic.ticket_assign(options[:user], tic_id)
     end
+    
+    # Assigns points to a ticket
+    #
+    # Usage:
+    # ti points {1} {points}   (assigns points to a specified ticket)
+    def handle_ticket_points
+      if ARGV.size > 2
+        tid = ARGV[1].chomp
+        new_points = ARGV[2].chomp
+        tic.ticket_points(new_points, tid)
+      else  
+        puts 'Usage: ti points ticket_id points'
+      end
+    end
 
     ## LIST TICKETS ##
     def parse_ticket_list
@@ -288,6 +330,11 @@ module TicGit
       puts just('Assigned', 10) + ': ' + t.assigned.to_s
       puts just('Opened', 10) + ': ' + t.opened.to_s + ' (' + days_ago + ' days)'
       puts just('State', 10) + ': ' + t.state.upcase
+      if t.points == nil
+        puts just('Points', 10) + ': no estimate'
+      else
+        puts just('Points', 10) + ': ' + t.points.to_s
+      end
       if !t.tags.empty?
         puts just('Tags', 10) + ': ' + t.tags.join(', ')
       end
@@ -377,8 +424,13 @@ module TicGit
 
     def parse_options! #:nodoc:
       if args.empty?
+<<<<<<< HEAD:lib/ticgit/cli.rb
         warn "Please specify at least one action to execute."
         usage
+=======
+        puts "Please specify at least one action to execute."
+        puts " list state show new checkout comment tag assign points "
+>>>>>>> remotes/avh4/master:lib/ticgit/cli.rb
         exit
       end
 

@@ -3,7 +3,7 @@ module TicGit
 
     attr_reader :base, :opts
     attr_accessor :ticket_id, :ticket_name
-    attr_accessor :title, :state, :milestone, :assigned, :opened
+    attr_accessor :title, :state, :milestone, :assigned, :opened, :points
     attr_accessor :comments, :tags, :attachments # arrays
 
     def initialize(base, options = {})
@@ -34,8 +34,6 @@ module TicGit
       t.ticket_name = ticket_name
 
       title, date = self.parse_ticket_name(ticket_name)
-
-      t.title = title
       t.opened = date
 
       ticket_hash['files'].each do |fname, value|
@@ -48,14 +46,18 @@ module TicGit
           case data[0]
           when 'ASSIGNED'
             t.assigned = data[1]
-          when 'COMMENT'
-            t.comments << TicGit::Comment.new(base, fname, value)
-          when 'TAG'
-            t.tags << data[1]
-          when 'STATE'
-            t.state = data[1]
           when 'ATTACHMENT'
             t.attachments << TicGit::Attachment.new(base, fname, value)
+          when 'COMMENT'
+            t.comments << TicGit::Comment.new(base, fname, value)
+          when 'POINTS'
+            t.points = base.git.gblob(value).contents.to_i
+          when 'STATE'
+            t.state = data[1]
+          when 'TAG'
+            t.tags << data[1]
+          when 'TITLE'
+            t.title = base.git.gblob(value).contents
           end
         end
       end
@@ -81,6 +83,7 @@ module TicGit
           base.new_file('TICKET_ID', ticket_name)
           base.new_file('ASSIGNED_' + email, email)
           base.new_file('STATE_' + state, state)
+          base.new_file('TITLE', title)
 
           # add initial comment
           #COMMENT_080315060503045__schacon_at_gmail
@@ -146,6 +149,18 @@ module TicGit
         base.git.remove(File.join(ticket_name,'ASSIGNED_' + assigned))
         base.git.add
         base.git.commit("assigned #{new_assigned} to ticket #{ticket_name}")
+      end
+    end
+
+    def change_points(new_points)
+      return false if new_points == points
+
+      base.in_branch do |wd|
+        Dir.chdir(ticket_name) do
+          base.new_file('POINTS', new_points)
+        end
+        base.git.add
+        base.git.commit("set points to #{new_points} for ticket #{ticket_name}")
       end
     end
 
