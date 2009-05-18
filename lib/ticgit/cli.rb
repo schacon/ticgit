@@ -415,10 +415,6 @@ module TicGit
       puts COMMANDS.keys.sort.join(' ')
     end
 
-    def self.window_width
-      @@window_width
-    end
-
     class << self
       attr_accessor :window_lines, :window_cols
 
