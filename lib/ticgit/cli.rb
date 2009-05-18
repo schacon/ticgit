@@ -1,7 +1,4 @@
 require 'ticgit'
-require 'optparse'
-require 'ostruct'
-require 'set'
 
 # used Cap as a model for this - thanks Jamis
 

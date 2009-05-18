@@ -1,8 +1,3 @@
-require 'logger'
-require 'fileutils'
-require 'yaml'
-require 'set'
-
 module TicGit
   class NoRepoFound < StandardError;end
   class Base
