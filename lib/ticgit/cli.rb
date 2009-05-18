@@ -145,6 +145,7 @@ module TicGit
 
       TIOCGWINSZ_INTEL = 0x5413     # For an Intel processor
       TIOCGWINSZ_PPC   = 0x40087468 # For a PowerPC processor
+      STDOUT_HANDLE    = 0xFFFFFFF5 # For windows
 
       def reset_window_width
         try_using(TIOCGWINSZ_PPC) ||
@@ -153,6 +154,8 @@ module TicGit
           use_fallback
       end
 
+      # Set terminal dimensions using ioctl syscall on *nix platform
+      # TODO: find out what is raised here on windows.
       def try_using(mask)
         buf = [0,0,0,0].pack("S*")
 
@@ -168,7 +171,7 @@ module TicGit
         self.window_lines, self.window_cols = lines, cols if lines and cols
       end
 
-      STDOUT_HANDLE = 0xFFFFFFF5
+      # Determine terminal dimensions on windows platform
       def windows_terminal_size
         m_GetStdHandle = Win32API.new(
           'kernel32', 'GetStdHandle', ['L'], 'L')
