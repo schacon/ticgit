@@ -5,6 +5,21 @@ require 'optparse'
 
 module TicGit
   class CLI
+    COMMANDS = {
+      'assign'    => :handle_ticket_assign,
+      'attach'    => :handle_ticket_attach,
+      'checkout'  => :handle_ticket_checkout,
+      'comment'   => :handle_ticket_comment,
+      'list'      => :handle_ticket_list,
+      'milestone' => :handle_ticket_milestone,
+      'new'       => :handle_ticket_new,
+      'recent'    => :handle_ticket_recent,
+      'show'      => :handle_ticket_show,
+      'state'     => :handle_ticket_state,
+      'tag'       => :handle_ticket_tag,
+    }
+
+
     # The array of (unparsed) command-line options
     attr_reader :action, :options, :args, :tic
 
@@ -28,30 +43,15 @@ module TicGit
     end
 
     def execute!
-      case action
-      when 'list'
-        handle_ticket_list
-      when 'state'
-        handle_ticket_state
-      when 'assign'
-        handle_ticket_assign
-      when 'show'
-        handle_ticket_show
-      when 'new'
-        handle_ticket_new
-      when 'checkout', 'co'
-        handle_ticket_checkout
-      when 'comment'
-        handle_ticket_comment
-      when 'tag'
-        handle_ticket_tag
-      when 'recent'
-        handle_ticket_recent
-      when 'milestone'
-        handle_ticket_milestone
-      else
-        puts 'not a command'
+      COMMANDS.each do |name, meth|
+        if name === action
+          return send(meth)
+        end
       end
+
+      puts 'not a command'
+      usage
+      exit
     end
 
     # tic milestone
@@ -72,6 +72,7 @@ module TicGit
         opts.on("-d MILESTONE", "--delete MILESTONE", "Remove a milestone") do |v|
           @options[:remove] = v
         end
+        opts.on('-h', '--help', 'Show this message'){ puts opts; exit }
       end.parse!
     end
 
@@ -88,6 +89,7 @@ module TicGit
         opts.on("-d", "Remove this tag from the ticket") do |v|
           @options[:remove] = v
         end
+        opts.on('-h', '--help', 'Show this message'){ puts opts; exit }
       end.parse!
     end
 
@@ -122,6 +124,7 @@ module TicGit
           raise ArgumentError, "File #{v} must be <= 2048 bytes" unless File.size(v) <= 2048
           @options[:file] = v
         end
+        opts.on('-h', '--help', 'Show this message'){ puts opts; exit }
       end.parse!
     end
 
@@ -184,6 +187,7 @@ module TicGit
         opts.on("-c TICKET", "--checkout TICKET", "Checkout this ticket") do |v|
           @options[:checkout] = v
         end
+        opts.on('-h', '--help', 'Show this message'){ puts opts; exit }
       end.parse!
     end
 
@@ -226,6 +230,7 @@ module TicGit
         opts.on("-l", "--list", "Show the saved queries") do |v|
           @options[:list] = true
         end
+        opts.on('-h', '--help', 'Show this message'){ puts opts; exit }
       end.parse!
     end
 
@@ -317,6 +322,7 @@ module TicGit
         opts.on("-t TITLE", "--title TITLE", "Title to use for the name of the new ticket") do |v|
           @options[:title] = v
         end
+        opts.on('-h', '--help', 'Show this message'){ puts opts; exit }
       end.parse!
     end
 
@@ -372,13 +378,16 @@ module TicGit
     def parse_options! #:nodoc:
       if args.empty?
         warn "Please specify at least one action to execute."
-        puts " list state show new checkout comment tag assign "
+        usage
         exit
       end
 
       @action = args.first
     end
 
+    def usage
+      puts COMMANDS.keys.sort.join(' ')
+    end
 
     def just(value, size, side = 'l')
       value = value.to_s

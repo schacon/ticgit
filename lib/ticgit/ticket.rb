@@ -44,17 +44,18 @@ module TicGit
         else
           # matching
           data = fname.split('_')
-          if data[0] == 'ASSIGNED'
+
+          case data[0]
+          when 'ASSIGNED'
             t.assigned = data[1]
-          end
-          if data[0] == 'COMMENT'
+          when 'COMMENT'
             t.comments << TicGit::Comment.new(base, fname, value)
-          end
-          if data[0] == 'TAG'
+          when 'TAG'
             t.tags << data[1]
-          end
-          if data[0] == 'STATE'
+          when 'STATE'
             t.state = data[1]
+          when 'ATTACHMENT'
+            t.attachments << TicGit::Attachment.new(base, fname, value)
           end
         end
       end
