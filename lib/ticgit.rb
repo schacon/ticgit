@@ -1,3 +1,7 @@
+require 'optparse'
+require 'ostruct'
+require 'set'
+
 # Add the directory containing this file to the start of the load path if it
 # isn't there already.
 $:.unshift(File.dirname(__FILE__)) unless
@@ -19,10 +23,16 @@ require 'ticgit/cli'
 # Author::    Scott Chacon (mailto:schacon@gmail.com)
 # License::   MIT License
 #
-module TicGit  
+module TicGit
   # options
   #   :logger => Logger.new(STDOUT)
   def self.open(git_dir, options = {})
     Base.new(git_dir, options)
+  end
+
+  class OpenStruct < ::OpenStruct
+    def to_hash
+      @table.dup
+    end
   end
 end
