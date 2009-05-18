@@ -1,6 +1,7 @@
 require 'logger'
 require 'fileutils'
 require 'yaml'
+require 'set'
 
 module TicGit
   class NoRepoFound < StandardError;end
@@ -104,6 +105,29 @@ module TicGit
           puts name + "\t" + opts.inspect
         end
         return false
+      end
+
+      if options.size == 0
+        # default list
+        options[:state] = 'open'
+      end
+
+      # :tag, :state, :assigned
+      if t = options[:tags]
+        t = {false => Set.new, true => Set.new}.merge t.classify { |x| x[0,1] != "-" }
+        t[false].map! { |x| x[1..-1] }
+        ts = ts.reject { |tic| t[true].intersection(tic.tags).empty? } unless t[true].empty?
+        ts = ts.select { |tic| t[false].intersection(tic.tags).empty? } unless t[false].empty?
+      end
+      if s = options[:states]
+        s = {false => Set.new, true => Set.new}.merge s.classify { |x| x[0,1] != "-" }
+        s[true].map! { |x| Regexp.new(x, Regexp::IGNORECASE) }
+        s[false].map! { |x| Regexp.new(x[1..-1], Regexp::IGNORECASE) }
+        ts = ts.select { |tic| s[true].any? { |st| tic.state =~ st } } unless s[true].empty?
+        ts = ts.reject { |tic| s[false].any? { |st| tic.state =~ st } } unless s[false].empty?
+      end
+      if a = options[:assigned]
+        ts = ts.select { |tic| tic.assigned =~ Regexp.new(a, Regexp::IGNORECASE) }
       end
 
       # SORTING

@@ -1,5 +1,6 @@
 require 'ticgit'
 require 'optparse'
+require 'set'
 
 # used Cap as a model for this - thanks Jamis
 
@@ -230,11 +231,17 @@ module TicGit
         opts.on("-o ORDER", "--order ORDER", "Field to order by - one of : assigned,state,date") do |v|
           @options[:order] = v
         end
-        opts.on("-t TAG", "--tag TAG", "List only tickets with specific tag") do |v|
-          @options[:tag] = v
+        opts.on("-t TAG[,TAG]", "--tags TAG[,TAG]", Array,
+                "List only tickets with specific tag(s)",
+                "Prefix the tag with '-' to negate") do |v|
+          @options[:tags] ||= Set.new
+          @options[:tags].merge v
         end
-        opts.on("-s STATE", "--state STATE", "List only tickets in a specific state") do |v|
-          @options[:state] = v
+        opts.on("-s STATE[,STATE]", "--states STATE[,STATE]", Array,
+                "List only tickets in a specific state(s)",
+                "Prefix the state with '-' to negate") do |v|
+          @options[:states] ||= Set.new
+          @options[:states].merge v
         end
         opts.on("-a ASSIGNED", "--assigned ASSIGNED", "List only tickets assigned to someone") do |v|
           @options[:assigned] = v
@@ -256,26 +263,25 @@ module TicGit
 
       if tickets = tic.ticket_list(options)
         counter = 0
+        cols = [80, window_cols].max
 
         puts
         puts [' ', just('#', 4, 'r'),
               just('TicId', 6),
-              just('Title', 25),
+              just('Title', cols - 56),
               just('State', 5),
               just('Date', 5),
               just('Assgn', 8),
               just('Tags', 20) ].join(" ")
 
-        a = []
-        80.times { a << '-'}
-        puts a.join('')
+        puts "-" * cols
 
         tickets.each do |t|
           counter += 1
           tic.current_ticket == t.ticket_name ? add = '*' : add = ' '
           puts [add, just(counter, 4, 'r'),
                 t.ticket_id[0,6],
-                just(t.title, 25),
+                just(t.title, cols - 56),
                 just(t.state, 5),
                 t.opened.strftime("%m/%d"),
                 just(t.assigned_name, 8),
@@ -409,10 +415,71 @@ module TicGit
       puts COMMANDS.keys.sort.join(' ')
     end
 
+    def self.window_width
+      @@window_width
+    end
+
+    class << self
+      attr_accessor :window_lines, :window_cols
+
+      TIOCGWINSZ_INTEL = 0x5413     # For an Intel processor
+      TIOCGWINSZ_PPC   = 0x40087468 # For a PowerPC processor
+
+      def reset_window_width
+        try_using(TIOCGWINSZ_PPC) ||
+        try_using(TIOCGWINSZ_INTEL) ||
+          try_windows ||
+          use_fallback
+      end
+
+      def try_using(mask)
+        buf = [0,0,0,0].pack("S*")
+
+        if $stdout.ioctl(mask, buf) >= 0
+          self.window_lines, self.window_cols = buf.unpack("S2")
+          true
+        end
+      rescue Errno::EINVAL
+      end
+
+      def try_windows
+        lines, cols = windows_terminal_size
+        self.window_lines, self.window_cols = lines, cols if lines and cols
+      end
+
+      STDOUT_HANDLE = 0xFFFFFFF5
+      def windows_terminal_size
+        m_GetStdHandle = Win32API.new(
+          'kernel32', 'GetStdHandle', ['L'], 'L')
+        m_GetConsoleScreenBufferInfo = Win32API.new(
+          'kernel32', 'GetConsoleScreenBufferInfo', ['L', 'P'], 'L' )
+        format = 'SSSSSssssSS'
+        buf = ([0] * format.size).pack(format)
+        stdout_handle = m_GetStdHandle.call(STDOUT_HANDLE)
+
+        m_GetConsoleScreenBufferInfo.call(stdout_handle, buf)
+        (bufx, bufy, curx, cury, wattr,
+         left, top, right, bottom, maxx, maxy) = buf.unpack(format)
+        return bottom - top + 1, right - left + 1
+      end
+
+      def use_fallback
+        self.window_lines, self.window_cols = 25, 80
+      end
+    end
+
+    def window_lines
+      TicGit::CLI.window_lines
+    end
+
+    def window_cols
+      TicGit::CLI.window_cols
+    end
+
     def just(value, size, side = 'l')
       value = value.to_s
       if value.size > size
-        value = value[0, size]
+        value = value[0, size-1] + "\xe2\x80\xa6"
       end
       if side == 'r'
         return value.rjust(size)
@@ -423,3 +490,6 @@ module TicGit
 
   end
 end
+
+TicGit::CLI.reset_window_width
+Signal.trap("SIGWINCH") { TicGit::CLI.reset_window_width }
