@@ -14,9 +14,6 @@ require 'rubygems'
 # requires git >= 1.0.5
 require 'git'
 require 'ticgit/base'
-require 'ticgit/ticket'
-require 'ticgit/comment'
-
 require 'ticgit/cli'
 
 # TicGit Library
@@ -27,6 +24,10 @@ require 'ticgit/cli'
 # License::   MIT License
 #
 module TicGit
+  autoload :VERSION, 'ticgit/version'
+  autoload :Comment, 'ticgit/comment'
+  autoload :Ticket, 'ticgit/ticket'
+
   # options
   #   :logger => Logger.new(STDOUT)
   def self.open(git_dir, options = {})
