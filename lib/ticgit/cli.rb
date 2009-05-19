@@ -187,15 +187,39 @@ module TicGit
       TicGit::CLI.window_cols
     end
 
-    def just(value, size, side = 'l')
-      value = value.to_s
-      if value.size > size
-        value = value[0, size-1] + "\xe2\x80\xa6"
+    if ''.respond_to?(:chars)
+      # assume 1.9
+      def just(value, size, side = :left)
+        value = value.to_s
+
+        if value.bytesize > size
+          sub_value = "#{value[0, size - 1]}\xe2\x80\xa6"
+        else
+          sub_value = value[0, size]
+        end
+
+        just_common(sub_value, size, side)
       end
-      if side == 'r'
-        return value.rjust(size)
-      else
-        return value.ljust(size)
+    else
+      def just(value, size, side = :left)
+        chars = value.to_s.scan(/./um)
+
+        if chars.size > size
+          sub_value = "#{chars[0, size-1]}\xe2\x80\xa6"
+        else
+          sub_value = chars.join
+        end
+
+        just_common(sub_value, size, side)
+      end
+    end
+
+    def just_common(value, size, side)
+      case side
+      when :r, :right
+        value.rjust(size)
+      when :l, :left
+        value.ljust(size)
       end
     end
   end
