@@ -175,6 +175,7 @@ module TicGit
         (bufx, bufy, curx, cury, wattr,
          left, top, right, bottom, maxx, maxy) = buf.unpack(format)
         return bottom - top + 1, right - left + 1
+      rescue NameError
       end
 
       def use_fallback
