@@ -1,40 +1,34 @@
-require 'rubygems'
+require 'rake'
+require 'rake/clean'
 require 'rake/gempackagetask'
-require 'spec/rake/spectask'
+require 'time'
+require 'date'
 
-spec = eval(File.read('ticgit.gemspec'))
+PROJECT_SPECS = Dir['spec/ticgit/**/*.rb']
+PROJECT_MODULE = 'Foo'
+PROJECT_VERSION = ENV['VERSION'] || Date.today.strftime("%Y.%m.%d")
 
-Rake::GemPackageTask.new(spec) do |pkg|
-    pkg.need_tar = true
-end
+GEMSPEC = Gem::Specification.new{|s|
+  s.name         = 'Ticgit'
+  s.version      = PROJECT_VERSION
+  s.author       = "Michael 'manveru' Fellinger"
+  s.summary      = "A distributed ticketing system for git projects."
+  # s.description  = "A distributed ticketing system for git projects."
+  s.email        = 'm.fellinger@gmail.com'
+  s.homepage     = 'http://github.com/manveru/ticgit'
+  s.bindir       = 'bin'
+  s.executables  = %w[ti ticgitweb]
+  s.files        = `git ls-files`.split("\n").sort
+  s.has_rdoc     = true
+  s.platform     = Gem::Platform::RUBY
+  s.require_path = 'lib'
+  s.default_executable = s.executables.first
 
-desc "Run all specs in spec directory"
-Spec::Rake::SpecTask.new(:spec) do |t|
-  t.spec_files = FileList['spec/**/*_spec.rb']
-  t.spec_opts = ['--color']
-end
+  s.add_dependency('git', '~> 1.0.5')
+}
 
-namespace :spec do
+Dir['tasks/*.rake'].each{|f| import(f) }
 
-  desc "Run rcov on the spec files"
-  Spec::Rake::SpecTask.new(:coverage) do |t|
-    t.spec_files = FileList['spec/**/*_spec.rb']
-    t.spec_opts = ['--color']
-    t.rcov = true
-    t.rcov_opts = ['--exclude', 'spec\/spec,bin\/spec,examples,\/var\/lib\/gems,\/Library\/Ruby,\.autotest']
-  end
+task :default => [:bacon]
 
-end
-
-desc "Clean out the coverage and pkg directories"
-task :clean do
-  rm_rf 'coverage'
-  rm_rf 'pkg'
-  rm Dir.glob('ticgit*gem')
-end
-
-task :default => "pkg/#{spec.name}-#{spec.version}.gem" do
-    puts "generated latest version"
-end
-
-Dir['tasks/**/*.rake'].each { |rake| load rake }
+CLEAN.include('')
