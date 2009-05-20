@@ -24,7 +24,7 @@ GEMSPEC = Gem::Specification.new{|s|
   s.require_path = 'lib'
   s.default_executable = s.executables.first
 
-  s.add_dependency('git', '~> 1.0.5')
+  s.add_dependency('git', '>= 1.0.5')
 }
 
 Dir['tasks/*.rake'].each{|f| import(f) }
