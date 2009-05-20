@@ -292,7 +292,8 @@ module TicGit
 
       in_branch(ticgit_branch) do
         new_file('.hold', 'hold')
-        if !ticgit_branch
+
+        unless ticgit_branch
           git.add
           git.commit('creating the ticgit branch')
         end
@@ -302,13 +303,13 @@ module TicGit
     # temporarlily switches to ticgit branch for tic work
     def in_branch(branch_exists = true)
       needs_checkout = false
-      if !File.directory?(@tic_working)
+
+      unless File.directory?(@tic_working)
         FileUtils.mkdir_p(@tic_working)
         needs_checkout = true
       end
-      if !File.exists?('.hold')
-        needs_checkout = true
-      end
+
+      needs_checkout = true unless File.file?('.hold')
 
       old_current = git.lib.branch_current
       begin
@@ -325,9 +326,7 @@ module TicGit
     end
 
     def new_file(name, contents)
-      File.open(name, 'w') do |f|
-        f.puts contents
-      end
+      File.open(name, 'w+'){|f| f.puts(contents) }
     end
 
   end
