@@ -29,7 +29,7 @@ module TicGit
 
       @state = File.expand_path(File.join(@tic_dir, proj, 'state'))
 
-      if File.exists?(@state)
+      if File.file?(@state)
         load_state
       else
         reset_ticgit
@@ -44,18 +44,18 @@ module TicGit
       end
     end
 
+    # marshal dump the internals
+    # save config file
     def save_state
-      # marshal dump the internals
-      File.open(@state, 'w') { |f| Marshal.dump([@tickets, @last_tickets, @current_ticket], f) } rescue nil
-      # save config file
-      File.open(@config_file, 'w') { |f| f.write(config.to_yaml) }
+      state_list = [@tickets, @last_tickets, @current_ticket]
+      File.open(@state, 'w+'){|io| Marshal.dump(state_list, io) }
+      File.open(@config_file, 'w+'){|io| io.write(config.to_yaml) }
     end
 
+    # read in the internals
     def load_state
-      # read in the internals
-      if(File.exists?(@state))
-        @tickets, @last_tickets, @current_ticket = File.open(@state) { |f| Marshal.load(f) } rescue nil
-      end
+      state_list = File.open(@state){|io| Marshal.load(io) }
+      @tickets, @last_tickets, @current_ticket = state_list
     end
 
     # returns new Ticket
@@ -164,7 +164,7 @@ module TicGit
         @config['list_options'][save] = options
       end
 
-      @last_tickets = ts.map { |t| t.ticket_name }
+      @last_tickets = ts.map{|t| t.ticket_name }
       # :save
 
       save_state
@@ -268,8 +268,11 @@ module TicGit
     def load_tickets
       @tickets = {}
 
-      bs = git.lib.branches_all.map { |b| b[0] }
-      init_ticgit_branch(bs.include?('ticgit')) if !(bs.include?('ticgit') && File.directory?(@tic_working))
+      bs = git.lib.branches_all.map{|b| b.first }
+
+      unless bs.include?('ticgit') && File.directory?(@tic_working)
+        init_ticgit_branch(bs.include?('ticgit'))
+      end
 
       tree = git.lib.full_tree('ticgit')
       tree.each do |t|
