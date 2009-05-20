@@ -1,2 +1,0 @@
-require 'cucumber'
-require 'spec'
