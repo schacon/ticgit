@@ -12,10 +12,10 @@ module TicGit
       def execute
         case args.size
         when 1
-          new_points = args[0].strip
+          new_points = args[0].to_i
         when 2
           tid = args[0]
-          new_points = args[0].strip
+          new_points = args[1].to_i
         else
           puts usage
           exit 1
