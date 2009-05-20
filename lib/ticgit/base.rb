@@ -11,6 +11,7 @@ module TicGit
     def initialize(git_dir, opts = {})
       @git = Git.open(find_repo(git_dir))
       @logger = opts[:logger] || Logger.new(STDOUT)
+      @last_tickets = []
 
       proj = Ticket.clean_string(@git.dir.path)
 
