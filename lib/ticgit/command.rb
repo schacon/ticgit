@@ -64,8 +64,10 @@ module TicGit
         if block_given?
           yield(o) if block_given?
           unless o.top.list.empty?
-            o.top.prepend "Options for #{action} command:", nil, nil
-            o.top.prepend ' ', nil, nil
+            if action
+              o.top.prepend "Options for #{action} command:", nil, nil
+              o.top.prepend ' ', nil, nil
+            end
           end
         end
       end
