@@ -16,12 +16,15 @@ module TicGit
     end
 
     attr_reader :action, :options, :args, :tic
+    attr_accessor :out
 
-    def initialize(args)
+    def initialize(args, path = '.', out = $stdout)
       @args = args.dup
-      @tic = TicGit.open('.', :keep_state => true)
+      @tic = TicGit.open(path, :keep_state => true)
       @options = OpenStruct.new
-      $stdout.sync = true # so that Net::SSH prompts show up
+      @out = out
+
+      @out.sync = true # so that Net::SSH prompts show up
     rescue NoRepoFound
       puts "No repo found"
       exit
@@ -221,6 +224,10 @@ module TicGit
       when :l, :left
         value.ljust(size)
       end
+    end
+
+    def puts(*strings)
+      strings.each{|string| @out.puts(string) }
     end
   end
 end
