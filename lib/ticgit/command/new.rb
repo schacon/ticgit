@@ -10,7 +10,7 @@ module TicGit
 
       def execute
         if title = options.title
-          ticket_show(tic.ticket_new(title, options))
+          ticket_show(tic.ticket_new(title, options.to_hash))
         else
           # interactive
           message_file = Tempfile.new('ticgit_message').path
