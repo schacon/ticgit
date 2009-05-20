@@ -6,7 +6,7 @@ module TicGit
         o.banner = "Usage: ti list [options]"
         o.on_head(
           "-o ORDER", "--order ORDER",
-          "Field to order by - one of : assigned,state,date"){|v|
+          "Field to order by - one of : assigned,state,date,title"){|v|
           options.order = v
         }
 

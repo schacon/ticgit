@@ -128,18 +128,18 @@ module TicGit
       # SORTING
       if field = options[:order]
         field, type = field.split('.')
+
         case field
-        when 'assigned'
-          ts = ts.sort { |a, b| a.assigned <=> b.assigned }
-        when 'state'
-          ts = ts.sort { |a, b| a.state <=> b.state }
-        when 'date'
-          ts = ts.sort { |a, b| a.opened <=> b.opened }
+        when 'assigned'; ts = ts.sort_by{|a| a.assigned }
+        when 'state';    ts = ts.sort_by{|a| a.state }
+        when 'date';     ts = ts.sort_by{|a| a.opened }
+        when 'title';    ts = ts.sort_by{|a| a.title }
         end
+
         ts = ts.reverse if type == 'desc'
       else
         # default list
-        ts = ts.sort { |a, b| a.opened <=> b.opened }
+        ts = ts.sort_by{|a| a.opened }
       end
 
       if options.size == 0
