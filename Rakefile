@@ -9,7 +9,7 @@ PROJECT_MODULE = 'Foo'
 PROJECT_VERSION = ENV['VERSION'] || Date.today.strftime("%Y.%m.%d")
 
 GEMSPEC = Gem::Specification.new{|s|
-  s.name         = 'Ticgit'
+  s.name         = 'ticgit'
   s.version      = PROJECT_VERSION
   s.author       = "Michael 'manveru' Fellinger"
   s.summary      = "A distributed ticketing system for git projects."
