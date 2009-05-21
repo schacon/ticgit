@@ -92,33 +92,35 @@ module TicGit
     end
 
     def ticket_show(t)
-      days_ago = ((Time.now - t.opened) / (60 * 60 * 24)).round.to_s
-      puts
-      puts just('Title', 10) + ': ' + t.title
-      puts just('TicId', 10) + ': ' + t.ticket_id
-      puts
-      puts just('Assigned', 10) + ': ' + t.assigned.to_s
-      puts just('Opened', 10) + ': ' + t.opened.to_s + ' (' + days_ago + ' days)'
-      puts just('State', 10) + ': ' + t.state.upcase
-      if t.points == nil
-        puts just('Points', 10) + ': no estimate'
-      else
-        puts just('Points', 10) + ': ' + t.points.to_s
-      end
-      if !t.tags.empty?
-        puts just('Tags', 10) + ': ' + t.tags.join(', ')
-      end
-      puts
-      if !t.comments.empty?
-        puts 'Comments (' + t.comments.size.to_s + '):'
-        t.comments.reverse.each do |c|
-          puts '  * Added ' + c.added.strftime("%m/%d %H:%M") + ' by ' + c.user
+      days_ago = ((Time.now - t.opened) / (60 * 60 * 24)).round
 
-          wrapped = c.comment.split("\n").collect do |line|
+      data = [
+        ['Title',    t.title],
+        ['TicId',    t.ticket_id],
+        '',
+        ['Assigned', t.assigned],
+        ['Opened',   "#{t.opened} (#{days_ago} days)"],
+        ['State',    t.state.upcase],
+        ['Points',   t.points || 'no estimate'],
+        ['Tags',     t.tags.join(', ')],
+        ''
+      ]
+
+      data.each do |(key, value)|
+        puts(value ? "#{key}: #{value}" : key)
+      end
+
+      unless t.comments.empty?
+        puts "Comments (#{t.comments.size}):"
+        t.comments.reverse_each do |c|
+          puts "  * Added #{c.added.strftime('%m/%d %H:%M')} by #{c.user}"
+
+          wrapped = c.comment.split("\n").map{|line|
             line.length > 80 ? line.gsub(/(.{1,80})(\s+|$)/, "\\1\n").strip : line
-          end * "\n"
+          }.join("\n")
 
-          wrapped = wrapped.split("\n").map { |line| "\t" + line }
+          wrapped = wrapped.split("\n").map{|line| "\t#{line}" }
+
           if wrapped.size > 6
             puts wrapped[0, 6].join("\n")
             puts "\t** more... **"
@@ -193,7 +195,7 @@ module TicGit
 
     if ''.respond_to?(:chars)
       # assume 1.9
-      def just(value, size, side = :left)
+      def just(value, size = 10, side = :left)
         value = value.to_s
 
         if value.bytesize > size
@@ -205,7 +207,7 @@ module TicGit
         just_common(sub_value, size, side)
       end
     else
-      def just(value, size, side = :left)
+      def just(value, size = 10, side = :left)
         chars = value.to_s.scan(/./um)
 
         if chars.size > size
@@ -228,7 +230,7 @@ module TicGit
     end
 
     def puts(*strings)
-      strings.each{|string| @out.puts(string) }
+      @out.puts(*strings)
     end
   end
 end
