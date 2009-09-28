@@ -212,7 +212,7 @@ module TicGit
     def ticket_tag(tag, ticket_id = nil, options = {})
       if t = ticket_revparse(ticket_id)
         ticket = TicGit::Ticket.open(self, t, @tickets[t])
-        if options[:remove]
+        if options.remove
           ticket.remove_tag(tag)
         else
           ticket.add_tag(tag)
