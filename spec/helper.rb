@@ -2,6 +2,7 @@ require 'tmpdir'
 require 'set'
 require 'stringio'
 require 'enumerator'
+require 'rubygems'
 require 'bacon'
 
 require File.expand_path("../../lib/ticgit", __FILE__)
