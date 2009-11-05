@@ -91,7 +91,7 @@ module TicGit
       end
     end
 
-    def ticket_show(t)
+    def ticket_show(t, more=nil)
       days_ago = ((Time.now - t.opened) / (60 * 60 * 24)).round
 
       data = [
@@ -121,7 +121,7 @@ module TicGit
 
           wrapped = wrapped.split("\n").map{|line| "\t#{line}" }
 
-          if wrapped.size > 6
+          if wrapped.size > 6 and more.nil?
             puts wrapped[0, 6].join("\n")
             puts "\t** more... **"
           else
