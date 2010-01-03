@@ -174,6 +174,7 @@ module TicGit
     # returns single Ticket
     def ticket_show(ticket_id = nil)
       # ticket_id can be index of last_tickets, partial sha or nil => last ticket
+      reset_ticgit
       if t = ticket_revparse(ticket_id)
         return TicGit::Ticket.open(self, t, @tickets[t])
       end
