@@ -268,7 +268,7 @@ module TicGit
     end
 
     def sync_tickets
-      Dir.chdir "../tidyapp_bugs" 
+      #Dir.chdir "../tidyapp_bugs" 
       #bs = git.lib.branches_all.map{|b| b.first }
 
       #unless bs.include?('ticgit') && File.directory?(@tic_working)
