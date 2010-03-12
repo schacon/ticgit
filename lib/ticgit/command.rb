@@ -21,6 +21,7 @@ module TicGit
     register 'Show', 'Show a ticket', 'show'
     register 'State', 'Change state of a ticket', 'state'
     register 'Tag', 'Modify tags of a ticket', 'tag'
+    register 'Sync', 'Sync tickets', 'sync'
 
     def self.get(command)
       if mod_name = COMMANDS[command]

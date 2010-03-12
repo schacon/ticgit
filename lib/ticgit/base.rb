@@ -267,6 +267,32 @@ module TicGit
       ['open', 'resolved', 'invalid', 'hold']
     end
 
+    def sync_tickets
+      Dir.chdir "../tidyapp_bugs" 
+      #bs = git.lib.branches_all.map{|b| b.first }
+
+      #unless bs.include?('ticgit') && File.directory?(@tic_working)
+      #  init_ticgit_branch(bs.include?('ticgit'))
+      #end
+      
+      puts "checking out ticgit"
+      #in_branch(bs.include?('ticgit'))  do
+      #puts git.branch('ticgit').checkout()
+      #   puts git.pull('origin','origin/ticgit')
+      #puts git.branch('master').checkout()
+      #end
+      
+      in_branch('ticgit') do 
+         #puts git.add('.')
+         #puts git.commit('tickets update')
+         puts git.pull('origin','origin/ticgit')
+         #puts git.push('origin','origin/ticgit')
+         puts
+         puts "Tickets synchronized."
+      end
+       
+    end
+
     def load_tickets
       @tickets = {}
 
