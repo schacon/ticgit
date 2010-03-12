@@ -286,7 +286,7 @@ module TicGit
          #puts git.add('.')
          #puts git.commit('tickets update')
          puts git.pull('origin','origin/ticgit')
-         puts git.push('','')
+         puts git.push('origin','')
          puts
          puts "Tickets synchronized."
       end
