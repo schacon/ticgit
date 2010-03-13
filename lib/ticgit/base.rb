@@ -195,7 +195,7 @@ module TicGit
     def ticket_revparse(ticket_id)
       if ticket_id
         ticket_id = ticket_id.strip
-
+        
         if /^[0-9]*$/ =~ ticket_id
           if t = @last_tickets[ticket_id.to_i - 1]
             return t
@@ -267,30 +267,12 @@ module TicGit
       ['open', 'resolved', 'invalid', 'hold']
     end
 
-    def sync_tickets
-      #Dir.chdir "../tidyapp_bugs" 
-      bs = git.lib.branches_all.map{|b| b.first }
-
-      #unless bs.include?('ticgit') && File.directory?(@tic_working)
-      #  init_ticgit_branch(bs.include?('ticgit'))
-      #end
-      
-      puts "checking out ticgit"
-      #in_branch(bs.include?('ticgit'))  do
-      #puts git.branch('ticgit').checkout()
-      #   puts git.pull('origin','origin/ticgit')
-      #puts git.branch('master').checkout()
-      #end
-      
-      in_branch(bs.include?('ticgit')) do 
-         #puts git.add('.')
-         #puts git.commit('tickets update')
-         puts git.pull('origin','origin/ticgit')
-         puts git.push('origin','ticgit')
-         puts
+    def sync_tickets      
+      in_branch(false) do 
+         git.pull('origin','origin/ticgit')
+         git.push('origin', 'ticgit:ticgit')
          puts "Tickets synchronized."
       end
-       
     end
 
     def load_tickets
