@@ -269,7 +269,7 @@ module TicGit
 
     def sync_tickets
       #Dir.chdir "../tidyapp_bugs" 
-      #bs = git.lib.branches_all.map{|b| b.first }
+      bs = git.lib.branches_all.map{|b| b.first }
 
       #unless bs.include?('ticgit') && File.directory?(@tic_working)
       #  init_ticgit_branch(bs.include?('ticgit'))
@@ -282,11 +282,11 @@ module TicGit
       #puts git.branch('master').checkout()
       #end
       
-      in_branch('ticgit') do 
+      in_branch(bs.include?('ticgit')) do 
          #puts git.add('.')
          #puts git.commit('tickets update')
          puts git.pull('origin','origin/ticgit')
-         puts git.push('origin','')
+         puts git.push('origin','ticgit')
          puts
          puts "Tickets synchronized."
       end
