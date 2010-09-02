@@ -29,26 +29,26 @@ module TicGit
     
     def execute!
       case action
-      when 'list':
-        handle_ticket_list
-      when 'state'
-        handle_ticket_state
-      when 'assign'
-        handle_ticket_assign
-      when 'show'
-        handle_ticket_show
-      when 'new'
-        handle_ticket_new
-      when 'checkout', 'co'
-        handle_ticket_checkout
-      when 'comment'
-        handle_ticket_comment
-      when 'tag'
-        handle_ticket_tag
-      when 'recent'
-        handle_ticket_recent
-      when 'milestone'
-        handle_ticket_milestone
+	when 'list':
+	  handle_ticket_list
+	when 'state'
+	  handle_ticket_state
+	when 'assign'
+	  handle_ticket_assign
+	when 'show'
+	  handle_ticket_show
+	when 'new'
+	  handle_ticket_new
+	when 'checkout', 'co'
+	  handle_ticket_checkout
+	when 'comment'
+	  handle_ticket_comment
+	when 'tag'
+	  handle_ticket_tag
+	when 'recent'
+	  handle_ticket_recent
+	when 'milestone'
+	  handle_ticket_milestone
       else
         puts 'not a command'
       end
