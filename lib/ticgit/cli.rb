@@ -29,6 +29,8 @@ module TicGit
     
     def execute!
       case action
+	when 'help':
+	  handle_help
 	when 'list':
 	  handle_ticket_list
 	when 'state'
@@ -91,6 +93,12 @@ module TicGit
       end.parse!
     end
     
+    def handle_help
+      warn 'Please specify at least one action to execute:'
+      puts '  assign checkout comment help list new show state tag'
+      exit
+    end
+
     def handle_ticket_tag
       parse_ticket_tag
       
@@ -371,9 +379,7 @@ module TicGit
     
     def parse_options! #:nodoc:      
       if args.empty?
-        warn "Please specify at least one action to execute."
-        puts " list state show new checkout comment tag assign "
-        exit
+	  handle_help
       end
 
       @action = args.first
