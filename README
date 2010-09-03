@@ -4,36 +4,79 @@ TicGit Distributed Ticketing System
 This project provides a ticketing system built on Git that is kept in a 
 separate branch in your projects Git repository.
 
+
+Prerequisites
+===================================
+It is assumed that you already have a recent version of the Git revision
+control system installed. If it is not available through your package
+manager, you can download the latest Git source code from
+http://git-scm.com/ instead.
+
+It is also assumed that you have a recent version of rubygems installed.
+Older versions, such as the one available on Debian 5.0.5, will not work
+out of the box with the new gem repositories. If you are running an
+older version of rubygems, you may need to get the latest rubygems
+package from http://rubygems.org/ before being able to properly install
+the git and ticgit gems.
+
+
 Installing
 ===================================
-You will need the 'git' gem (ver 1.0.5) to use this. Then you can run :
+You will also need to install the 'git' gem (version >= 1.0.5) before
+installing or using TicGit. To install the git gem as root using
+rubygems >= 1.3.7:
 
-rake
-sudo gem install pkg/ticgit-0.1.0.gem 
+    sudo gem install git
+
+If you do not have root access, or do not wish to make system changes
+without going through your distribution's package manager, you can place
+the following into your $HOME/.bashrc file:
+
+    export GEM_HOME=~/gems
+    export RUBYOPT=rubygems 
+    export PATH=$HOME/gems/bin:$PATH
+
+Source your .bashrc, and you should now be able to install gems into a
+non-system directory without root privileges:
+
+    gem install git
+
+Once you have the git gem installed, change into the root of your ticgit
+source tree. You can now build and install the ticgit-0.3.7 gem file,
+with or without sudo:
+
+    rake
+    [sudo] gem install pkg/ticgit-0.3.7.gem 
 
 
 Usage
 ===================================
-See http://github.com/schacon/ticgit/wikis for a bunch of examples
+See http://github.com/schacon/ticgit/wikis for a bunch of examples. For
+a quick start, here is a brief explanation of the basic commands:
 
-ti list - show all tickets
+    ti help - show all available commands
 
-ti show - show details of a specific ticket
+    ti assign - change to whom a ticket is assigned
 
-ti new - create a new ticket
+    ti checkout - checkout a ticket
 
-ti checkout - checkout a ticket
+    ti comment - add a comment to a ticket
 
-ti state - change a ticket state (open, resolved, invalid, hold)
+    ti list - show all tickets
 
-ti comment - add a comment to a ticket
+    ti new - create a new ticket
 
-ti tag - add or delete a tag from a ticket
+    ti show - show details of a specific ticket
 
-ti assign - change to whom a ticket is assigned
+    ti state - change a ticket state (open, resolved, invalid, hold)
+
+    ti tag - add or delete a tag from a ticket
+
+Most commands can also take an -h flag for additional detail about
+command-specific options.
 
 
 Authors
 ===================================
-Scott Chacon  (schacon@gmail.com)
- 
+Scott Chacon <schacon -AT- gmail.com>
+"Todd A. Jacobs" <codegnome.consulting+ticgit -AT- gmail.com> 
