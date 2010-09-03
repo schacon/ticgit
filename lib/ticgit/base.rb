@@ -195,7 +195,7 @@ module TicGit
     def ticket_revparse(ticket_id)
       if ticket_id
         ticket_id = ticket_id.strip
-
+        
         if /^[0-9]*$/ =~ ticket_id
           if t = @last_tickets[ticket_id.to_i - 1]
             return t
@@ -265,6 +265,14 @@ module TicGit
 
     def tic_states
       ['open', 'resolved', 'invalid', 'hold']
+    end
+
+    def sync_tickets      
+      in_branch(false) do 
+         git.pull('origin','origin/ticgit')
+         git.push('origin', 'ticgit:ticgit')
+         puts "Tickets synchronized."
+      end
     end
 
     def load_tickets

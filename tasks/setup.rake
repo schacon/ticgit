@@ -15,7 +15,7 @@
 # Please be patient.
 
 desc 'install dependencies'
-task :setup do
+task :setup => :gem_installer do
   GemInstaller.new do
     gem 'git', '>= 1.0.5'
 
