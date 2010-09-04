@@ -51,11 +51,12 @@ task :clean do
 end
 
 task :make => "pkg/#{spec.name}-#{spec.version}.gem" do
-  puts "Generated #{spec.name}-#{spec.version}.gem"
+  puts "Generating #{spec.name}-#{spec.version}.gem"
 end
 
 task :install do
-  system "gem install pkg/#{spec.name}-#{spec.version}.gem"
+    puts "Installing #{spec.name}-#{spec.version}.gem ..."
+    system "gem install pkg/#{spec.name}-#{spec.version}.gem"
 end
 
 task :default => [:make, :install]
