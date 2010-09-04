@@ -1,6 +1,5 @@
 TicGit Distributed Ticketing System
 ===================================
-
 This project provides a ticketing system built on Git that is kept in a 
 separate branch in your projects Git repository.
 
@@ -22,11 +21,11 @@ the git and ticgit gems.
 
 Installing
 ===================================
-You will also need to install the 'git' gem (version >= 1.0.5) before
-installing or using TicGit. To install the git gem as root using
-rubygems >= 1.3.7:
+Install the bundler gem and run rake from the top of the source tree to
+install TicGit. To install as root:
 
-    sudo gem install git
+    sudo gem install bundler
+    sudo rake
 
 If you do not have root access, or do not wish to make system changes
 without going through your distribution's package manager, you can place
@@ -39,14 +38,8 @@ the following into your $HOME/.bashrc file:
 Source your .bashrc, and you should now be able to install gems into a
 non-system directory without root privileges:
 
-    gem install git
-
-Once you have the git gem installed, change into the root of your ticgit
-source tree. You can now build and install the ticgit-0.3.7 gem file,
-with or without sudo:
-
+    gem install bundler
     rake
-    [sudo] gem install pkg/ticgit-0.3.7.gem 
 
 
 Usage
@@ -54,23 +47,15 @@ Usage
 See http://github.com/schacon/ticgit/wikis for a bunch of examples. For
 a quick start, here is a brief explanation of the basic commands:
 
-    ti help - show all available commands
-
-    ti assign - change to whom a ticket is assigned
-
+    ti help     - show all available commands
+    ti assign   - change to whom a ticket is assigned
     ti checkout - checkout a ticket
-
-    ti comment - add a comment to a ticket
-
-    ti list - show all tickets
-
-    ti new - create a new ticket
-
-    ti show - show details of a specific ticket
-
-    ti state - change a ticket state (open, resolved, invalid, hold)
-
-    ti tag - add or delete a tag from a ticket
+    ti comment  - add a comment to a ticket
+    ti list     - show all tickets
+    ti new      - create a new ticket
+    ti show     - show details of a specific ticket
+    ti state    - change a ticket state (open, resolved, invalid, hold)
+    ti tag      - add or delete a tag from a ticket
 
 Most commands can also take an -h flag for additional detail about
 command-specific options.
@@ -78,5 +63,4 @@ command-specific options.
 
 Authors
 ===================================
-Scott Chacon <schacon -AT- gmail.com>
-"Todd A. Jacobs" <codegnome.consulting+ticgit -AT- gmail.com> 
+See AUTHORS file.
