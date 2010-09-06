@@ -21,9 +21,10 @@ the git and ticgit gems.
 
 Installing
 ===================================
-Install the bundler gem and run rake from the top of the source tree to
-install TicGit. To install as root:
+Install the rake and bundler gems, and then run rake from the top of the
+source tree to install TicGit. To install as root:
 
+    sudo gem install rake
     sudo gem install bundler
     sudo rake
 
@@ -38,6 +39,7 @@ the following into your $HOME/.bashrc file:
 Source your .bashrc, and you should now be able to install gems into a
 non-system directory without root privileges:
 
+    gem install rake
     gem install bundler
     rake
 
