@@ -1,8 +1,19 @@
-### TicGit Distributed Ticketing System ###
+## TicGit ##
 
 This project provides a ticketing system built on Git that is kept in a
 separate branch in your projects Git repository.
 
+### About ###
+
+TicGit is a simple ticketing system, roughly similar to the Lighthouse model, that is based in git. It provides a command line client that uses the ‘git’ gem to keep its ticketing information in a separate branch (called ‘ticgit’) within your existing git repository. All the data is file based and rarely changing, decreasing the likelihood of a merge issue. Right now, ticket branch merges need to be done manually and separately, but work is being done on a `ti sync` command to make this easier and more intuitive.
+
+The idea is that it keeps your tickets in the same repository, but without mucking up your working tree. By using its own seperate branch to store its information it keeps the working trees in all your other branches untouched.
+
+There are two interfaces available, the command line `ti` command and the `ticgitweb` web interface, though `ticgitweb` has many more prerequisites than `ti`.
+
+It will automatically create the new branch the first time you use it, and it caches all the data (another working directory and index file) in your ~/.ticgit directory by default. If you delete that directory, it will just create it again the next time, you will lose no data (except some of your saved preferences).
+
+TicGit is currently using itself to store its feature requests and bug reports.
 
 ### Installing ###
 Installation on a Debian stable system.  The presumption is made that you already have `git-core` installed and are using git for your software development.  Note that the command line interface for ticgit can be run from Debian stable, but some of the gems required for the web interface may require you to use [apt](http://jaqque.sbih.org/kplug/apt-pinning.html) [pinning](http://jeffwelling.github.com//2010/09/05/Apt-Pinning.html) to run without errors.  See below. 
@@ -12,10 +23,12 @@ If you know what rake is and know you already have it installed, you can use the
 There are two parts to ticgit, the command line interface `ti` and the optional web based interface `ticgitweb`.  To install the dependencies for either one, do
 
 *ti*
+    sudo aptitude install rubygems
     sudo gem install git
 
 *ticgitweb*
 
+    sudo aptitude install rubygems
     sudo gem install ticgit sinatra haml sass
 
 
