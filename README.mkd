@@ -19,7 +19,7 @@ TicGit is currently using itself to store its feature requests and bug reports.
 
 It is assumed that you already have a recent version of the Git revision control system installed. If it is not available through your package manager, you can download the latest Git source code from http://git-scm.com/ instead.
 
-It is also assumed that you have a recent version of rubygems installed.  Older versions, such as the one available on Debian 5.0.5, will not work out of the box with the new gem repositories because the .deb in stable relies on rubyforge rather than rubygems for its operations. See [this bug](http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=558251) for an example. I'm not saying it can't work, just that it doesn't out of the box. If you are running an older version of rubygems, you may need to get the latest rubygems package from http://rubygems.org/ or [apt](http://jaqque.sbih.org/kplug/apt-pinning.html) [pinning](http://jeffwelling.github.com//2010/09/05/Apt-Pinning.html) before being able to properly install the git and ticgit gems.
+It is also assumed that you have a recent version of rubygems installed.  Older versions, such as the one available on Debian 5.0.5, will not work out of the box with the new gem repositories because the .deb in stable relies on rubyforge rather than rubygems for its operations. See [this bug](http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=558251) for an example. If you are running an older version of rubygems, you may need to get the latest rubygems package from http://rubygems.org/ or [apt](http://jaqque.sbih.org/kplug/apt-pinning.html) [pinning](http://jeffwelling.github.com//2010/09/05/Apt-Pinning.html) before being able to properly install the git and ticgit gems.
 
 
 ### Installing ###
