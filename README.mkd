@@ -151,3 +151,5 @@ Scott Chacon                (schacon@gmail.com)
 
 Current Active Maintainer:
 Jeff Welling                (jeff.welling@gmail.com)
+
+For a detailed list of all contributors and the number of submitted patches for each, see the AUTHORS file.
