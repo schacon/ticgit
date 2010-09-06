@@ -6,12 +6,13 @@ separate branch in your projects Git repository.
 
 Prerequisites
 ===================================
-This README assumes that you already have a recent version of rubygems
+This README assumes that you already have a recent version of RubyGems
 installed on your system. Older versions, such as the one available on
 Debian 5.0.5, will not work out of the box with some of the new gem
-repositories. If you are running an older version of rubygems, you may
-need to get the latest rubygems package from http://rubygems.org/ before
-being able to complete the installation.
+repositories. In addition, Bundler requires RubyGems >= 1.3.6. If you
+are running an older version of RubyGems, you may need to get the latest
+rubygems package from http://rubygems.org/ before being able to complete
+the installation.
 
 You must also have a recent version of the Git revision control system
 installed. If it is not available through your package manager, you can
