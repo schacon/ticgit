@@ -5,10 +5,18 @@ separate branch in your projects Git repository.
 
 
 ### Installing ###
+Installation on a Debian stable system.  The presumption is made that you already have git-core installed and are using it for your software development.
 
-TicGit depends on the 'git' gem (>= 1.0.5).
+If you know what rake is and know you already have it installed, you can use the command `rake setup` to automatically install all dependencies.
 
-To install all dependencies automatically you can use `rake setup`, and to create a gem and install it, just issue `rake install`.
+There are two parts to ticgit, the command line interface `ti` and the optional web based interface `ticgitweb`.  To install the dependencies for either one, do
+
+*ti*
+    sudo gem install git
+
+*ticgitweb*
+
+    sudo gem install ticgit sinatra haml sass
 
 
 ### Usage ###
