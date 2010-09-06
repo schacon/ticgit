@@ -64,16 +64,16 @@ To get help about a specific command:
         -h, --help                       Display this help
 
 
-Some of the available commands are:
+The available commands are:
 
-ti list     - show all tickets
-ti show     - show details of a specific ticket
-ti new      - create a new ticket
-ti checkout - checkout a ticket
-ti state    - change a ticket state (open, resolved, invalid, hold)
-ti comment  - add a comment to a ticket
-ti tag      - add or delete a tag from a ticket
-ti assign   - change to whom a ticket is assigned
+    ti list     - show all tickets
+    ti show     - show details of a specific ticket
+    ti new      - create a new ticket
+    ti checkout - checkout a ticket
+    ti state    - change a ticket state (open, resolved, invalid, hold)
+    ti comment  - add a comment to a ticket
+    ti tag      - add or delete a tag from a ticket
+    ti assign   - change to whom a ticket is assigned
 
 
 Authors
