@@ -6,17 +6,16 @@ separate branch in your projects Git repository.
 
 Prerequisites
 ===================================
-It is assumed that you already have a recent version of the Git revision
-control system installed. If it is not available through your package
-manager, you can download the latest Git source code from
-http://git-scm.com/ instead.
+This README assumes that you already have a recent version of rubygems
+installed on your system. Older versions, such as the one available on
+Debian 5.0.5, will not work out of the box with some of the new gem
+repositories. If you are running an older version of rubygems, you may
+need to get the latest rubygems package from http://rubygems.org/ before
+being able to complete the installation.
 
-It is also assumed that you have a recent version of rubygems installed.
-Older versions, such as the one available on Debian 5.0.5, will not work
-out of the box with the new gem repositories. If you are running an
-older version of rubygems, you may need to get the latest rubygems
-package from http://rubygems.org/ before being able to properly install
-the git and ticgit gems.
+You must also have a recent version of the Git revision control system
+installed. If it is not available through your package manager, you can
+download the latest Git source code from http://git-scm.com/ instead.
 
 
 Installing
