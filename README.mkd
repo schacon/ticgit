@@ -35,7 +35,7 @@ And those notices should go away.
 ### Installing ###
 Installation on a Debian stable system.  Note that the command line interface for ticgit can be run from Debian stable, but some of the gems required for the web interface may require you to use [apt](http://jaqque.sbih.org/kplug/apt-pinning.html) [pinning](http://jeffwelling.github.com//2010/09/05/Apt-Pinning.html) to run without errors.  See below. 
 
-If you know what rake is and know you already have it installed, you can use the command `rake setup` to automatically install all dependencies.
+If you know what rake is and know you already have it installed, you can use the command `rake setup` to automatically install all dependencies, but the suggested method is to manually install as outlined below.
 
 There are two parts to ticgit, the command line interface `ti` and the optional web based interface `ticgitweb`.  To install the dependencies for either one, do
 
@@ -47,6 +47,8 @@ There are two parts to ticgit, the command line interface `ti` and the optional 
 
     sudo aptitude install rubygems
     sudo gem install ticgit sinatra haml sass
+
+
 
 
 ### Usage ###
