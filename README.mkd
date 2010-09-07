@@ -254,7 +254,7 @@ This will create a ticgit branch in your local repo based on the ticgit branch i
 
 ### Sharing your tickets with others ###
 
-Sharing your ticgit tickets with other people is as easy as them either creating their ticgit branch based on yours if they haven't already started their own ticgit branch, or pulling your ticgit branch into theirs.
+Sharing your ticgit tickets with other people is as easy as asking them either creating their ticgit branch based on yours if they haven't already started their own ticgit branch, or pulling your ticgit branch into theirs.
 
 If you host your repositories on [Github](http://www.github.com) as I do then this process is simplified some because you don't have to worry about hosting your repository somewhere where other people can access it to pull your ticgit branch.
 
@@ -286,6 +286,32 @@ Replacing SOURCE_URL with the URL you were told to pull from, now you can see th
 
 Changes made by [Bruno Santos](http://github.com/pheres) to add a [`ti sync`](http://github.com/jeffWelling/ticgit/commit/7388386fab4fb12c36e6eeb7d19eaa4e4b16b853) command are currently in the process of being integrated into the master branch.  Once this is done, syncing with other people should be as easy as `ti sync REMOTE_REPO` where REMOTE_REPO is a repo URL.
 
+
+## Development ##
+
+The original author had used rspec to write specs for ticgit, but one of the maintainers since then switched it over to bacon[1](http://www.ruby-forum.com/topic/137928)[2](http://www.ruby-forum.com/topic/172139)[3](http://testanything.org/wiki/index.php/Testing_with_Ruby) and I haven't been too inclined to switch it back.
+
+### Prerequisites ###
+
+To install the prerequisites on Debian stable for testing ticgit, you will need [apt](http://jaqque.sbih.org/kplug/apt-pinning.html) [pinning](http://jeffwelling.github.com//2010/09/05/Apt-Pinning.html).
+
+#FIXME Fill me in
+
+
+### How To Test ###
+
+To test your version of ticgit, go to your ticgit directory and run
+
+    rake bacon
+
+### How to generate a gem from your development copy of ticgit ###
+
+To create a gem from your development copy of ticgit, go to your ticgit directory and do
+
+    rake gem
+
+This will create a pkg/ directory, which will contain a newly created ticgit gem for you to install.
+ 
 
 ## Authors ##
 
