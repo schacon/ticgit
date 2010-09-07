@@ -168,7 +168,123 @@ Always checkout the ticket you intend to edit.  Some commands allow you to inclu
     *  d7f2d8 my new ticket                                   open  09/06          bug               
 
 
-    
+To assign the ticket to someone, use the `ti assign` command.  I assign the ticket to myself below.
+
+    $ ti assign -u 'jeff.welling@gmail.com'
+    $ ti list
+
+       TicId  Title                                              State Date  Assgn    Tags                
+    ----------------------------------------------------------------------------------------------------------
+    *  d7f2d8 my new ticket                                      open  09/06 jeff.we… bug  
+
+
+To change the state of a ticket, such as to change it from 'open' to 'hold' or 'resolved', use `ti state`. There are 4 valid states: hold, invalid, open, and resolved.
+
+    $ ti state hold
+    $ ti list
+
+       TicId  Title                                              State Date  Assgn    Tags                
+    ----------------------------------------------------------------------------------------------------------
+
+*Dramatic Gasp!*
+Where did all of our tickets go?  Don't worry, this isn't a bug and your tickets aren't gone.  
+
+    $ ti list --states open,hold
+
+       TicId  Title                                              State Date  Assgn    Tags                
+    ----------------------------------------------------------------------------------------------------------
+    *  d7f2d8 my new ticket                                      hold  09/06 jeff.we… bug                 
+
+By default `ti list` doesn't show tickets with a state of 'hold', so we have to specify that we want to see those tickets with an argument.  Now you can see, out `ti state hold` command changed the state of that ticket to on hold. This can also be done without checking out the ticket by using `ti state 1 hold`.
+
+Where ticgit expects a ticket id, it will take either the number of the ticket on the last ‘list’ you did, or it will take the partial sha each ticket is assigned when it is created – that number never changes for the life of the ticket, even across repositories, so you can email that number to someone else working on the project so they can identify it. If nothing is specified, it will use the currently checked out ticket.
+
+    $ ti comment -m "I'm a new comment"
+    $ ti show
+    Title: my new ticket
+    TicId: d7f2d8f6d6ec3da1a1800a33fb090d590a533bac
+
+    Assigned: jeff.welling@gmail.com
+    Opened: Mon Sep 06 15:52:03 -0700 2010 (0 days)
+    State: OPEN
+    Points: no estimate
+    Tags: bug
+
+    Comments (1):
+      * Added 09/06 18:34 by jeff.welling@gmail.com
+      I'm a new comment
+
+`ti show` also has a '-f' argument to be able to see comments that are longer than 3 lines, which would normally be truncated.
+
+The `ti list` command can also be sorted and filtered.
+
+    $ ti list --help
+    Usage: ti list [options]
+     
+    Options for list command:
+        -l, --list                       Show the saved queries
+        -S, --saveas SAVENAME            Save this list as a saved name
+        -a, --assigned ASSIGNED          List only tickets assigned to someone
+        -s, --states STATE[,STATE]       List only tickets in a specific state(s)
+                                         Prefix the state with '-' to negate
+        -t, --tags TAG[,TAG]             List only tickets with specific tag(s)
+                                         Prefix the tag with '-' to negate
+        -o, --order ORDER                Field to order by - one of : assigned,state,date,title
+     
+    Common options:
+        -v, --version                    Show the version number
+        -h, --help                       Display this help
+
+So if you wanted to see a list of all your tickets that have the ‘feature’ tag, assigned to ‘jeff.welling@gmail.com’ and are ‘open’, ordered by date opened descending, and save that view as ‘not_mine’, you can run this:
+
+    $ ti list -t feature -s open -a jeff.welling@gmail.com -o date.desc -S not_mine
+
+Then if you want to later list tickets with the same options as you used above, use
+
+    $ ti list not_mine
+
+## Collaboration ##
+
+If you have cloned a repository and would like to get the ticgit branch for that repo (presuming they have one), do this.
+
+    $git branch ticgit origin/ticgit
+
+This will create a ticgit branch in your local repo based on the ticgit branch in origin.  Now you can run `ti list` and it will show you the ticgit tickets for that repository.
+
+
+### Sharing your tickets with others ###
+
+Sharing your ticgit tickets with other people is as easy as them either creating their ticgit branch based on yours if they haven't already started their own ticgit branch, or pulling your ticgit branch into theirs.
+
+If you host your repositories on [Github](http://www.github.com) as I do then this process is simplified some because you don't have to worry about hosting your repository somewhere where other people can access it to pull your ticgit branch.
+
+For example, when I want my friend wnight to have the changes I made to my tickets in my ticgit repository, I do a
+
+    $ git push origin
+
+to update all my remote branches with my current ones, and then I ask him to do a
+
+    $ git checkout ticgit
+    $ git pull git@github.com:jeffWelling/ticgit.git ticgit
+    $ git checkout master
+
+to pull my changes into his ticgit branch and then switch back to his master branch.  Now when he does `ti list` it will show the changes I made to the tickets on my system.
+
+
+### Incorporating other peoples changes into your ticgit branch ###
+
+The process is much the same as above, except the rolls are reversed.  Once you know they have published their changes and you have a URL to do a git pull from, you simply do
+
+    $ git checkout ticgit
+    $ git pull SOURCE_URL ticgit
+    $ git checkout master
+
+Replacing SOURCE_URL with the URL you were told to pull from, now you can see the changes they made, in your ticgit branch.  You can easily publish these changes with a `git push origin` so anyone following your work can also see these changes.
+
+
+### Next generation collaboration ###
+
+Changes made by [Bruno Santos](http://github.com/pheres) to add a [`ti sync`](http://github.com/jeffWelling/ticgit/commit/7388386fab4fb12c36e6eeb7d19eaa4e4b16b853) command are currently in the process of being integrated into the master branch.  Once this is done, syncing with other people should be as easy as `ti sync REMOTE_REPO` where REMOTE_REPO is a repo URL.
 
 
 ## Authors ##
