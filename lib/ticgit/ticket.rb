@@ -140,13 +140,14 @@ module TicGit
 
     def change_assigned(new_assigned)
       new_assigned ||= email
-      return false if new_assigned == assigned
+      old_assigned= assigned || ''
+      return false if new_assigned == old_assigned
 
       base.in_branch do |wd|
         Dir.chdir(ticket_name) do
           base.new_file('ASSIGNED_' + new_assigned, new_assigned)
         end
-        base.git.remove(File.join(ticket_name,'ASSIGNED_' + assigned))
+        base.git.remove(File.join(ticket_name,'ASSIGNED_' + old_assigned))
         base.git.add
         base.git.commit("assigned #{new_assigned} to ticket #{ticket_name}")
       end
