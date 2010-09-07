@@ -133,7 +133,7 @@ The first time you run `ti list`, it will show an empty list.
        TicId  Title                             State Date  Assgn    Tags                
     -----------------------------------------------------------------------------------------
 
-To add a new ticket to the system you can use `ti new` to bring up an editor which will allow you to add a title, comment and tags to the new ticket, or you can use `ti new -t 'Title of ticket'` to add the new ticket and give it a title in one command line, and add tags with `ti tag`
+To add a new ticket you can use `ti new -t 'Title of ticket'` and give it a title in one command line.
 
     $ ti new -t 'my new ticket'
     $ ti list
@@ -142,6 +142,14 @@ To add a new ticket to the system you can use `ti new` to bring up an editor whi
     -----------------------------------------------------------------------------------------
        d7f2d8 my new ticket                     open  09/06 
 
+For the ‘comment’ and ‘new’ commands, if you don’t specify a ‘-m’ for the message, it puts you into $EDITOR  to write it. The ‘new’ action is especially useful with this, because you can also tag it and give it an initial comment when you create it this way:
+
+    
+    # ---
+    # tags:
+    # # first line will be the title of the tic, the rest will be the first comment
+    # # if you would like to add initial tags, put them on the 'tags:' line, comma delim
+    #
 
 To edit a ticket, such as assigning a tag to the new ticket we created, we first checkout the ticket and then use `ti tag`.
 Always checkout the ticket you intend to edit.  Some commands allow you to include a tic_id argument but that can get confusing to keep track of and most of the time several edits will be done to the same ticket anyway, so it is suggested you use `ti checkout` for convenience if nothing else.
