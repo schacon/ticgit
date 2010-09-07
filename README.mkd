@@ -143,7 +143,8 @@ To add a new ticket to the system you can use `ti new` to bring up an editor whi
        d7f2d8 my new ticket                     open  09/06 
 
 
-To assign a tag to the new ticket we created we first checkout the ticket and then use `ti tag`.
+To edit a ticket, such as assigning a tag to the new ticket we created, we first checkout the ticket and then use `ti tag`.
+Always checkout the ticket you intend to edit.  Some commands allow you to include a tic_id argument but that can get confusing to keep track of and most of the time several edits will be done to the same ticket anyway, so it is suggested you use `ti checkout` for convenience if nothing else.
 
     #ti checkout can checkout tickets based on the TicId or based on it's place in the list
     $ ti checkout 1
