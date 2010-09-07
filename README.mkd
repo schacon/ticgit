@@ -302,7 +302,7 @@ And here is an individual ticket:
 
 ## Development ##
 
-The original author had used rspec to write specs for ticgit, but one of the maintainers since then switched it over to bacon[1](http://www.ruby-forum.com/topic/137928)[2](http://www.ruby-forum.com/topic/172139)[3](http://testanything.org/wiki/index.php/Testing_with_Ruby) and I haven't been too inclined to switch it back.
+The original author had used rspec to write specs for ticgit, but one of the maintainers since then switched it over to bacon[[1](http://www.ruby-forum.com/topic/137928)][[2](http://www.ruby-forum.com/topic/172139)][[3](http://testanything.org/wiki/index.php/Testing_with_Ruby)] and I haven't been too inclined to switch it back.
 
 ### Prerequisites ###
 
