@@ -295,7 +295,7 @@ The original author had used rspec to write specs for ticgit, but one of the mai
 
 To install the prerequisites on Debian stable for testing ticgit, you will need [apt](http://jaqque.sbih.org/kplug/apt-pinning.html) [pinning](http://jeffwelling.github.com//2010/09/05/Apt-Pinning.html).
 
-#FIXME Fill me in
+FIXME Fill me in
 
 
 ### How To Test ###
