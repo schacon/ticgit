@@ -287,6 +287,19 @@ Replacing SOURCE_URL with the URL you were told to pull from, now you can see th
 Changes made by [Bruno Santos](http://github.com/pheres) to add a [`ti sync`](http://github.com/jeffWelling/ticgit/commit/7388386fab4fb12c36e6eeb7d19eaa4e4b16b853) command are currently in the process of being integrated into the master branch.  Once this is done, syncing with other people should be as easy as `ti sync REMOTE_REPO` where REMOTE_REPO is a repo URL.
 
 
+### Ticgitweb ###
+
+To run the Sinatra enabled web UI for your TicGit repo, simply cd to your repository and run 'ticgitweb', or 'ticgitweb -p 3456' to change the port to something other than '4567', which is the Sinatra default.
+
+Here is what the Ticket listing looks like:
+
+<a href="http://www.flickr.com/photos/chacon/2359042481/" title="TicGitWeb Ticket List by schacon, on Flickr"><img src="http://farm4.static.flickr.com/3289/2359042481_065867a92e.jpg" width="500" height="258" alt="TicGitWeb Ticket List" /></a>
+
+And here is an individual ticket:
+
+<a href="http://www.flickr.com/photos/chacon/2359042513/" title="TicGitWeb Ticket by schacon, on Flickr"><img src="http://farm4.static.flickr.com/3240/2359042513_6d4bd069d0.jpg" width="500" height="275" alt="TicGitWeb Ticket" /></a>
+
+
 ## Development ##
 
 The original author had used rspec to write specs for ticgit, but one of the maintainers since then switched it over to bacon[1](http://www.ruby-forum.com/topic/137928)[2](http://www.ruby-forum.com/topic/172139)[3](http://testanything.org/wiki/index.php/Testing_with_Ruby) and I haven't been too inclined to switch it back.
