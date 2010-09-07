@@ -143,6 +143,24 @@ To add a new ticket to the system you can use `ti new` to bring up an editor whi
        d7f2d8 my new ticket                     open  09/06 
 
 
+To assign a tag to the new ticket we created we first checkout the ticket and then use `ti tag`.
+
+    #ti checkout can checkout tickets based on the TicId or based on it's place in the list
+    $ ti checkout 1
+    #checks out the first ticket, or to do the same thing by using the TicId
+    $ ti checkout d7f2d8
+    #then assign the tag
+    $ ti tag 'bug'
+    #and view the result..
+    $ ti list
+
+       TicId  Title                                           State Date  Assgn    Tags                
+    -------------------------------------------------------------------------------------------------------
+    *  d7f2d8 my new ticket                                   open  09/06          bug               
+
+
+    
+
 
 ## Authors ##
 
