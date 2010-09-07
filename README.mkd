@@ -318,7 +318,10 @@ The original author had used rspec to write specs for ticgit, but one of the mai
 
 To install the prerequisites on Debian stable for testing ticgit, you will need [apt](http://jaqque.sbih.org/kplug/apt-pinning.html) [pinning](http://jeffwelling.github.com//2010/09/05/Apt-Pinning.html).
 
-FIXME Fill me in
+    $ sudo aptitude -t testing install rubygems rake
+    $ sudo gem install yard bacon
+
+I pull rubygems from testing to avoid a problem with gherkin creating a syntactically incorrect gemspec which makes a lot of noise whenever `gem` is called. I ran into a problem when gem was installing yard, it had a problem with the documentation but thankfully the error wasn't fatal and was only about not being able to compile the documentation which I don't use, so it continued without trouble.
 
 
 ### How To Test ###
