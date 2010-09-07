@@ -133,7 +133,7 @@ The first time you run `ti list`, it will show an empty list.
        TicId  Title                             State Date  Assgn    Tags                
     -----------------------------------------------------------------------------------------
 
-To add a new ticket to the system you can use `ti new` to bring up an editor which will allow you to add a title and comment to the new ticket, or you can use `ti new -t 'Title of ticket'` to add the new ticket and give it a title in one command line.
+To add a new ticket to the system you can use `ti new` to bring up an editor which will allow you to add a title, comment and tags to the new ticket, or you can use `ti new -t 'Title of ticket'` to add the new ticket and give it a title in one command line, and add tags with `ti tag`
 
     $ ti new -t 'my new ticket'
     $ ti list
