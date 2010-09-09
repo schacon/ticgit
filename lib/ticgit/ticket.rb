@@ -41,6 +41,8 @@ module TicGit
       ticket_hash['files'].each do |fname, value|
         if fname == 'TICKET_ID'
           tid = value
+        elsif fname == 'TICKET_TITLE'
+          t.title = base.git.gblob(value).contents
         else
           # matching
           data = fname.split('_')
@@ -78,6 +80,7 @@ module TicGit
         Dir.mkdir(ticket_name)
         Dir.chdir(ticket_name) do
           base.new_file('TICKET_ID', ticket_name)
+          base.new_file('TICKET_TITLE', title)
           base.new_file('ASSIGNED_' + email, email)
           base.new_file('STATE_' + state, state)
 
@@ -98,7 +101,6 @@ module TicGit
             end
           end            
         end
-	      
         base.git.add
         base.git.commit("added ticket #{ticket_name}")
       end

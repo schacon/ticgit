@@ -154,7 +154,7 @@ def list(title = 'all')
             %td
               %a{:href => "/ticket/#{t.ticket_id}" }
                 %code= t.ticket_id[0,6]
-            %td= t.title
+            %td&= t.title
             %td{:class => t.state}= t.state
             %td= t.opened.strftime("%m/%d")
             %td= t.assigned_name
@@ -167,7 +167,7 @@ end
 def show
   layout('ticket', %q{
   %center
-    %h1= @ticket.title
+    %h1&= @ticket.title
   
     %form{:action => "/a/add_tags/#{@ticket.ticket_id}", :method => 'POST'}
       %table
