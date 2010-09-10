@@ -8,20 +8,10 @@
 require 'rubygems'
 require 'fileutils'
 
-# Determine if we're running within a source tree. If so, use the
-# version of ticgit inside the source tree instead of one installed by
-# the packaging system or rubygems.
-parents = File.expand_path(File.dirname(__FILE__)).split(File::SEPARATOR)
-parents.each do
-    if Dir.glob '.git'
-	require File.join(File.dirname(__FILE__), '..', 'lib', 'ticgit')
-	break
-    end
-    FileUtils.cd '..'
-end
-
-# Load the system library unless a source tree version was already
-# loaded above.
+# Add the library from the source tree to the front of the load path.
+# This allows ti to run without first installing a ticgit gem, which is
+# important when testing multiple branches of development.
+$LOAD_PATH.unshift File.join(File.dirname(__FILE__), '..', 'lib')
 require 'ticgit'
 
 TicGit::CLI.execute
