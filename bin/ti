@@ -5,10 +5,23 @@
 # author : Scott Chacon (schacon@gmail.com)
 #
 
-begin; require 'rubygems' rescue LoadError; end
-require 'pathname'
-this = Pathname(__FILE__)
-ticgit = (this.symlink? ? this.readlink : this) + '../../lib/ticgit'
+require 'rubygems'
+require 'fileutils'
 
-require ticgit
+# Determine if we're running within a source tree. If so, use the
+# version of ticgit inside the source tree instead of one installed by
+# the packaging system or rubygems.
+parents = File.expand_path(File.dirname(__FILE__)).split(File::SEPARATOR)
+parents.each do
+    if Dir.glob '.git'
+	require File.join(File.dirname(__FILE__), '..', 'lib', 'ticgit')
+	break
+    end
+    FileUtils.cd '..'
+end
+
+# Load the system library unless a source tree version was already
+# loaded above.
+require 'ticgit'
+
 TicGit::CLI.execute
