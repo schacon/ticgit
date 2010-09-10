@@ -8,7 +8,12 @@
 # author : Scott Chacon (schacon@gmail.com)
 #
 
-%w(rubygems sinatra git ticgit haml sass).each do |dependency| 
+# Add the library from the source tree to the front of the load path.
+# This allows ticgitweb to run without first installing a ticgit gem,
+# which is important when testing multiple branches of development.
+$LOAD_PATH.unshift File.join(File.dirname(__FILE__), '..', 'lib')
+
+%w(rubygems sinatra git ticgit haml sass).each do |dependency|
   begin
     require dependency
   rescue LoadError => e
