@@ -5,10 +5,13 @@
 # author : Scott Chacon (schacon@gmail.com)
 #
 
-begin; require 'rubygems' rescue LoadError; end
-require 'pathname'
-this = Pathname(__FILE__)
-ticgit = (this.symlink? ? this.readlink : this) + '../../lib/ticgit'
+require 'rubygems'
+require 'fileutils'
 
-require ticgit
+# Add the library from the source tree to the front of the load path.
+# This allows ti to run without first installing a ticgit gem, which is
+# important when testing multiple branches of development.
+$LOAD_PATH.unshift File.join(File.dirname(__FILE__), '..', 'lib')
+require 'ticgit'
+
 TicGit::CLI.execute

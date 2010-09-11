@@ -8,7 +8,12 @@
 # author : Scott Chacon (schacon@gmail.com)
 #
 
-%w(rubygems sinatra git ticgit haml sass).each do |dependency| 
+# Add the library from the source tree to the front of the load path.
+# This allows ticgitweb to run without first installing a ticgit gem,
+# which is important when testing multiple branches of development.
+$LOAD_PATH.unshift File.join(File.dirname(__FILE__), '..', 'lib')
+
+%w(rubygems sinatra git ticgit haml sass).each do |dependency|
   begin
     require dependency
   rescue LoadError => e
@@ -154,7 +159,7 @@ def list(title = 'all')
             %td
               %a{:href => "/ticket/#{t.ticket_id}" }
                 %code= t.ticket_id[0,6]
-            %td= t.title
+            %td&= t.title
             %td{:class => t.state}= t.state
             %td= t.opened.strftime("%m/%d")
             %td= t.assigned_name
@@ -167,7 +172,7 @@ end
 def show
   layout('ticket', %q{
   %center
-    %h1= @ticket.title
+    %h1&= @ticket.title
   
     %form{:action => "/a/add_tags/#{@ticket.ticket_id}", :method => 'POST'}
       %table

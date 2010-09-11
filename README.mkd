@@ -337,7 +337,13 @@ To create a gem from your development copy of ticgit, go to your ticgit director
     rake gem
 
 This will create a pkg/ directory, which will contain a newly created ticgit gem for you to install.
- 
+
+### Alternatives ###
+
+ditz 
+bugs everywhere
+git-issues
+
 
 ## Authors ##
 
