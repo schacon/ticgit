@@ -1,34 +1,51 @@
-require 'rake'
-require 'rake/clean'
+require 'rubygems'
+require 'bundler'
+
+unless system 'bundle check'
+  exit 1 unless system 'bundle install'
+end
+
+require 'bundler/setup'
 require 'rake/gempackagetask'
-require 'time'
-require 'date'
+require "rspec/core/rake_task"
+gem 'rspec', '~>2.0'
 
-PROJECT_SPECS = Dir['spec/ticgit/**/*.rb']
-PROJECT_MODULE = 'Foo'
-PROJECT_VERSION = ENV['VERSION'] || Date.today.strftime("%Y.%m.%d")
+namespace :bundle do
+  desc 'Install all required gems.'
+  task :install do
+    system 'bundle install'
+  end
 
-GEMSPEC = Gem::Specification.new{|s|
-  s.name         = 'ticgit'
-  s.version      = PROJECT_VERSION
-  s.authors      = ['Scott Chacon', "Michael 'manveru' Fellinger", "Jeff Welling"]
-  s.summary      = "A distributed ticketing system for git projects."
-  # s.description  = "A distributed ticketing system for git projects."
-  s.email        = 'jeff.welling@gmail.com'
-  s.homepage     = 'http://github.com/jeffWelling/ticgit'
-  s.bindir       = 'bin'
-  s.executables  = %w[ti ticgitweb]
-  s.files        = `git ls-files`.split("\n").sort
-  s.has_rdoc     = true
-  s.platform     = Gem::Platform::RUBY
-  s.require_path = 'lib'
-  s.default_executable = s.executables.first
+  desc 'List bundled gems.'
+  task :show do
+    system 'bundle show'
+  end
+end
 
-  s.add_dependency('git', '>= 1.0.5')
-}
+namespace :test do
+  desc 'Run all RSpec tests'
+  RSpec::Core::RakeTask.new
+end
 
-Dir['tasks/*.rake'].each{|f| import(f) }
+gemspec = eval(File.read('ticgit.gemspec'))
+Rake::GemPackageTask.new(gemspec) do |pkg|
+  pkg.need_tar = true
+end
 
-task :default => [:bacon]
+desc "Clean out the coverage and pkg directories"
+task :clean do
+  rm_rf 'coverage'
+  rm_rf 'pkg'
+  rm Dir.glob('ticgit*gem')
+end
 
-CLEAN.include('')
+task :make => "pkg/#{gemspec.name}-#{gemspec.version}.gem" do
+  puts "Generating #{gemspec.name}-#{gemspec.version}.gem"
+end
+
+task :install do
+    puts "Installing #{gemspec.name}-#{gemspec.version}.gem ..."
+    system "gem install pkg/#{gemspec.name}-#{gemspec.version}.gem"
+end
+
+task :default => [:make, :install]
