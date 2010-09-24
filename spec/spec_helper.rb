@@ -5,11 +5,8 @@ require 'logger'
 module TicGitSpecHelper
 
   def setup_new_git_repo
-    temp = Tempfile.new('ticgit')
-    p = temp.path
-    temp.unlink
-    Dir.mkdir(p)
-    Dir.chdir(p) do
+    tempdir = Dir.mktmpdir
+    Dir.chdir(tempdir) do
       g = Git.init
       new_file('test', 'content')
       Dir.mkdir('subdir')
@@ -17,7 +14,7 @@ module TicGitSpecHelper
       g.add
       g.commit('first commit')
     end
-    p
+    tempdir
   end
 
   def setup_existing_ticgit_repo
