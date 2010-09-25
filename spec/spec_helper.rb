@@ -22,12 +22,9 @@ module TicGitSpecHelper
   end
 
   def test_opts
-    temp = Tempfile.new('ticdir')
-    p = temp.path
-    temp.unlink
-    Dir.mkdir(p)
+    tempdir = Dir.mktmpdir 'ticgit-ticdir-'
     logger = Logger.new(Tempfile.new('ticgit-log'))
-    { :tic_dir => p, :logger => logger }
+    { :tic_dir => tempdir, :logger => logger }
   end
 
 
