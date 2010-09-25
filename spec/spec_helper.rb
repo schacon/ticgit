@@ -8,12 +8,12 @@ module TicGitSpecHelper
   def setup_new_git_repo
     tempdir = Dir.mktmpdir 'ticgit-gitdir-'
     Dir.chdir(tempdir) do
-      g = Git.init
+      git = Git.init
       new_file('test', 'content')
       Dir.mkdir('subdir')
       new_file('subdir/testfile', 'content2')
-      g.add
-      g.commit('first commit')
+      git.add
+      git.commit('first commit')
     end
     tempdir
   end
