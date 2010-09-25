@@ -23,7 +23,7 @@ module TicGitSpecHelper
 
   def test_opts
     tempdir = Dir.mktmpdir 'ticgit-ticdir-'
-    logger = Logger.new(Tempfile.new('ticgit-log'))
+    logger = Logger.new(Tempfile.new('ticgit-log-'))
     { :tic_dir => tempdir, :logger => logger }
   end
 
