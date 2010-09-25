@@ -25,6 +25,11 @@ end
 namespace :test do
   desc 'Run all RSpec tests'
   RSpec::Core::RakeTask.new
+
+  desc 'Remove RSpec temp directories'
+  task :clean do
+    rmtree Dir.glob('/tmp/ticgit-*')
+  end
 end
 
 gemspec = eval(File.read('ticgit.gemspec'))
