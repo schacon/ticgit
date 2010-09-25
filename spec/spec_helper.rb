@@ -6,7 +6,7 @@ require 'tempfile'
 module TicGitSpecHelper
 
   def setup_new_git_repo
-    tempdir = Dir.mktmpdir
+    tempdir = Dir.mktmpdir 'ticgit-gitdir-'
     Dir.chdir(tempdir) do
       g = Git.init
       new_file('test', 'content')
