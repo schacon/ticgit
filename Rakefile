@@ -1,9 +1,14 @@
-require 'rubygems'
-require 'bundler'
-
-unless system 'bundle check'
-  exit 1 unless system 'bundle install'
+# Ensure that the basics are installed before doing anything more
+# complicated.
+%w[rubygems bundler].each do |gem|
+  begin
+    require gem
+  rescue LoadError
+    $stderr.puts 'Missing gem: ' << gem
+    $load_error = true
+  end
 end
+exit 1 if $load_error
 
 require 'bundler/setup'
 require 'rake/gempackagetask'
