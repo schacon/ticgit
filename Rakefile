@@ -10,15 +10,27 @@
 end
 exit 1 if $load_error
 
-require 'bundler/setup'
-require 'rake/gempackagetask'
-require "rspec/core/rake_task"
-gem 'rspec', '~>2.0'
-
+# This namespace must be loaded near the top in order to be able to
+# display bundle-related rake tasks in the next section.
 namespace :bundle do
-  desc 'Install all required gems.'
-  task :install do
-    system 'bundle install'
+  namespace :install do
+    desc 'Install gems for all tasks, including testing.'
+    task :all do
+      system 'bundle install'
+    end
+
+    desc 'Install standard CLI and web dependencies.'
+    task :std do
+      system 'bundle install --without dev'
+    end
+
+    # The gem will not currently build properly without the ticgitweb
+    # dependencies. Leave this task commented until the gemspec will
+    # build just the CLI.
+    #desc 'Install CLI dependencies only.'
+    #task :cli do
+    #  system 'bundle install --without dev web'
+    #end
   end
 
   desc 'List bundled gems.'
@@ -27,14 +39,33 @@ namespace :bundle do
   end
 end
 
-namespace :test do
-  desc 'Run all RSpec tests'
-  RSpec::Core::RakeTask.new
+# If 'bundler install' hasn't been run, display the available bundler
+# tasks.
+unless File.directory? '.bundle'
+  $stderr.puts 'You must run one of the bundle:install tasks first:'
+  $stderr.puts
+  Rake::Task.tasks.each {|task| $stderr.puts "    rake #{task}"}
+  $stderr.puts
+  exit 1 if ARGV.to_s.grep(/bundle:install/).empty?
+end
 
-  desc 'Remove RSpec temp directories'
-  task :clean do
-    rmtree Dir.glob('/tmp/ticgit-*')
+require 'bundler/setup'
+require 'rake/gempackagetask'
+
+begin
+  require "rspec/core/rake_task"
+  namespace :test do
+    desc 'Run all RSpec tests'
+    RSpec::Core::RakeTask.new
+
+    desc 'Remove RSpec temp directories'
+    task :clean do
+      rmtree Dir.glob('/tmp/ticgit-*')
+    end
   end
+rescue LoadError
+  $stderr.puts 'RSpec ~> 2.0 needed for testing.'
+  $stderr.puts
 end
 
 gemspec = eval(File.read('ticgit.gemspec'))
