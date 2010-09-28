@@ -26,5 +26,5 @@ DEPENDENCIES
   git (>= 1.0.5)
   haml
   rake
-  rspec (~> 2.0)
+  rspec (>= 2.0.0.beta.22)
   sinatra
