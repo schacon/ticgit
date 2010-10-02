@@ -34,6 +34,10 @@ module TicGitSpecHelper
     end
   end
 
+  def format_expected(string)
+    string.strip.enum_for(:each_line).map{|line| line.strip }
+  end
+
 end
 
 
