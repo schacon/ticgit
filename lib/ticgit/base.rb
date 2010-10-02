@@ -211,7 +211,7 @@ module TicGit
       end
     end
 
-    def ticket_tag(tag, ticket_id = nil, options = {})
+    def ticket_tag(tag, ticket_id = nil, options = OpenStruct.new)
       if t = ticket_revparse(ticket_id)
         ticket = TicGit::Ticket.open(self, t, @tickets[t])
         if options.remove
