@@ -154,7 +154,9 @@ describe TicGit::Base do
     t = @ticgit.ticket_new('my next ticket', :tags => ['scotty', 'chacony'])
     t.tags.size.should eql(2)
 
-    @ticgit.ticket_tag('scotty', t.ticket_id, :remove => true)
+    o=OpenStruct.new
+    o.remove=true
+    @ticgit.ticket_tag('scotty', t.ticket_id, o)
     t.tags.size.should eql(2)
     t.tags.first.should eql('chacony')
   end
