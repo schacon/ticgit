@@ -301,6 +301,12 @@ module TicGit
       @logger.info 'creating ticgit repo branch'
 
       in_branch(ticgit_branch) do
+        #The .hold file seems to have little to no purpose aside from helping
+        #figure out if the branch should be checked out or not.  It is created
+        #when the ticgit branch is created, and seems to exist for the lifetime
+        #of the ticgit branch. The purpose seems to be, to be able to tell if
+        #the ticgit branch is already checked out and not check it out again if
+        #it is.  This might be superfluous after switching to grit.
         new_file('.hold', 'hold')
 
         unless ticgit_branch
