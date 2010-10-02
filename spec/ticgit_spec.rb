@@ -28,6 +28,8 @@ describe TicGit do
     tg.git.dir.path.should eql(@path)
   end
 
-  it "should add a .hold file to a new branch"
+  it "should add a .hold file to a new branch" do
+    @ticgit.in_branch{ File.file?('.hold').should == true }
+  end
 
 end
