@@ -166,5 +166,13 @@ describe TicGit::Base do
     t = @ticgit.ticket_new('my next ticket', :tags => ['scotty', 'chacony'])
     File.stat(@ticgit.state).size.should_not eql(time)
   end
+  it "should be able to change the points of a ticket" do
+    @ticgit.ticket_new('my new ticket')
+    tic = @ticgit.ticket_list.first
+    tic.state.should_not == 3
+    @ticgit.ticket_points(3, tic.ticket_id)
+    tic = @ticgit.ticket_show(tic.ticket_id)
+    tic.points.should == 3
+  end
 
 end
