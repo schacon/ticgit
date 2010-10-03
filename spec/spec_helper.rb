@@ -7,6 +7,14 @@ TICGIT_HISTORY = StringIO.new
 
 module TicGitSpecHelper
 
+=begin
+tempdir -
+  test => "content"
+
+  subdir -
+    testfile => "content2"
+
+=end
   def setup_new_git_repo
     tempdir = Dir.mktmpdir 'ticgit-gitdir-'
     Dir.chdir(tempdir) do
@@ -18,9 +26,6 @@ module TicGitSpecHelper
       git.commit('first commit')
     end
     tempdir
-  end
-
-  def setup_existing_ticgit_repo
   end
 
   def test_opts
