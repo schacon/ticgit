@@ -3,6 +3,8 @@ require 'fileutils'
 require 'logger'
 require 'tempfile'
 
+TICGIT_HISTORY = StringIO.new
+
 module TicGitSpecHelper
 
   def setup_new_git_repo
@@ -36,6 +38,28 @@ module TicGitSpecHelper
 
   def format_expected(string)
     string.strip.enum_for(:each_line).map{|line| line.strip }
+  end
+
+  def cli(*args, &block)
+    TICGIT_HISTORY.truncate 0
+    TICGIT_HISTORY.rewind
+
+    ticgit = TicGit::CLI.new(args.flatten, @path, TICGIT_HISTORY)
+    ticgit.parse_options!
+    ticgit.execute!
+
+    replay_history(&block)
+  rescue SystemExit => error
+    replay_history(&block)
+  end
+
+  def replay_history
+    TICGIT_HISTORY.rewind
+    return unless block_given?
+
+    while line = TICGIT_HISTORY.gets
+      yield(line.strip)
+    end
   end
 
 end
