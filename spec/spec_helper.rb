@@ -42,7 +42,7 @@ tempdir -
   end
 
   def format_expected(string)
-    string.strip.enum_for(:each_line).map{|line| line.strip }
+    string.enum_for(:each_line).map{|line| line.strip }
   end
 
   def cli(*args, &block)
