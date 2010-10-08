@@ -3,8 +3,18 @@ require 'fileutils'
 require 'logger'
 require 'tempfile'
 
+TICGIT_HISTORY = StringIO.new
+
 module TicGitSpecHelper
 
+=begin
+tempdir -
+  test => "content"
+
+  subdir -
+    testfile => "content2"
+
+=end
   def setup_new_git_repo
     tempdir = Dir.mktmpdir 'ticgit-gitdir-'
     Dir.chdir(tempdir) do
@@ -18,9 +28,6 @@ module TicGitSpecHelper
     tempdir
   end
 
-  def setup_existing_ticgit_repo
-  end
-
   def test_opts
     tempdir = Dir.mktmpdir 'ticgit-ticdir-'
     logger = Logger.new(Tempfile.new('ticgit-log-'))
@@ -31,6 +38,32 @@ module TicGitSpecHelper
   def new_file(name, contents)
     File.open(name, 'w') do |f|
       f.puts contents
+    end
+  end
+
+  def format_expected(string)
+    string.enum_for(:each_line).map{|line| line.strip }
+  end
+
+  def cli(*args, &block)
+    TICGIT_HISTORY.truncate 0
+    TICGIT_HISTORY.rewind
+
+    ticgit = TicGit::CLI.new(args.flatten, @path, TICGIT_HISTORY)
+    ticgit.parse_options!
+    ticgit.execute!
+
+    replay_history(&block)
+  rescue SystemExit => error
+    replay_history(&block)
+  end
+
+  def replay_history
+    TICGIT_HISTORY.rewind
+    return unless block_given?
+
+    while line = TICGIT_HISTORY.gets
+      yield(line.strip)
     end
   end
 

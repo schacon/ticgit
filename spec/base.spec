@@ -9,6 +9,11 @@ describe TicGit::Base do
     @ticgit = TicGit.open(@path, @orig_test_opts)
   end
 
+  after(:all) do
+    Dir.glob(File.expand_path("~/.ticgit/-tmp*")).each {|file_name| FileUtils.rm_r(file_name, {:force=>true,:secure=>true}) }
+    Dir.glob(File.expand_path("/tmp/ticgit-*")).each {|file_name| FileUtils.rm_r(file_name, {:force=>true,:secure=>true}) }
+  end
+
   it "should have 4 ticket states" do
     @ticgit.tic_states.size.should eql(4)
   end
@@ -165,6 +170,14 @@ describe TicGit::Base do
     time = File.stat(@ticgit.state).size
     t = @ticgit.ticket_new('my next ticket', :tags => ['scotty', 'chacony'])
     File.stat(@ticgit.state).size.should_not eql(time)
+  end
+  it "should be able to change the points of a ticket" do
+    @ticgit.ticket_new('my new ticket')
+    tic = @ticgit.ticket_list.first
+    tic.state.should_not == 3
+    @ticgit.ticket_points(3, tic.ticket_id)
+    tic = @ticgit.ticket_show(tic.ticket_id)
+    tic.points.should == 3
   end
 
 end

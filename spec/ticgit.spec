@@ -9,6 +9,11 @@ describe TicGit do
     @ticgit = TicGit.open(@path, @orig_test_opts)
   end
 
+  after(:all) do
+    Dir.glob(File.expand_path("~/.ticgit/-tmp*")).each {|file_name| FileUtils.rm_r(file_name, {:force=>true,:secure=>true}) }
+    Dir.glob(File.expand_path("/tmp/ticgit-*")).each {|file_name| FileUtils.rm_r(file_name, {:force=>true,:secure=>true}) }
+  end
+
   it "should create a new branch if it's not there" do
     br = @ticgit.git.branches.map { |b| b.name }
     br.should include('ticgit')
@@ -28,6 +33,8 @@ describe TicGit do
     tg.git.dir.path.should eql(@path)
   end
 
-  it "should add a .hold file to a new branch"
+  it "should add a .hold file to a new branch" do
+    @ticgit.in_branch{ File.file?('.hold').should == true }
+  end
 
 end
