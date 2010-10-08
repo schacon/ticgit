@@ -10,7 +10,7 @@ describe TicGit do
   end
 
   after(:all) do
-    FileUtils.rm_r( @path, {:force=>true,:secure=>true} )
+    FileUtils.rm_r( [@path,@orig_test_opts[:tic_dir]] {:force=>true,:secure=>true} )
   end
 
   it "should create a new branch if it's not there" do
