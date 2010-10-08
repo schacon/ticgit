@@ -10,7 +10,8 @@ describe TicGit do
   end
 
   after(:all) do
-    FileUtils.rm_r( [@path,@orig_test_opts[:tic_dir]] {:force=>true,:secure=>true} )
+    Dir.glob(File.expand_path("~/.ticgit/-tmp*")).each {|file_name| FileUtils.rm_r(file_name, {:force=>true,:secure=>true}) }
+    Dir.glob(File.expand_path("/tmp/ticgit-*")).each {|file_name| FileUtils.rm_r(file_name, {:force=>true,:secure=>true}) }
   end
 
   it "should create a new branch if it's not there" do
