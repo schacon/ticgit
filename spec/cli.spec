@@ -9,6 +9,10 @@ describe TicGit::CLI do
     @ticgit = TicGit.open(@path, @orig_test_opts)
   end
 
+  after(:all) do
+    FileUtils.rm_r( [@path, @orig_test_opts[:tic_dir]  ], {:force=>true,:secure=>true} )
+  end
+
   it "should list the tickets"
 
   it "should show a ticket"

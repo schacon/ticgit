@@ -9,6 +9,10 @@ describe TicGit::Base do
     @ticgit = TicGit.open(@path, @orig_test_opts)
   end
 
+  after(:all) do
+    FileUtils.rm_r( [@path,@orig_test_opts[:tic_dir]] {:force=>true,:secure=>true} )
+  end
+
   it "should have 4 ticket states" do
     @ticgit.tic_states.size.should eql(4)
   end

@@ -9,6 +9,10 @@ describe TicGit do
     @ticgit = TicGit.open(@path, @orig_test_opts)
   end
 
+  after(:all) do
+    FileUtils.rm_r( @path, {:force=>true,:secure=>true} )
+  end
+
   it "should create a new branch if it's not there" do
     br = @ticgit.git.branches.map { |b| b.name }
     br.should include('ticgit')
