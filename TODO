@@ -39,3 +39,7 @@ dir.
 * Offer .deb's to install ticgit from the download page
   -  The download page should have .deb's of the most recent 
 version of ticgit for people to download and install.
+  -  Maybe just an easy way to make your own .deb, so people
+can download the source and run a script command to create
+a .deb to install? This is already provided in the existing 
+rake commands.
