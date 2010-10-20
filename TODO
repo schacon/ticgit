@@ -34,3 +34,8 @@ file in the branch with the working tree would solve this.
 perhaps conflict with each other), but this could be mitigated 
 by storing a preference such as is already done with the ~/.ticgit 
 dir.
+
+
+* Offer .deb's to install ticgit from the download page
+  -  The download page should have .deb's of the most recent 
+version of ticgit for people to download and install.
