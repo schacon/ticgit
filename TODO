@@ -43,3 +43,13 @@ version of ticgit for people to download and install.
 can download the source and run a script command to create
 a .deb to install? This is already provided in the existing 
 rake commands.
+
+
+* Investigate hiding ticgit branch
+  - Schacon hinted at being able to hide the ticgit branch
+in one of his git presentations. The video was "Using Git
+In Ruby Applications".
+    -  If this is implemented, does that mean push/pull's
+will change?
+    -  Will this effect hosting your project on Github,
+or Github also hosting your hidden ticgit branch?
