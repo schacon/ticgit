@@ -15,9 +15,7 @@ describe TicGit do
   end
 
   it "Should merge in tickets from a remote source" do
-    #FIXME Clean this up some
-    tmp_dir=Dir.mktmpdir 'ticgit-gitdir2-'
-    Dir.chdir(File.expand_path(tmp_dir)) do
+    Dir.chdir(File.expand_path( tmp_dir=Dir.mktmpdir('ticgit-gitdir1-') )) do
       #prep, get temp dirs, init git2
       @ticgit.ticket_new('my new ticket')
       git2=Git.clone(@path, 'remote_1')
