@@ -43,6 +43,39 @@ describe TicGit do
     end
   end
 
-  it "Should not enounter merge conflicts"
+  it "Should merge tickets from multiple remote sources" do
+    Dir.chdir(File.expand_path( tmp_dir_1=Dir.mktmpdir('ticgit-gitdir1-') )) do
+      #prep, get temp dirs, remotes
+      @ticgit.ticket_new('my new ticket')
+      git2=Git.clone(@path, 'remote_1')
+      git=Git.open(@path)
+      git_path_2= tmp_dir + '/remote_1/'
+
+      #Make ticgit branch in remote_1
+      git2.checkout('origin/ticgit')
+      git2.branch('ticgit').checkout
+      ticgit2=TicGit.open(git_path_2, @orig_test_opts)
+
+      ticgit2.ticket_new('my second ticket')
+      git2.checkout('master')
+
+      git.add_remote('upstream', git_path_2)
+      git.checkout('ticgit')
+      git.pull('upstream', 'upstream/ticgit')
+      git.checkout('master')
+
+      #Without calling reset_ticgit, the following line only shows 1 ticket.
+      @ticgit.reset_ticgit
+      #@ticgit.tickets.length
+      
+      ticgit2.tickets.length.should == @ticgit.tickets.length
+    end
+
+    tmp_dir_1=Dir.mktmpdir('ticgit-gitdir1-')
+    tmp_dir_1=Dir.mktmpdir('ticgit-gitdir2-')
+    tmp_dir_1=Dir.mktmpdir('ticgit-gitdir3-')
+    @ticgit.ticket_new('my first ticket!')
+
+  end
 
 end
