@@ -15,8 +15,8 @@ tempdir -
     testfile => "content2"
 
 =end
-  def setup_new_git_repo
-    tempdir = Dir.mktmpdir 'ticgit-gitdir-'
+  def setup_new_git_repo prefix='ticgit-gitdir-'
+    tempdir = Dir.mktmpdir prefix
     Dir.chdir(tempdir) do
       git = Git.init
       new_file('test', 'content')
