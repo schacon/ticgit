@@ -195,7 +195,7 @@ module TicGit
     def ticket_revparse(ticket_id)
       if ticket_id
         ticket_id = ticket_id.strip
-
+        
         if /^[0-9]*$/ =~ ticket_id
           if t = @last_tickets[ticket_id.to_i - 1]
             return t
@@ -211,7 +211,7 @@ module TicGit
       end
     end
 
-    def ticket_tag(tag, ticket_id = nil, options = {})
+    def ticket_tag(tag, ticket_id = nil, options = OpenStruct.new)
       if t = ticket_revparse(ticket_id)
         ticket = TicGit::Ticket.open(self, t, @tickets[t])
         if options.remove
@@ -267,6 +267,14 @@ module TicGit
       ['open', 'resolved', 'invalid', 'hold']
     end
 
+    def sync_tickets      
+      in_branch(false) do 
+         git.pull('origin','origin/ticgit')
+         git.push('origin', 'ticgit:ticgit')
+         puts "Tickets synchronized."
+      end
+    end
+
     def load_tickets
       @tickets = {}
 
@@ -293,6 +301,12 @@ module TicGit
       @logger.info 'creating ticgit repo branch'
 
       in_branch(ticgit_branch) do
+        #The .hold file seems to have little to no purpose aside from helping
+        #figure out if the branch should be checked out or not.  It is created
+        #when the ticgit branch is created, and seems to exist for the lifetime
+        #of the ticgit branch. The purpose seems to be, to be able to tell if
+        #the ticgit branch is already checked out and not check it out again if
+        #it is.  This might be superfluous after switching to grit.
         new_file('.hold', 'hold')
 
         unless ticgit_branch
