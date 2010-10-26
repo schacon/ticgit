@@ -19,7 +19,7 @@ TicGit is currently using itself to store its feature requests and bug reports.
 
 There are two sets of prerequisites, those for people who intend to just run `ti`, and another set for those who wish to run `ticgitweb` as well. `ticgitweb` has additional dependancies that aren't required for `ti`'s use.
 
-**`ti`**
+**ti**
 
 Required Packages: git, ruby, rubygems
 
@@ -30,7 +30,7 @@ To install these packages on a Debian system, or a Debian based system like Ubun
     sudo aptitude install git ruby rubygems
     sudo gem install git
 
-**`ticgitweb`**
+**ticgitweb**
 
 Required Packages: git, ruby, rubygems
 
