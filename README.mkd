@@ -18,6 +18,7 @@ TicGit is currently using itself to store its feature requests and bug reports.
 ### Prerequisites ###
 
 Required Packages: git, ruby, rubygems
+
 Required Ruby Gems: git
 
 To install these packages on a Debian system, or a Debian based system like Ubuntu, do
@@ -26,10 +27,12 @@ To install these packages on a Debian system, or a Debian based system like Ubun
     sudo gem install git
 
 **A Note about rubygems**
+
 While the version of rubygems available from the repositories on Debian 5.0.5 stable will work just fine for using the command line `ti` program, using `ticgitweb` requires some extra effort.
 Older versions of rubygems, such as the one available on Debian 5.0.5, will not work out of the box with the new gem repositories because the .deb in stable relies on rubyforge rather than rubygems for its operations. See [this bug](http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=558251) for an example. If you are running an older version of rubygems, you may need to get the latest rubygems package from http://rubygems.org/ or [apt](http://jaqque.sbih.org/kplug/apt-pinning.html) [pinning](http://jeffwelling.github.com//2010/09/05/Apt-Pinning.html) before being able to properly install the git and ticgit gems.
 
 **A Note about the git gem**
+
 The git gem requires a git version of 1.6.0.0 or later, but on Debian stable, git-core is currently (Sept 6th 2010) at 1.5.6.5.  This isn't a fatal problem and we can continue using version 1.5.6.5 with the git gem, but you will see notices like this if you do
 
     [WARNING] The git gem requires git 1.6.0.0 or later, but only found 1.5.6.5. You should probably upgrade.
@@ -40,6 +43,8 @@ If these annoy you as they do me and you've set up [apt](http://jaqque.sbih.org/
     $ sudo aptitude -t testing install git-core
 
 And those notices should go away.
+
+
 
 
 ### Installing ###
