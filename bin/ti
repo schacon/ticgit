@@ -11,7 +11,9 @@ require 'fileutils'
 # Add the library from the source tree to the front of the load path.
 # This allows ti to run without first installing a ticgit gem, which is
 # important when testing multiple branches of development.
-$LOAD_PATH.unshift File.join(File.dirname(__FILE__), '..', 'lib')
+if File.exist? File.join('lib', 'ticgit.rb')
+    $LOAD_PATH.unshift File.join(File.dirname(__FILE__), '..', 'lib')
+end
 require 'ticgit'
 
 TicGit::CLI.execute
