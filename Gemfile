@@ -9,5 +9,5 @@ group :web do
 end
 
 group :dev do
- gem 'rspec', '>= 2.0.0.beta.22'
+ gem 'rspec', '~> 2.0.1'
 end

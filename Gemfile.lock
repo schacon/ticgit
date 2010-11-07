@@ -3,21 +3,23 @@ GEM
   specs:
     diff-lcs (1.1.2)
     git (1.2.5)
-    haml (3.0.18)
+    haml (3.0.23)
     rack (1.2.1)
     rake (0.8.7)
-    rspec (2.0.0.beta.22)
-      rspec-core (= 2.0.0.beta.22)
-      rspec-expectations (= 2.0.0.beta.22)
-      rspec-mocks (= 2.0.0.beta.22)
-    rspec-core (2.0.0.beta.22)
-    rspec-expectations (2.0.0.beta.22)
+    rspec (2.0.1)
+      rspec-core (~> 2.0.1)
+      rspec-expectations (~> 2.0.1)
+      rspec-mocks (~> 2.0.1)
+    rspec-core (2.0.1)
+    rspec-expectations (2.0.1)
       diff-lcs (>= 1.1.2)
-    rspec-mocks (2.0.0.beta.22)
-      rspec-core (= 2.0.0.beta.22)
-      rspec-expectations (= 2.0.0.beta.22)
-    sinatra (1.0)
-      rack (>= 1.0)
+    rspec-mocks (2.0.1)
+      rspec-core (~> 2.0.1)
+      rspec-expectations (~> 2.0.1)
+    sinatra (1.1.0)
+      rack (~> 1.1)
+      tilt (~> 1.1)
+    tilt (1.1)
 
 PLATFORMS
   ruby
@@ -26,5 +28,5 @@ DEPENDENCIES
   git (>= 1.0.5)
   haml
   rake
-  rspec (>= 2.0.0.beta.22)
+  rspec (~> 2.0.1)
   sinatra
