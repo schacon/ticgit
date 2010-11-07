@@ -52,8 +52,8 @@ Common options:
   it 'displays empty list' do
     expected = format_expected(<<-OUT)
 
-   TicId  Title                                                        State Date  Assgn    Tags                
---------------------------------------------------------------------------------------------------------------------
+   TicId  Title                                                                 State Date  Assgn    Tags
+-----------------------------------------------------------------------------------------------------------------------------
 
 
     OUT
