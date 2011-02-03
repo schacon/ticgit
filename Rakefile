@@ -10,45 +10,6 @@
 end
 exit 1 if $load_error
 
-# This namespace must be loaded near the top in order to be able to
-# display bundle-related rake tasks in the next section.
-namespace :bundle do
-  namespace :install do
-    desc 'Install gems for all tasks, including testing.'
-    task :all do
-      system 'bundle install'
-    end
-
-    desc 'Install standard CLI and web dependencies.'
-    task :std do
-      system 'bundle install --without dev'
-    end
-
-    # The gem will not currently build properly without the ticgitweb
-    # dependencies. Leave this task commented until the gemspec will
-    # build just the CLI.
-    #desc 'Install CLI dependencies only.'
-    #task :cli do
-    #  system 'bundle install --without dev web'
-    #end
-  end
-
-  desc 'List bundled gems.'
-  task :show do
-    system 'bundle show'
-  end
-end
-
-# If 'bundler install' hasn't been run, display the available bundler
-# tasks.
-unless File.directory? '.bundle'
-  $stderr.puts 'You must run one of the bundle:install tasks first:'
-  $stderr.puts
-  Rake::Task.tasks.each {|task| $stderr.puts "    rake #{task}"}
-  $stderr.puts
-  exit 1 if ARGV.to_s.grep(/bundle:install/).empty?
-end
-
 require 'bundler/setup'
 require 'rake/gempackagetask'
 
