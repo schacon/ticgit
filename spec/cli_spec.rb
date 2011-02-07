@@ -50,16 +50,16 @@ Common options:
   end
 
   it 'displays empty list' do
-    expected = format_expected(<<-OUT)
-
-   TicId  Title                                                        State Date  Assgn    Tags                
---------------------------------------------------------------------------------------------------------------------
-
-
-    OUT
-
+    fields = %w[TicId Title State Date Assgn Tags]
+    output = []
+    # It's unclear why it's necessary to append each line like this, but
+    # cli('list') would otherwise return nil. The spec helper probably
+    # needs some refactoring.
     cli 'list' do |line|
-      line.should == expected.shift
+      output << line
     end
+    output.shift.should be_empty
+    output.shift.should match /#{fields.join '\s+'}/
+    output.shift.should match /^-+$/
   end
 end

@@ -68,10 +68,37 @@ rescue LoadError
   $stderr.puts
 end
 
-gemspec = eval(File.read('ticgit.gemspec'))
-Rake::GemPackageTask.new(gemspec) do |pkg|
-  pkg.need_tar = true
+ti_gemspec = Gem::Specification.new do |s|
+    s.platform  =   Gem::Platform::RUBY
+    s.name      =   'ticgit'
+    s.version   =   '0.4.0'
+    s.summary   =   'A distributed ticketing system for Git projects.'
+    s.files     =   FileList['bin/ti', 'lib/**/*']
+    s.bindir = 'bin'
+    s.executables = %w[ti]
+    s.default_executable = 'ti'
+    s.require_paths = %w[lib bin]
+    s.add_dependency('git', '>= 1.0.5')
+    s.add_development_dependency('rake', '>= 0.8.7')
+    s.add_development_dependency('bundler')
 end
+Rake::GemPackageTask.new(ti_gemspec) { |pkg| pkg.need_tar = true }
+
+ticgitweb_gemspec = Gem::Specification.new do |s|
+    s.platform  =   Gem::Platform::RUBY
+    s.name      =   'ticgitweb'
+    s.version   =   '0.4.0'
+    s.summary   =   'A distributed ticketing system for Git projects.'
+    s.files     =   FileList['bin/ticgitweb']
+    s.bindir = 'bin'
+    s.executables = %w[ticgitweb]
+    s.default_executable = 'ticgitweb'
+    s.add_dependency('haml', '>= 3.0.23')
+    s.add_dependency('sinatra', '~> 1.1')
+    s.add_dependency('git', '>= 1.0.5')
+    s.add_dependency('ticgit', '>= 0.4.0')
+end
+Rake::GemPackageTask.new(ticgitweb_gemspec) { |pkg| pkg.need_tar = true }
 
 desc "Clean out the coverage and pkg directories"
 task :clean do
@@ -80,13 +107,42 @@ task :clean do
   rm Dir.glob('ticgit*gem')
 end
 
-task :make => "pkg/#{gemspec.name}-#{gemspec.version}.gem" do
-  puts "Generating #{gemspec.name}-#{gemspec.version}.gem"
+# Current will not run as a task in all cases. Manually remove with:
+#
+#    gem uninstall -axI ticgitweb ticgit
+#
+# instead.
+task :uninstall do
+  %w[ticgit ticgitweb].each do |gem|
+    puts "Uninstalling #{gem} ... "
+    exec "gem uninstall --all --executables --ignore-dependencies #{gem}"
+  end
 end
 
+namespace :make do
+  desc 'Make ticgit package for ti executable'
+  task :ti => "pkg/#{ti_gemspec.name}-#{ti_gemspec.version}.gem" do
+    puts "Generating #{ti_gemspec.name}-#{ti_gemspec.version}.gem"
+  end
+
+  desc 'Make ticgitweb package'
+  task :ticgitweb => "pkg/#{ticgitweb_gemspec.name}-#{ticgitweb_gemspec.version}.gem" do
+    puts "Generating #{ticgitweb_gemspec.name}-#{ticgitweb_gemspec.version}.gem"
+  end
+end # namespace :make
+
+# Rubygems currently can't install both gems at the same time as a task;
+# ticgitweb always says it can't find ticgit. Install manually with:
+#
+#   gem install pkg/*gem
+#
+# instead.
 task :install do
-    puts "Installing #{gemspec.name}-#{gemspec.version}.gem ..."
-    system "gem install pkg/#{gemspec.name}-#{gemspec.version}.gem"
+  gems = FileList['pkg/*gem']
+  gems.sort.each do |gem|
+    puts "Installing #{gem} ..."
+    system "gem install #{gem}"
+  end
 end
 
-task :default => [:make, :install]
+task :default => ['make:ti', 'make:ticgitweb']

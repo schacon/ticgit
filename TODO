@@ -53,3 +53,11 @@ In Ruby Applications".
 will change?
     -  Will this effect hosting your project on Github,
 or Github also hosting your hidden ticgit branch?
+
+* Sync with Lighthouse?
+
+* Post-commit hooks?
+  - Add the ability to automatically sync with lighthouse after
+    a change is made to a ticket locally
+  - Add ability to automatically push to origin (or configurably, 
+    other remotes) after a change to any ticket locally

@@ -3,3 +3,4 @@ pkg
 coverage
 ticgit*gem
 tmp
+.bundle
