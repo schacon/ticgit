@@ -300,10 +300,11 @@ This will create a ticgit branch in your local repo based on the ticgit branch i
 
 To download your own copy of the TicGit-ng ticgit branch after cloning the repo, so that you can add or alter a bug yourself, follow these instructions.
 
-This will checkout a ticgit branch and set it to track the ticgit branch upstream in origin
+This will checkout a ticgit branch and set it to track the ticgit branch upstream in origin, and then checks out the master branch.  You must checkout the master branch because TicGit-ng gets confused if you are already in the ticgit branch when running TicGit-ng.
 
     $ git checkout origin/ticgit
     $ git checkout -b ticgit
+    $ git checkout master
 
 This will show you all of the bugs in TicGit-ng's ticgit branch.
 
