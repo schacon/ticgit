@@ -10,6 +10,7 @@ module TicGit
     end
 
     def self.parse(args)
+      #new() calls initialize(...) below
       cli = new(args)
       cli.parse_options!
       cli
