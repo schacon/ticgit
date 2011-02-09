@@ -296,6 +296,24 @@ If you have cloned a repository and would like to get the ticgit branch for that
 
 This will create a ticgit branch in your local repo based on the ticgit branch in origin.  Now you can run `ti list` and it will show you the ticgit tickets for that repository.
 
+### Getting the TicGit-ng ticgit branch ##
+
+To download your own copy of the TicGit-ng ticgit branch after cloning the repo, so that you can add or alter a bug yourself, follow these instructions.
+
+This will checkout a ticgit branch and set it to track the ticgit branch upstream in origin
+
+    $ git checkout origin/ticgit
+    $ git checkout -b ticgit
+
+This will show you all of the bugs in TicGit-ng's ticgit branch.
+
+    $ ti list
+
+To submit your changes back to the upstream maintainer, push the bugs in your ticgit branch to your public repo on Github
+    
+    $ git push origin ticgit
+
+Then contact the upstream maintainer by sending a Pull Request or Email and ask them to review and accept your bug changes.
 
 ### Sharing your tickets with others ###
 
