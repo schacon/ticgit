@@ -77,6 +77,7 @@ module TicGit
     #This is a legacy function from back when ticgit needed to have its
     #cache reset in order to avoid cache corruption.
     def reset_ticgit
+      tickets
       save_state
     end
 
