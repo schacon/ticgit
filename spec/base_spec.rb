@@ -167,9 +167,10 @@ describe TicGit::Base do
   end
 
   it "should save state to disk after a new ticket" do
-    time = File.stat(@ticgit.state).size
+    time = File.lstat(@ticgit.state).mtime.to_i
+    sleep 1
     t = @ticgit.ticket_new('my next ticket', :tags => ['scotty', 'chacony'])
-    File.stat(@ticgit.state).size.should_not eql(time)
+    File.lstat(@ticgit.state).mtime.to_i.should_not eql(time)
   end
   it "should be able to change the points of a ticket" do
     @ticgit.ticket_new('my new ticket')

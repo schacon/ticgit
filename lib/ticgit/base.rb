@@ -4,7 +4,7 @@ module TicGit
 
     attr_reader :git, :logger
     attr_reader :tic_working, :tic_index
-    attr_reader :tickets, :last_tickets, :current_ticket  # saved in state
+    attr_reader :last_tickets, :current_ticket  # saved in state
     attr_reader :config
     attr_reader :state, :config_file
 
@@ -47,7 +47,7 @@ module TicGit
     # marshal dump the internals
     # save config file
     def save_state
-      state_list = [@tickets, @last_tickets, @current_ticket]
+      state_list = [@last_tickets, @current_ticket]
       File.open(@state, 'w+'){|io| Marshal.dump(state_list, io) }
       File.open(@config_file, 'w+'){|io| io.write(config.to_yaml) }
     end
@@ -55,25 +55,35 @@ module TicGit
     # read in the internals
     def load_state
       state_list = File.open(@state){|io| Marshal.load(io) }
-      @tickets, @last_tickets, @current_ticket = state_list
+      garbage_data=nil
+      if state_list.length == 2
+        @last_tickets, @current_ticket = state_list
+      else
+        #This was left behind so that people can continue load_state-ing
+        #without having to delete their ~/.ticgit directory when
+        #updating to this version
+        garbage_data, @last_tickets, @current_ticket = state_list
+      end
     end
 
     # returns new Ticket
     def ticket_new(title, options = {})
       t = TicGit::Ticket.create(self, title, options)
       reset_ticgit
-      TicGit::Ticket.open(self, t.ticket_name, @tickets[t.ticket_name])
+      TicGit::Ticket.open(self, t.ticket_name, tickets[t.ticket_name])
     end
 
+    #This is a legacy function from back when ticgit needed to have its
+    #cache reset in order to avoid cache corruption.
     def reset_ticgit
-      load_tickets
+      tickets
       save_state
     end
 
     # returns new Ticket
     def ticket_comment(comment, ticket_id = nil)
       if t = ticket_revparse(ticket_id)
-        ticket = TicGit::Ticket.open(self, t, @tickets[t])
+        ticket = TicGit::Ticket.open(self, t, tickets[t])
         ticket.add_comment(comment)
         reset_ticgit
       end
@@ -86,7 +96,7 @@ module TicGit
       @last_tickets = []
       @config['list_options'] ||= {}
 
-      @tickets.to_a.each do |name, t|
+      tickets.to_a.each do |name, t|
         ts << TicGit::Ticket.open(self, name, t)
       end
 
@@ -177,7 +187,7 @@ module TicGit
       # ticket_id can be index of last_tickets, partial sha or nil => last ticket
       reset_ticgit
       if t = ticket_revparse(ticket_id)
-        return TicGit::Ticket.open(self, t, @tickets[t])
+        return TicGit::Ticket.open(self, t, tickets[t])
       end
     end
 
@@ -202,7 +212,7 @@ module TicGit
           end
         else # partial or full sha
           regex = /^#{Regexp.escape(ticket_id)}/
-          ch = @tickets.select{|name, t|
+          ch = tickets.select{|name, t|
             t['files'].assoc('TICKET_ID')[1] =~ regex }
           ch.first[0] if ch.first
         end
@@ -213,7 +223,7 @@ module TicGit
 
     def ticket_tag(tag, ticket_id = nil, options = OpenStruct.new)
       if t = ticket_revparse(ticket_id)
-        ticket = TicGit::Ticket.open(self, t, @tickets[t])
+        ticket = TicGit::Ticket.open(self, t, tickets[t])
         if options.remove
           ticket.remove_tag(tag)
         else
@@ -226,7 +236,7 @@ module TicGit
     def ticket_change(new_state, ticket_id = nil)
       if t = ticket_revparse(ticket_id)
         if tic_states.include?(new_state)
-          ticket = TicGit::Ticket.open(self, t, @tickets[t])
+          ticket = TicGit::Ticket.open(self, t, tickets[t])
           ticket.change_state(new_state)
           reset_ticgit
         end
@@ -235,7 +245,7 @@ module TicGit
 
     def ticket_assign(new_assigned = nil, ticket_id = nil)
       if t = ticket_revparse(ticket_id)
-        ticket = TicGit::Ticket.open(self, t, @tickets[t])
+        ticket = TicGit::Ticket.open(self, t, tickets[t])
         ticket.change_assigned(new_assigned)
         reset_ticgit
       end
@@ -243,7 +253,7 @@ module TicGit
 
     def ticket_points(new_points = nil, ticket_id = nil)
       if t = ticket_revparse(ticket_id)
-        ticket = TicGit::Ticket.open(self, t, @tickets[t])
+        ticket = TicGit::Ticket.open(self, t, tickets[t])
         ticket.change_points(new_points)
         reset_ticgit
       end
@@ -251,7 +261,7 @@ module TicGit
 
     def ticket_checkout(ticket_id)
       if t = ticket_revparse(ticket_id)
-        ticket = TicGit::Ticket.open(self, t, @tickets[t])
+        ticket = TicGit::Ticket.open(self, t, tickets[t])
         @current_ticket = ticket.ticket_name
         save_state
       end
@@ -275,8 +285,12 @@ module TicGit
       end
     end
 
-    def load_tickets
-      @tickets = {}
+    def tickets
+      read_tickets
+    end
+
+    def read_tickets
+      tickets = {}
 
       bs = git.lib.branches_all.map{|b| b.first }
 
@@ -291,10 +305,11 @@ module TicGit
         tic = file.split('/')
         if tic.size == 2  # directory depth
           ticket, info = tic
-          @tickets[ticket] ||= { 'files' => [] }
-          @tickets[ticket]['files'] << [info, sha]
+          tickets[ticket] ||= { 'files' => [] }
+          tickets[ticket]['files'] << [info, sha]
         end
       end
+      tickets
     end
 
     def init_ticgit_branch(ticgit_branch = false)
