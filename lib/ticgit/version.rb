@@ -1,3 +1,3 @@
 module TicGit
-  VERSION = '2009.05.18'
+  VERSION = '0.9.1'
 end
