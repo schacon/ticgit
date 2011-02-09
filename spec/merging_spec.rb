@@ -35,10 +35,6 @@ describe TicGit do
       git.pull('upstream', 'upstream/ticgit')
       git.checkout('master')
 
-      #Without calling reset_ticgit, the following line only shows 1 ticket.
-      @ticgit.reset_ticgit
-      #@ticgit.tickets.length
-      
       ticgit2.tickets.length.should == @ticgit.tickets.length
     end
   end
