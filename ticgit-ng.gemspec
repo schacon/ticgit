@@ -18,7 +18,7 @@ Gem::Specification.new do |s|
 
   s.add_dependency "git"
   s.add_development_dependency "rspec"
-  s.files       = Dir.glob("{bin,lib}/**/*") + %w( LICENSE README.mkd )
+  s.files       = Dir.glob("{bin,lib}/**/*") + %w( LICENSE_MIT LICENSE_GPL README.mkd )
   s.executables = ['ti', 'ticgitweb']
   s.require_path= 'lib'
 end
