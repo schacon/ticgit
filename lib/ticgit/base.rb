@@ -48,7 +48,6 @@ module TicGit
     # save config file
     def save_state
       state_list = [@last_tickets, @current_ticket]
-      puts "#{@state}"
       File.open(@state, 'w+'){|io| Marshal.dump(state_list, io) }
       File.open(@config_file, 'w+'){|io| io.write(config.to_yaml) }
     end
@@ -287,10 +286,7 @@ module TicGit
     end
 
     def tickets
-      puts "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
       read_tickets
-      require 'pp'
-      pp read_tickets
     end
 
     def read_tickets
