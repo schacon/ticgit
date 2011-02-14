@@ -23,10 +23,10 @@ require 'ticgit/cli'
 # Author::    Scott Chacon (mailto:schacon@gmail.com)
 # License::   MIT License
 #
-module TicGit
-  autoload :VERSION, 'ticgit/version'
-  autoload :Comment, 'ticgit/comment'
-  autoload :Ticket, 'ticgit/ticket'
+module TicGitNG
+  autoload :VERSION, 'ticgit-ng/version'
+  autoload :Comment, 'ticgit-ng/comment'
+  autoload :Ticket, 'ticgit-ng/ticket'
 
   # options
   #   :logger => Logger.new(STDOUT)

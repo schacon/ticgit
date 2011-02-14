@@ -1,4 +1,4 @@
-module TicGit
+module TicGitNG
   class NoRepoFound < StandardError;end
   class Base
 
@@ -15,7 +15,7 @@ module TicGit
 
       proj = Ticket.clean_string(@git.dir.path)
 
-      @tic_dir = opts[:tic_dir] || '~/.ticgit'
+      @tic_dir = opts[:tic_dir] || '~/.ticgit-ng'
       @tic_working = opts[:working_directory] || File.expand_path(File.join(@tic_dir, proj, 'working'))
       @tic_index = opts[:index_file] || File.expand_path(File.join(@tic_dir, proj, 'index'))
 
@@ -32,7 +32,7 @@ module TicGit
       if File.file?(@state)
         load_state
       else
-        reset_ticgit
+        reset_ticgitng
       end
     end
 
@@ -68,14 +68,14 @@ module TicGit
 
     # returns new Ticket
     def ticket_new(title, options = {})
-      t = TicGit::Ticket.create(self, title, options)
-      reset_ticgit
-      TicGit::Ticket.open(self, t.ticket_name, tickets[t.ticket_name])
+      t = TicGitNG::Ticket.create(self, title, options)
+      reset_ticgitng
+      TicGitNG::Ticket.open(self, t.ticket_name, tickets[t.ticket_name])
     end
 
     #This is a legacy function from back when ticgit needed to have its
     #cache reset in order to avoid cache corruption.
-    def reset_ticgit
+    def reset_ticgitng
       tickets
       save_state
     end
@@ -83,21 +83,21 @@ module TicGit
     # returns new Ticket
     def ticket_comment(comment, ticket_id = nil)
       if t = ticket_revparse(ticket_id)
-        ticket = TicGit::Ticket.open(self, t, tickets[t])
+        ticket = TicGitNG::Ticket.open(self, t, tickets[t])
         ticket.add_comment(comment)
-        reset_ticgit
+        reset_ticgitng
       end
     end
 
     # returns array of Tickets
     def ticket_list(options = {})
-      reset_ticgit
+      reset_ticgitng
       ts = []
       @last_tickets = []
       @config['list_options'] ||= {}
 
       tickets.to_a.each do |name, t|
-        ts << TicGit::Ticket.open(self, name, t)
+        ts << TicGitNG::Ticket.open(self, name, t)
       end
 
       if name = options[:saved]
@@ -185,9 +185,9 @@ module TicGit
     # returns single Ticket
     def ticket_show(ticket_id = nil)
       # ticket_id can be index of last_tickets, partial sha or nil => last ticket
-      reset_ticgit
+      reset_ticgitng
       if t = ticket_revparse(ticket_id)
-        return TicGit::Ticket.open(self, t, tickets[t])
+        return TicGitNG::Ticket.open(self, t, tickets[t])
       end
     end
 
