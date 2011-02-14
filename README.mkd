@@ -373,6 +373,8 @@ To create a gem from your development copy of ticgit, go to your ticgit director
 
 This will create a pkg/ directory, which will contain a newly created ticgit gem for you to install.
 
+More information on developing TicGit-ng and collaborating with other TicGit-ng developers at [here](https://github.com/jeffWelling/ticgit/wiki/Development)
+
 ### Alternatives ###
 
 ditz 
