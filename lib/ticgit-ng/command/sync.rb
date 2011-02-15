@@ -8,7 +8,7 @@ module TicGitNG
           options.repo = v
         }
         opts.on_head(
-          "-np", "--no-push", "Do not push to the remote repo"){|v|
+          "-n", "--no-push", "Do not push to the remote repo"){|v|
           options.no_push = true
         }
       end
