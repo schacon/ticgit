@@ -1,17 +1,13 @@
 #!/usr/bin/env ruby
-
-# This is a command line client that does all the actual tic commands
-# 
-# author : Scott Chacon (schacon@gmail.com)
-#
-
 require 'rubygems'
 require 'fileutils'
 
 # Add the library from the source tree to the front of the load path.
 # This allows ti to run without first installing a ticgit gem, which is
 # important when testing multiple branches of development.
-$LOAD_PATH.unshift File.join(File.dirname(__FILE__), '..', 'lib')
-require 'ticgit'
+if File.exist? File.join('lib', 'ticgit-ng.rb')
+    $LOAD_PATH.unshift File.join(File.dirname(__FILE__), '..', 'lib')
+end
+require 'ticgit-ng'
 
-TicGit::CLI.execute
+TicGitNG::CLI.execute

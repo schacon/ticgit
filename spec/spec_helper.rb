@@ -1,11 +1,11 @@
-require File.expand_path(File.dirname(__FILE__) + "/../lib/ticgit")
+require File.expand_path(File.dirname(__FILE__) + "/../lib/ticgit-ng")
 require 'fileutils'
 require 'logger'
 require 'tempfile'
 
-TICGIT_HISTORY = StringIO.new
+TICGITNG_HISTORY = StringIO.new
 
-module TicGitSpecHelper
+module TicGitNGSpecHelper
 
 =begin
 tempdir -
@@ -15,7 +15,7 @@ tempdir -
     testfile => "content2"
 
 =end
-  def setup_new_git_repo prefix='ticgit-gitdir-'
+  def setup_new_git_repo prefix='ticgit-ng-gitdir-'
     tempdir = Dir.mktmpdir prefix
     Dir.chdir(tempdir) do
       git = Git.init
@@ -29,8 +29,8 @@ tempdir -
   end
 
   def test_opts
-    tempdir = Dir.mktmpdir 'ticgit-ticdir-'
-    logger = Logger.new(Tempfile.new('ticgit-log-'))
+    tempdir = Dir.mktmpdir 'ticgit-ng-ticdir-'
+    logger = Logger.new(Tempfile.new('ticgit-ng-log-'))
     { :tic_dir => tempdir, :logger => logger }
   end
 
@@ -46,12 +46,12 @@ tempdir -
   end
 
   def cli(*args, &block)
-    TICGIT_HISTORY.truncate 0
-    TICGIT_HISTORY.rewind
+    TICGITNG_HISTORY.truncate 0
+    TICGITNG_HISTORY.rewind
 
-    ticgit = TicGit::CLI.new(args.flatten, @path, TICGIT_HISTORY)
-    ticgit.parse_options!
-    ticgit.execute!
+    ticgitng = TicGitNG::CLI.new(args.flatten, @path, TICGITNG_HISTORY)
+    ticgitng.parse_options!
+    ticgitng.execute!
 
     replay_history(&block)
   rescue SystemExit => error
@@ -59,10 +59,10 @@ tempdir -
   end
 
   def replay_history
-    TICGIT_HISTORY.rewind
+    TICGITNG_HISTORY.rewind
     return unless block_given?
 
-    while line = TICGIT_HISTORY.gets
+    while line = TICGITNG_HISTORY.gets
       yield(line.strip)
     end
   end
