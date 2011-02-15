@@ -350,8 +350,17 @@ Replacing SOURCE_URL with the URL you were told to pull from, now you can see th
 
 ### Next generation collaboration ###
 
-Changes made by [Bruno Santos](http://github.com/pheres) to add a [`ti sync`](http://github.com/jeffWelling/ticgit/commit/7388386fab4fb12c36e6eeb7d19eaa4e4b16b853) command are currently in the process of being integrated into the master branch.  Once this is done, syncing with other people should be as easy as `ti sync REMOTE_REPO` where REMOTE_REPO is a repo URL.
+Changes made by [Bruno Santos](http://github.com/pheres) to add a [`ti sync`](http://github.com/jeffWelling/ticgit/commit/7388386fab4fb12c36e6eeb7d19eaa4e4b16b853) command were integrated on February 15th 2011.  You can now use the `ti sync [options]` command to sync your tickets with anyone else you've added with `git remote add`.  To use `ti sync`, all you need to do is first make sure you've already added the remote source with `git remote add`, and then do
 
+    $ ti sync --repo REMOTE_SOURCE
+
+if you want to pull their tickets into your ticgit-ng branch *and* push your tickets to their ticgit-ng branch, or
+
+    $ ti sync --repo REMOTE_SOURCE --no-push
+
+if you want to pull their tickets into your ticgit-ng branch without pushing your tickets to their branch.
+
+More information on using ti sync can be gleemed from reviewing the [merge specs](https://github.com/jeffWelling/ticgit/blob/deving/spec/merging_spec.rb)
 
 ### Ticgitweb ###
 
