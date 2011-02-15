@@ -3,13 +3,13 @@ require File.dirname(__FILE__) + "/spec_helper"
 describe TicGitNG do
   include TicGitNGSpecHelper
 
-  before(:all) do
+  before(:each) do
     @path= setup_new_git_repo
     @orig_test_opts= test_opts
     @ticgitng= TicGitNG.open(@path, @orig_test_opts)
   end
 
-  after(:all) do
+  after(:each) do
     Dir.glob(File.expand_path("~/.ticgit-ng/-tmp*")).each {|file_name| FileUtils.rm_r(file_name, {:force=>true,:secure=>true}) }
     Dir.glob(File.expand_path("/tmp/ticgit-ng-*")).each {|file_name| FileUtils.rm_r(file_name, {:force=>true,:secure=>true}) }
   end
@@ -43,9 +43,11 @@ describe TicGitNG do
     Dir.chdir(File.expand_path( tmp_dir=Dir.mktmpdir('ticgit-ng-gitdir1-') )) do
       #prep, get temp dirs, init git2
 
-      @ticgitng.ticket_new('my new ticket')
-      git=Git.open(@path)
+      #@ticgitng.ticket_new('my new ticket')
+      #git=Git.open(@path)
+
       git_path_2= tmp_dir + '/remote_1/'
+      git_path_3= tmp_dir + '/remote_2/'
 
       #Make ticgit-ng branch in remote_1
       git2=Git.clone(@path, 'remote_1')
@@ -54,17 +56,24 @@ describe TicGitNG do
       git2.branch('ticgit-ng').checkout
       git2.checkout('master')
 
+      git3=Git.clone(git_path_2, 'remote_2')
+      git3.checkout('origin/ticgit-ng')
+      git3.branch('ticgit-ng').checkout
+      git3.checkout('master')
+
       ticgit2=TicGitNG.open(git_path_2, @orig_test_opts)
-      ticgit2.ticket_new('my second ticket')
-      @ticgitng.ticket_new('my third ticket')
+      ticgit2.ticket_new('my first ticket')
+      ticgit3=TicGitNG.open(git_path_3, @orig_test_opts)
+      ticgit3.ticket_new('my second ticket')
+      ticgit2.ticket_new('my third ticket')
 
       #git.add_remote('upstream', git_path_2)
       #git.checkout('ticgit-ng')
       #git.pull('upstream', 'upstream/ticgit-ng')
       #git.checkout('master')
-      ticgit2.sync_tickets
+      ticgit3.sync_tickets
 
-      ticgit2.tickets.length.should == @ticgitng.tickets.length
+      ticgit3.tickets.length.should == ticgit2.tickets.length
     end
   end
 
@@ -72,10 +81,9 @@ describe TicGitNG do
     Dir.chdir(File.expand_path( tmp_dir=Dir.mktmpdir('ticgit-ng-gitdir1-') )) do
       #prep, get temp dirs, init git2
 
-      @ticgitng.ticket_new('my new ticket')
-      git=Git.open(@path)
       git_path_2= tmp_dir + '/remote_1/'
       git_path_3= tmp_dir + '/remote_2/'
+      git_path_4= tmp_dir + '/remote_3/'
 
       #Make ticgit-ng branch in remote_1
       git2=Git.clone(@path, 'remote_1')
@@ -91,28 +99,48 @@ describe TicGitNG do
       git3.branch('ticgit-ng').checkout
       git3.checkout('master')
 
+      #Make ticgit-ng branch in remote_2
+      git4=Git.clone(@path, 'remote_3')
+      git4.checkout('origin/ticgit-ng')
+      git4.branch('ticgit-ng').checkout
+      git4.checkout('master')
+
       ticgit2=TicGitNG.open(git_path_2, @orig_test_opts)
-      ticgit2.ticket_new('my second ticket')
+      ticgit2.tickets.length.should==0
+      ticgit2.ticket_new('my first ticket')
       ticgit3=TicGitNG.open(git_path_3, @orig_test_opts)
-      ticgit3.ticket_new('my third ticket')
-      @ticgitng.ticket_new('my fourth ticket')
+      ticgit3.tickets.length.should==0
+      ticgit3.ticket_new('my second ticket')
+      ticgit4=TicGitNG.open(git_path_4, @orig_test_opts)
+      ticgit4.tickets.length.should==0
+      ticgit4.ticket_new('my third ticket')
+      ticgit2.ticket_new('my fourth ticket')
 
       #git.add_remote('upstream', git_path_2)
       #git.checkout('ticgit-ng')
       #git.pull('upstream', 'upstream/ticgit-ng')
       #git.checkout('master')
-      ticgit2.sync_tickets   #ticgit2 should now have tickets 1, 2, and 4
-      git3.add_remote('ticgit2', git_path_2)
-      ticgit3.sync_tickets('ticgit2', false) #false here tells sync to not push to the remote source
-                                             #ticgit3 should now have tickets 1, 2, 3, and 4.
-      puts "\n"
-      require 'pp'
-      pp ticgit3.tickets
-      puts git_path_3
-      sleep 500
-      puts "\n"
-
       
+      git3.add_remote('ticgit2', git_path_2)
+      git4.add_remote('ticgit3', git_path_3)
+
+      ticgit3.sync_tickets('ticgit2') #ticgit3 should now have tickets 1, 2, and 4
+                                      #and ticgit2 should now have the same
+      ticgit3.tickets.length.should==3
+      ticgit2.tickets.length.should==3
+
+      ticgit4.sync_tickets('ticgit3', false) #ticgit4 should now have tickets 1,2,3,4
+                                             #but ticgit2 and 3 should only have 1,2,4
+      ticgit4.tickets.length.should==4
+      ticgit3.tickets.length.should==3
+      ticgit2.tickets.length.should==3
+
+      git4.add_remote('ticgit2', git_path_2)
+      ticgit4.sync_tickets('ticgit2') #ticgit2 and 4 should now have 4 tickets while
+                                      #ticgit3 only has 3 tickets
+      ticgit4.tickets.length.should==4
+      ticgit3.tickets.length.should==3
+      ticgit2.tickets.length.should==4
     end
   end
 end
