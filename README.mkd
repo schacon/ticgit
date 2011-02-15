@@ -1,7 +1,9 @@
-## TicGit ##
+## TicGit-ng ##
 
 This project provides a ticketing system built on Git that is kept in a
-separate branch in your projects Git repository.
+separate branch in your projects Git repository. Originally called TicGit,
+it is now known as TicGit-ng to continue development and avoid namespace
+clashes.
 
 ### About ###
 
