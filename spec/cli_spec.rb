@@ -1,17 +1,17 @@
 require File.dirname(__FILE__) + "/spec_helper"
 
-describe TicGit::CLI do
-  include TicGitSpecHelper
+describe TicGitNG::CLI do
+  include TicGitNGSpecHelper
 
   before(:all) do
     @path = setup_new_git_repo
     @orig_test_opts = test_opts
-    @ticgit = TicGit.open(@path, @orig_test_opts)
+    @ticgitng = TicGitNG.open(@path, @orig_test_opts)
   end
 
   after(:all) do
-    Dir.glob(File.expand_path("~/.ticgit/-tmp*")).each {|file_name| FileUtils.rm_r(file_name, {:force=>true,:secure=>true}) }
-    Dir.glob(File.expand_path("/tmp/ticgit-*")).each {|file_name| FileUtils.rm_r(file_name, {:force=>true,:secure=>true}) }
+    Dir.glob(File.expand_path("~/.ticgit-ng/-tmp*")).each {|file_name| FileUtils.rm_r(file_name, {:force=>true,:secure=>true}) }
+    Dir.glob(File.expand_path("/tmp/ticgit-ng-*")).each {|file_name| FileUtils.rm_r(file_name, {:force=>true,:secure=>true}) }
   end
 
   it "should list the tickets"

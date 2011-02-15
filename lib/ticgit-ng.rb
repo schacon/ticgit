@@ -13,16 +13,9 @@ $:.unshift(File.dirname(__FILE__)) unless
 require 'rubygems'
 # requires git >= 1.0.5
 require 'git'
-require 'ticgit/base'
-require 'ticgit/cli'
+require 'ticgit-ng/base'
+require 'ticgit-ng/cli'
 
-# TicGit Library
-#
-# This library implements a git based ticketing system in a git repo
-#
-# Author::    Scott Chacon (mailto:schacon@gmail.com)
-# License::   MIT License
-#
 module TicGitNG
   autoload :VERSION, 'ticgit-ng/version'
   autoload :Comment, 'ticgit-ng/comment'

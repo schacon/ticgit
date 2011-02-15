@@ -1,4 +1,4 @@
-module TicGit
+module TicGitNG
   module Command
     module Sync
       def parser(opts)
