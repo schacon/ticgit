@@ -75,25 +75,44 @@ describe TicGitNG do
       @ticgitng.ticket_new('my new ticket')
       git=Git.open(@path)
       git_path_2= tmp_dir + '/remote_1/'
+      git_path_3= tmp_dir + '/remote_2/'
 
       #Make ticgit-ng branch in remote_1
       git2=Git.clone(@path, 'remote_1')
       git2.checkout('origin/ticgit-ng')
-      #this creates the ticgit-ng branch, tracking origin/ticgit-ng
+      #this creates the ticgit-ng branch, tracking from the 
+      #branch we are already on, origin/ticgit-ng
       git2.branch('ticgit-ng').checkout
       git2.checkout('master')
 
+      #Make ticgit-ng branch in remote_2
+      git3=Git.clone(@path, 'remote_2')
+      git3.checkout('origin/ticgit-ng')
+      git3.branch('ticgit-ng').checkout
+      git3.checkout('master')
+
       ticgit2=TicGitNG.open(git_path_2, @orig_test_opts)
       ticgit2.ticket_new('my second ticket')
-      @ticgitng.ticket_new('my third ticket')
+      ticgit3=TicGitNG.open(git_path_3, @orig_test_opts)
+      ticgit3.ticket_new('my third ticket')
+      @ticgitng.ticket_new('my fourth ticket')
 
       #git.add_remote('upstream', git_path_2)
       #git.checkout('ticgit-ng')
       #git.pull('upstream', 'upstream/ticgit-ng')
       #git.checkout('master')
-      ticgit2.sync_tickets
+      ticgit2.sync_tickets   #ticgit2 should now have tickets 1, 2, and 4
+      git3.add_remote('ticgit2', git_path_2)
+      ticgit3.sync_tickets('ticgit2', false) #false here tells sync to not push to the remote source
+                                             #ticgit3 should now have tickets 1, 2, 3, and 4.
+      puts "\n"
+      require 'pp'
+      pp ticgit3.tickets
+      puts git_path_3
+      sleep 500
+      puts "\n"
 
-      ticgit2.tickets.length.should == @ticgitng.tickets.length
+      
     end
   end
 end
