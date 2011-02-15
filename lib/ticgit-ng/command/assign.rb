@@ -1,4 +1,4 @@
-module TicGit
+module TicGitNG
   module Command
     # Assigns a ticket to someone
     #

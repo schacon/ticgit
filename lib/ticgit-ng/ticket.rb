@@ -1,4 +1,4 @@
-module TicGit
+module TicGitNG
   class Ticket
 
     attr_reader :base, :opts
@@ -49,9 +49,9 @@ module TicGit
           when 'ASSIGNED'
             t.assigned = data[1]
           when 'ATTACHMENT'
-            t.attachments << TicGit::Attachment.new(base, fname, value)
+            t.attachments << TicGitNG::Attachment.new(base, fname, value)
           when 'COMMENT'
-            t.comments << TicGit::Comment.new(base, fname, value)
+            t.comments << TicGitNG::Comment.new(base, fname, value)
           when 'POINTS'
             t.points = base.git.gblob(value).contents.to_i
           when 'STATE'

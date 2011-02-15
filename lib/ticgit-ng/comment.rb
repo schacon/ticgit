@@ -1,4 +1,4 @@
-module TicGit
+module TicGitNG
   class Comment
 
     attr_reader :base, :user, :added, :comment

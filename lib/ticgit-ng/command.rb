@@ -1,10 +1,10 @@
-module TicGit
+module TicGitNG
   module Command
     COMMANDS = {}
     DOC = {}
 
     def self.register(mod_name, doc, *commands)
-      autoload(mod_name, "ticgit/command/#{mod_name.downcase}")
+      autoload(mod_name, "ticgit-ng/command/#{mod_name.downcase}")
       DOC[commands] = doc
       commands.each{|cmd| COMMANDS[cmd] = mod_name }
     end
@@ -54,7 +54,7 @@ module TicGit
         o.base.append ' ', nil, nil
         o.base.append 'Common options:', nil, nil
         o.on_tail('-v', '--version', 'Show the version number'){
-          puts TicGit::VERSION
+          puts TicGitNG::VERSION
           exit
         }
         o.on_tail('-h', '--help', 'Display this help'){
