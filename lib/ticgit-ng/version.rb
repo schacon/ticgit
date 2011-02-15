@@ -1,3 +1,3 @@
-module TicGit
+module TicGitNG
   VERSION = '0.9.1'
 end

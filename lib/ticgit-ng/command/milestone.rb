@@ -1,4 +1,4 @@
-module TicGit
+module TicGitNG
   module Command
     # tic milestone
     # tic milestone migration1 (list tickets)

@@ -1,4 +1,4 @@
-module TicGit
+module TicGitNG
   class NoRepoFound < StandardError;end
   class Base
 
@@ -15,7 +15,7 @@ module TicGit
 
       proj = Ticket.clean_string(@git.dir.path)
 
-      @tic_dir = opts[:tic_dir] || '~/.ticgit'
+      @tic_dir = opts[:tic_dir] || '~/.ticgit-ng'
       @tic_working = opts[:working_directory] || File.expand_path(File.join(@tic_dir, proj, 'working'))
       @tic_index = opts[:index_file] || File.expand_path(File.join(@tic_dir, proj, 'index'))
 
@@ -32,7 +32,7 @@ module TicGit
       if File.file?(@state)
         load_state
       else
-        reset_ticgit
+        reset_ticgitng
       end
     end
 
@@ -61,21 +61,21 @@ module TicGit
       else
         #This was left behind so that people can continue load_state-ing
         #without having to delete their ~/.ticgit directory when
-        #updating to this version
+        #updating to this version (rename to ticgit-ng)
         garbage_data, @last_tickets, @current_ticket = state_list
       end
     end
 
     # returns new Ticket
     def ticket_new(title, options = {})
-      t = TicGit::Ticket.create(self, title, options)
-      reset_ticgit
-      TicGit::Ticket.open(self, t.ticket_name, tickets[t.ticket_name])
+      t = TicGitNG::Ticket.create(self, title, options)
+      reset_ticgitng
+      TicGitNG::Ticket.open(self, t.ticket_name, tickets[t.ticket_name])
     end
 
-    #This is a legacy function from back when ticgit needed to have its
+    #This is a legacy function from back when ticgit-ng needed to have its
     #cache reset in order to avoid cache corruption.
-    def reset_ticgit
+    def reset_ticgitng
       tickets
       save_state
     end
@@ -83,21 +83,21 @@ module TicGit
     # returns new Ticket
     def ticket_comment(comment, ticket_id = nil)
       if t = ticket_revparse(ticket_id)
-        ticket = TicGit::Ticket.open(self, t, tickets[t])
+        ticket = TicGitNG::Ticket.open(self, t, tickets[t])
         ticket.add_comment(comment)
-        reset_ticgit
+        reset_ticgitng
       end
     end
 
     # returns array of Tickets
     def ticket_list(options = {})
-      reset_ticgit
+      reset_ticgitng
       ts = []
       @last_tickets = []
       @config['list_options'] ||= {}
 
       tickets.to_a.each do |name, t|
-        ts << TicGit::Ticket.open(self, name, t)
+        ts << TicGitNG::Ticket.open(self, name, t)
       end
 
       if name = options[:saved]
@@ -185,20 +185,20 @@ module TicGit
     # returns single Ticket
     def ticket_show(ticket_id = nil)
       # ticket_id can be index of last_tickets, partial sha or nil => last ticket
-      reset_ticgit
+      reset_ticgitng
       if t = ticket_revparse(ticket_id)
-        return TicGit::Ticket.open(self, t, tickets[t])
+        return TicGitNG::Ticket.open(self, t, tickets[t])
       end
     end
 
-    # returns recent ticgit activity
+    # returns recent ticgit-ng activity
     # uses the git logs for this
     def ticket_recent(ticket_id = nil)
       if ticket_id
         t = ticket_revparse(ticket_id)
-        return git.log.object('ticgit').path(t)
+        return git.log.object('ticgit-ng').path(t)
       else
-        return git.log.object('ticgit')
+        return git.log.object('ticgit-ng')
       end
     end
 
@@ -223,45 +223,45 @@ module TicGit
 
     def ticket_tag(tag, ticket_id = nil, options = OpenStruct.new)
       if t = ticket_revparse(ticket_id)
-        ticket = TicGit::Ticket.open(self, t, tickets[t])
+        ticket = TicGitNG::Ticket.open(self, t, tickets[t])
         if options.remove
           ticket.remove_tag(tag)
         else
           ticket.add_tag(tag)
         end
-        reset_ticgit
+        reset_ticgitng
       end
     end
 
     def ticket_change(new_state, ticket_id = nil)
       if t = ticket_revparse(ticket_id)
         if tic_states.include?(new_state)
-          ticket = TicGit::Ticket.open(self, t, tickets[t])
+          ticket = TicGitNG::Ticket.open(self, t, tickets[t])
           ticket.change_state(new_state)
-          reset_ticgit
+          reset_ticgitng
         end
       end
     end
 
     def ticket_assign(new_assigned = nil, ticket_id = nil)
       if t = ticket_revparse(ticket_id)
-        ticket = TicGit::Ticket.open(self, t, tickets[t])
+        ticket = TicGitNG::Ticket.open(self, t, tickets[t])
         ticket.change_assigned(new_assigned)
-        reset_ticgit
+        reset_ticgitng
       end
     end
 
     def ticket_points(new_points = nil, ticket_id = nil)
       if t = ticket_revparse(ticket_id)
-        ticket = TicGit::Ticket.open(self, t, tickets[t])
+        ticket = TicGitNG::Ticket.open(self, t, tickets[t])
         ticket.change_points(new_points)
-        reset_ticgit
+        reset_ticgitng
       end
     end
 
     def ticket_checkout(ticket_id)
       if t = ticket_revparse(ticket_id)
-        ticket = TicGit::Ticket.open(self, t, tickets[t])
+        ticket = TicGitNG::Ticket.open(self, t, tickets[t])
         @current_ticket = ticket.ticket_name
         save_state
       end
@@ -279,8 +279,8 @@ module TicGit
 
     def sync_tickets      
       in_branch(false) do 
-         git.pull('origin','origin/ticgit')
-         git.push('origin', 'ticgit:ticgit')
+         git.pull('origin','origin/ticgit-ng')
+         git.push('origin', 'ticgit-ng:ticgit-ng')
          puts "Tickets synchronized."
       end
     end
@@ -294,11 +294,11 @@ module TicGit
 
       bs = git.lib.branches_all.map{|b| b.first }
 
-      unless bs.include?('ticgit') && File.directory?(@tic_working)
-        init_ticgit_branch(bs.include?('ticgit'))
+      unless bs.include?('ticgit-ng') && File.directory?(@tic_working)
+        init_ticgitng_branch(bs.include?('ticgit-ng'))
       end
 
-      tree = git.lib.full_tree('ticgit')
+      tree = git.lib.full_tree('ticgit-ng')
       tree.each do |t|
         data, file = t.split("\t")
         mode, type, sha = data.split(" ")
@@ -312,10 +312,10 @@ module TicGit
       tickets
     end
 
-    def init_ticgit_branch(ticgit_branch = false)
-      @logger.info 'creating ticgit repo branch'
+    def init_ticgitng_branch(ticgitng_branch = false)
+      @logger.info 'creating ticgit-ng repo branch'
 
-      in_branch(ticgit_branch) do
+      in_branch(ticgitng_branch) do
         #The .hold file seems to have little to no purpose aside from helping
         #figure out if the branch should be checked out or not.  It is created
         #when the ticgit branch is created, and seems to exist for the lifetime
@@ -324,9 +324,9 @@ module TicGit
         #it is.  This might be superfluous after switching to grit.
         new_file('.hold', 'hold')
 
-        unless ticgit_branch
+        unless ticgitng_branch
           git.add
-          git.commit('creating the ticgit branch')
+          git.commit('creating the ticgit-ng branch')
         end
       end
     end
@@ -344,10 +344,10 @@ module TicGit
 
       old_current = git.lib.branch_current
       begin
-        git.lib.change_head_branch('ticgit')
+        git.lib.change_head_branch('ticgit-ng')
         git.with_index(@tic_index) do
           git.with_working(@tic_working) do |wd|
-            git.lib.checkout('ticgit') if needs_checkout && branch_exists
+            git.lib.checkout('ticgit-ng') if needs_checkout && branch_exists
             yield wd
           end
         end

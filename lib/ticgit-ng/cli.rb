@@ -1,9 +1,9 @@
-require 'ticgit'
-require 'ticgit/command'
+require 'ticgit-ng'
+require 'ticgit-ng/command'
 
 # used Cap as a model for this - thanks Jamis
 
-module TicGit
+module TicGitNG
   class CLI
     def self.execute
       parse(ARGV).execute!
@@ -21,7 +21,7 @@ module TicGit
 
     def initialize(args, path = '.', out = $stdout)
       @args = args.dup
-      @tic = TicGit.open(path, :keep_state => true)
+      @tic = TicGitNG.open(path, :keep_state => true)
       @options = OpenStruct.new
       @out = out
 
@@ -79,7 +79,7 @@ module TicGit
     end
 
     def get_editor_message(message_file = nil)
-      message_file = Tempfile.new('ticgit_message').path if !message_file
+      message_file = Tempfile.new('ticgitng_message').path if !message_file
 
       editor = ENV["EDITOR"] || 'vim'
       system("#{editor} #{message_file}");
@@ -187,11 +187,11 @@ module TicGit
     end
 
     def window_lines
-      TicGit::CLI.window_lines
+      TicGitNG::CLI.window_lines
     end
 
     def window_cols
-      TicGit::CLI.window_cols
+      TicGitNG::CLI.window_cols
     end
 
     if ''.respond_to?(:chars)
@@ -236,5 +236,5 @@ module TicGit
   end
 end
 
-TicGit::CLI.reset_window_width
-Signal.trap("SIGWINCH") { TicGit::CLI.reset_window_width }
+TicGitNG::CLI.reset_window_width
+Signal.trap("SIGWINCH") { TicGitNG::CLI.reset_window_width }
