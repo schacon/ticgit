@@ -71,7 +71,7 @@ describe TicGitNG do
       #git.checkout('ticgit-ng')
       #git.pull('upstream', 'upstream/ticgit-ng')
       #git.checkout('master')
-      ticgit3.sync_tickets
+      ticgit3.sync_tickets('origin', true, false)
 
       ticgit3.tickets.length.should == ticgit2.tickets.length
     end
@@ -124,20 +124,20 @@ describe TicGitNG do
       git3.add_remote('ticgit2', git_path_2)
       git4.add_remote('ticgit3', git_path_3)
 
-      ticgit3.sync_tickets('ticgit2') #ticgit3 should now have tickets 1, 2, and 4
-                                      #and ticgit2 should now have the same
+      ticgit3.sync_tickets('ticgit2', true, false) #ticgit3 should now have tickets 1, 2, and 4
+                                                   #and ticgit2 should now have the same
       ticgit3.tickets.length.should==3
       ticgit2.tickets.length.should==3
 
-      ticgit4.sync_tickets('ticgit3', false) #ticgit4 should now have tickets 1,2,3,4
-                                             #but ticgit2 and 3 should only have 1,2,4
+      ticgit4.sync_tickets('ticgit3', false, false) #ticgit4 should now have tickets 1,2,3,4
+                                                    #but ticgit2 and 3 should only have 1,2,4
       ticgit4.tickets.length.should==4
       ticgit3.tickets.length.should==3
       ticgit2.tickets.length.should==3
 
       git4.add_remote('ticgit2', git_path_2)
-      ticgit4.sync_tickets('ticgit2') #ticgit2 and 4 should now have 4 tickets while
-                                      #ticgit3 only has 3 tickets
+      ticgit4.sync_tickets('ticgit2', true, false) #ticgit2 and 4 should now have 4 tickets while
+                                                   #ticgit3 only has 3 tickets
       ticgit4.tickets.length.should==4
       ticgit3.tickets.length.should==3
       ticgit2.tickets.length.should==4
