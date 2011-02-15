@@ -7,15 +7,15 @@ clashes.
 
 ### About ###
 
-TicGit is a simple ticketing system, roughly similar to the Lighthouse model, that is based in git. It provides a command line client that uses the ‘git’ gem to keep its ticketing information in a separate branch (called ‘ticgit’) within your existing git repository. All the data is file based and rarely changing, decreasing the likelihood of a merge issue. Right now, ticket branch merges need to be done manually and separately, but work is being done on a `ti sync` command to make this easier and more intuitive.
+TicGit-ng is a simple ticketing system, roughly similar to the Lighthouse model, that is based in git. It provides a command line client that uses the ‘git’ gem to keep its ticketing information in a separate branch (called ‘ticgit-ng’) within your existing git repository. All the data is file based and rarely changing, decreasing the likelihood of a merge issue. Right now, ticket branch merges need to be done manually and separately, but work is being done on a `ti sync` command to make this easier and more intuitive.
 
 The idea is that it keeps your tickets in the same repository, but without mucking up your working tree. By using its own seperate branch to store its information it keeps the working trees in all your other branches untouched.
 
 There are two interfaces available, the command line `ti` command and the `ticgitweb` web interface, though `ticgitweb` has many more prerequisites than `ti`.
 
-It will automatically create the new branch the first time you use it, and it caches all the data (another working directory and index file) in your ~/.ticgit directory by default. If you delete that directory, it will just create it again the next time, you will lose no data (except some of your saved preferences).
+It will automatically create the new branch the first time you use it, and it caches all the data (another working directory and index file) in your ~/.ticgit-ng directory by default. If you delete that directory, it will just create it again the next time, you will lose no data (except some of your saved preferences).
 
-TicGit is currently using itself to store its feature requests and bug reports.
+TicGit-ng is currently using itself to store its feature requests and bug reports.
 
 ### Prerequisites ###
 
@@ -68,7 +68,7 @@ And those notices should go away.
 
 
 ### Installing ###
-Installation on a Debian stable system.  Note that the command line interface for ticgit can be run from Debian stable, but some of the gems required for the web interface may require you to use [apt](http://jaqque.sbih.org/kplug/apt-pinning.html) [pinning](http://jeffwelling.github.com//2010/09/05/Apt-Pinning.html) to run without errors.  See below. 
+Installation on a Debian stable system.  Note that the command line interface for TicGit-ng can be run from Debian stable, but some of the gems required for the web interface may require you to use [apt](http://jaqque.sbih.org/kplug/apt-pinning.html) [pinning](http://jeffwelling.github.com//2010/09/05/Apt-Pinning.html) to run without errors.  See below. 
 
 If you know what rake is and know you already have it installed, you can use the command `rake setup` to automatically install all dependencies, but the suggested method is to manually install as outlined below.
 
@@ -95,7 +95,7 @@ To get a list of all commands with short description:
      
     Options for help command:
      
-    The available ticgit commands are:
+    The available TicGit-ng commands are:
         recent                           List recent activities
         checkout                         Checkout a ticket
         tag                              Modify tags of a ticket
@@ -145,7 +145,7 @@ The available commands are:
 
 ### Usage Examples ###
 
-The first time you use any command in ticgit, it will create a new branch in your repo called ‘ticgit’ and setup a caching area in ~/.ticgit.
+The first time you use any command in Ticgit-ng, it will create a new branch in your repo called ‘ticgit-ng’ and setup a caching area in ~/.ticgit-ng.
 
 If you run it without arguments, it will tell you what is available to run
 
@@ -154,7 +154,7 @@ If you run it without arguments, it will tell you what is available to run
 
     Usage: ti COMMAND [FLAGS] [ARGS]
      
-    The available ticgit commands are:
+    The available TicGit-ng commands are:
         recent                           List recent activities
         checkout                         Checkout a ticket
         tag                              Modify tags of a ticket
@@ -292,60 +292,60 @@ Then if you want to later list tickets with the same options as you used above, 
 
 ## Collaboration ##
 
-If you have cloned a repository and would like to get the ticgit branch for that repo (presuming they have one), do this.
+If you have cloned a repository and would like to get the ticgit-ng branch for that repo (presuming they have one), do this.
 
-    $git branch ticgit origin/ticgit
+    $git branch ticgit-ng origin/ticgit-ng
 
-This will create a ticgit branch in your local repo based on the ticgit branch in origin.  Now you can run `ti list` and it will show you the ticgit tickets for that repository.
+This will create a ticgit-ng branch in your local repo based on the ticgit-ng branch in origin.  Now you can run `ti list` and it will show you the ticgit-ng tickets for that repository.
 
-### Getting the TicGit-ng ticgit branch ##
+### Getting the TicGit-ng ticgit-ng branch ##
 
 To download your own copy of the TicGit-ng ticgit branch after cloning the repo, so that you can add or alter a bug yourself, follow these instructions.
 
-This will checkout a ticgit branch and set it to track the ticgit branch upstream in origin, and then checks out the master branch.  You must checkout the master branch because TicGit-ng gets confused if you are already in the ticgit branch when running TicGit-ng.
+This will checkout a ticgit-ng branch and set it to track the ticgit-ng branch upstream in origin, and then checks out the master branch.  You must checkout the master branch because TicGit-ng gets confused if you are already in the ticgit-ng branch when running TicGit-ng.
 
-    $ git checkout origin/ticgit
-    $ git checkout -b ticgit
+    $ git checkout origin/ticgit-ng
+    $ git checkout -b ticgit-ng
     $ git checkout master
 
-This will show you all of the bugs in TicGit-ng's ticgit branch.
+This will show you all of the bugs in TicGit-ng's ticgit-ng branch.
 
     $ ti list
 
-To submit your changes back to the upstream maintainer, push the bugs in your ticgit branch to your public repo on Github
+To submit your changes back to the upstream maintainer, push the bugs in your ticgit-ng branch to your public repo on Github
     
-    $ git push origin ticgit
+    $ git push origin ticgit-ng
 
 Then contact the upstream maintainer by sending a Pull Request or Email and ask them to review and accept your bug changes.
 
 ### Sharing your tickets with others ###
 
-Sharing your ticgit tickets with other people is as easy as asking them either creating their ticgit branch based on yours if they haven't already started their own ticgit branch, or pulling your ticgit branch into theirs.
+Sharing your ticgit tickets with other people is as easy as asking them either creating their ticgit-ng branch based on yours if they haven't already started their own ticgit-ng branch, or pulling your ticgit-ng branch into theirs.
 
-If you host your repositories on [Github](http://www.github.com) as I do then this process is simplified some because you don't have to worry about hosting your repository somewhere where other people can access it to pull your ticgit branch.
+If you host your repositories on [Github](http://www.github.com) as I do then this process is simplified some because you don't have to worry about hosting your repository somewhere where other people can access it to pull your ticgit-ng branch.
 
-For example, when I want my friend wnight to have the changes I made to my tickets in my ticgit repository, I do a
+For example, when I want my friend wnight to have the changes I made to my tickets in my ticgit-ng repository, I do a
 
     $ git push origin
 
 to update all my remote branches with my current ones, and then I ask him to do a
 
-    $ git checkout ticgit
-    $ git pull git@github.com:jeffWelling/ticgit.git ticgit
+    $ git checkout ticgit-ng
+    $ git pull git@github.com:jeffWelling/ticgit.git ticgit-ng
     $ git checkout master
 
-to pull my changes into his ticgit branch and then switch back to his master branch.  Now when he does `ti list` it will show the changes I made to the tickets on my system.
+to pull my changes into his ticgit-ng branch and then switch back to his master branch.  Now when he does `ti list` it will show the changes I made to the tickets on my system.
 
 
-### Incorporating other peoples changes into your ticgit branch ###
+### Incorporating other peoples changes into your ticgit-ng branch ###
 
 The process is much the same as above, except the rolls are reversed.  Once you know they have published their changes and you have a URL to do a git pull from, you simply do
 
-    $ git checkout ticgit
-    $ git pull SOURCE_URL ticgit
+    $ git checkout ticgit-ng
+    $ git pull SOURCE_URL ticgit-ng
     $ git checkout master
 
-Replacing SOURCE_URL with the URL you were told to pull from, now you can see the changes they made, in your ticgit branch.  You can easily publish these changes with a `git push origin` so anyone following your work can also see these changes.
+Replacing SOURCE_URL with the URL you were told to pull from, now you can see the changes they made, in your ticgit-ng branch.  You can easily publish these changes with a `git push origin` so anyone following your work can also see these changes.
 
 
 ### Next generation collaboration ###
@@ -355,7 +355,7 @@ Changes made by [Bruno Santos](http://github.com/pheres) to add a [`ti sync`](ht
 
 ### Ticgitweb ###
 
-To run the Sinatra enabled web UI for your TicGit repo, simply cd to your repository and run 'ticgitweb', or 'ticgitweb -p 3456' to change the port to something other than '4567', which is the Sinatra default.
+To run the Sinatra enabled web UI for your TicGit-ng repo, simply cd to your repository and run 'ticgitweb', or 'ticgitweb -p 3456' to change the port to something other than '4567', which is the Sinatra default.
 
 Here is what the Ticket listing looks like:
 
@@ -368,11 +368,11 @@ And here is an individual ticket:
 
 ## Development ##
 
-The original author had used rspec to write specs for ticgit, but one of the maintainers since then switched it over to bacon[[1](http://www.ruby-forum.com/topic/137928)][[2](http://www.ruby-forum.com/topic/172139)][[3](http://testanything.org/wiki/index.php/Testing_with_Ruby)] and I haven't been too inclined to switch it back.
+The original author had used rspec to write specs for ticgit-ng, but one of the maintainers since then switched it over to bacon[[1](http://www.ruby-forum.com/topic/137928)][[2](http://www.ruby-forum.com/topic/172139)][[3](http://testanything.org/wiki/index.php/Testing_with_Ruby)] and I haven't been too inclined to switch it back.
 
 ### Prerequisites ###
 
-To install the prerequisites on Debian stable for testing ticgit, you will need [apt](http://jaqque.sbih.org/kplug/apt-pinning.html) [pinning](http://jeffwelling.github.com//2010/09/05/Apt-Pinning.html).
+To install the prerequisites on Debian stable for testing ticgit-ng, you will need [apt](http://jaqque.sbih.org/kplug/apt-pinning.html) [pinning](http://jeffwelling.github.com//2010/09/05/Apt-Pinning.html).
 
     $ sudo aptitude -t testing install rubygems rake
     $ sudo gem install yard bacon
@@ -382,17 +382,17 @@ I pull rubygems from testing to avoid a problem with gherkin creating a syntacti
 
 ### How To Test ###
 
-To test your version of ticgit, go to your ticgit directory and run
+To test your version of ticgit-ng, go to your ticgit-ng directory and run
 
     rake bacon
 
-### How to generate a gem from your development copy of ticgit ###
+### How to generate a gem from your development copy of ticgit-ng ###
 
-To create a gem from your development copy of ticgit, go to your ticgit directory and do
+To create a gem from your development copy of ticgit-ng, go to your ticgit-ng directory and do
 
     rake gem
 
-This will create a pkg/ directory, which will contain a newly created ticgit gem for you to install.
+This will create a pkg/ directory, which will contain a newly created ticgit-ng gem for you to install.
 
 More information on developing TicGit-ng and collaborating with other TicGit-ng developers at [here](https://github.com/jeffWelling/ticgit/wiki/Development)
 
