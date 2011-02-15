@@ -8,17 +8,21 @@ module TicGitNG
           options.repo = v
         }
         opts.on_head(
-          "-p y/n", "--push yes/no", "Push to the remote repo? (Yes or No)"){|v|
-          if v=~ /y/
-            options.push= true
-          elsif v=~ /n/
-            options.push= false
-          end
+          "-np", "--no-push", "Do not push to the remote repo"){|v|
+          options.no_push = true
         }
       end
 
       def execute
-        tic.sync_tickets(options.repo, options.push)
+        if options.repo and options.no_push
+          tic.sync_tickets(options.repo, false)
+        elsif options.repo
+          tic.sync_tickets(options.repo)
+        elsif options.no_push
+          tic.sync_tickets('origin', false)
+        else
+          tic.sync_tickets()
+        end
       end
     end
   end
