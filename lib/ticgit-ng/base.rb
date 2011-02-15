@@ -277,10 +277,10 @@ module TicGitNG
       ['open', 'resolved', 'invalid', 'hold']
     end
 
-    def sync_tickets      
+    def sync_tickets(repo='origin', push=true )
       in_branch(false) do 
-         git.pull('origin','origin/ticgit-ng')
-         git.push('origin', 'ticgit-ng:ticgit-ng')
+         git.pull(repo, repo + '/ticgit-ng')
+         git.push(repo, 'ticgit-ng:ticgit-ng') if push
          puts "Tickets synchronized."
       end
     end
