@@ -73,9 +73,6 @@ describe TicGitNG do
       #git.checkout('master')
       ticgit3.sync_tickets('origin', true, false)
 
-      puts git_path_3
-      sleep 200
-
       ticgit3.tickets.length.should == ticgit2.tickets.length
     end
   end
@@ -146,5 +143,20 @@ describe TicGitNG do
       ticgit2.tickets.length.should==4
     end
   end
-  it "Use the 'ticgit' branch if 'ticgit-ng' isn't available (legacy support)"
+  it "Use the 'ticgit' branch if 'ticgit-ng' isn't available (legacy support)" do
+      require 'pp'
+      git=Git.clone( @path, 'remote_0' )
+      branches=git.branches.local.map {|b| b.name }
+      branches.include? 'ticgit'
+      @ticgitng::Base.what_branch?.should == branches.include?      
+
+      puts "sleeping"
+      sleep 500
+      #if 'ticgit'
+      # use 'ticgit'
+      #elsif 'ticgit-ng'
+      # use 'ticgit-ng'
+      #else
+      # use 'ticgit-ng'
+  end
 end
