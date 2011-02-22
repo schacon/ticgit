@@ -73,6 +73,9 @@ describe TicGitNG do
       #git.checkout('master')
       ticgit3.sync_tickets('origin', true, false)
 
+      puts git_path_3
+      sleep 200
+
       ticgit3.tickets.length.should == ticgit2.tickets.length
     end
   end
