@@ -3,7 +3,7 @@ module TicGitNG
   class Base
 
     attr_reader :git, :logger
-    attr_reader :tic_working, :tic_index
+    attr_reader :tic_working, :tic_index, :tic_dir
     attr_reader :last_tickets, :current_ticket  # saved in state
     attr_reader :config
     attr_reader :state, :config_file
