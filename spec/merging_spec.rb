@@ -143,4 +143,5 @@ describe TicGitNG do
       ticgit2.tickets.length.should==4
     end
   end
+  it "Use the 'ticgit' branch if 'ticgit-ng' isn't available (legacy support)"
 end
