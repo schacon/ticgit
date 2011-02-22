@@ -360,6 +360,10 @@ module TicGitNG
     def new_file(name, contents)
       File.open(name, 'w+'){|f| f.puts(contents) }
     end
+    def self.which_branch?
+      #If has ~/.ticgit dir, and 'ticgit' branch
+      #If has ~/.ticgit-ng dir, and 'ticgit-ng' branch, and not ~/.ticgit dir and not 'ticgit' branch
+    end
 
   end
 end
