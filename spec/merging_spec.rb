@@ -1,4 +1,5 @@
 require File.dirname(__FILE__) + "/spec_helper"
+require 'pp'
 
 describe TicGitNG do
   include TicGitNGSpecHelper
@@ -154,11 +155,14 @@ describe TicGitNG do
       #used transparently instead of ticgit-ng
       git1.checkout( 'origin/ticgit-ng' )
       git1.branch('ticgit').checkout
-      @ticgitng::Base.what_branch?.should == 'ticgit'
+      ticgit1=TicGitNG.open( tmp_dir+'/remote_0/', @orig_test_opts )
+      pp ticgit1::Base.respond_to? 'which_branch?'
+      pp ticgit1::Base.which_branch?
+      pp @ticgitng::Base.which_branch?
+      @ticgitng::Base.which_branch?.should == 'ticgit'
 
       git2=Git.clone( @path, 'remote_1' )
       branches=git2.branches.map {|b| b.name }
-      require 'pp'
       pp branches
 
       # if 'ticgit' and 'ticgit-ng'
