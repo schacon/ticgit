@@ -144,19 +144,30 @@ describe TicGitNG do
     end
   end
   it "Use the 'ticgit' branch if 'ticgit-ng' isn't available (legacy support)" do
-      require 'pp'
-      git=Git.clone( @path, 'remote_0' )
-      branches=git.branches.local.map {|b| b.name }
-      branches.include? 'ticgit'
-      @ticgitng::Base.what_branch?.should == branches.include?      
+    Dir.chdir(File.expand_path( tmp_dir=Dir.mktmpdir('ticgit-ng-gitdir1-') )) do
+      #Because there is no 'ticgit' or 'ticgit-ng' branch
+      #this will create a new ticket in 'ticgit-ng'
+      @ticgitng.ticket_new('original shinanigins')
+      git1=Git.clone( @path, 'remote_0' )
+      #This checks out origin/ticgit-ng and creates a new 
+      #branch following it callled ticgit, which should be
+      #used transparently instead of ticgit-ng
+      git1.checkout( 'origin/ticgit-ng' )
+      git1.branch('ticgit').checkout
+      @ticgitng::Base.what_branch?.should == 'ticgit'
 
-      puts "sleeping"
-      sleep 500
-      #if 'ticgit'
-      # use 'ticgit'
-      #elsif 'ticgit-ng'
-      # use 'ticgit-ng'
-      #else
-      # use 'ticgit-ng'
+      git2=Git.clone( @path, 'remote_1' )
+      branches=git2.branches.map {|b| b.name }
+      require 'pp'
+      pp branches
+
+      # if 'ticgit' and 'ticgit-ng'
+      #   should use 'ticgit-ng'
+      # elsif 'ticgit' and !'ticgit-ng'
+      #   should use 'ticgit'
+      # elsif !'ticgit' and 'ticgit-ng'
+      #   should use 'ticgit-ng'
+      # end
+    end
   end
 end
