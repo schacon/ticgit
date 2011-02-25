@@ -295,7 +295,8 @@ module TicGitNG
 
       bs = git.lib.branches_all.map{|b| b.first }
 
-      unless bs.include?('ticgit-ng') && File.directory?(@tic_working)
+      unless (bs.include?('ticgit-ng') || bs.include?('ticgit'))  && 
+              File.directory?(@tic_working)
         init_ticgitng_branch(bs.include?('ticgit-ng'))
       end
 
@@ -348,7 +349,8 @@ module TicGitNG
         git.lib.change_head_branch('ticgit-ng')
         git.with_index(@tic_index) do
           git.with_working(@tic_working) do |wd|
-            git.lib.checkout('ticgit-ng') if needs_checkout && branch_exists
+            git.lib.checkout('ticgit-ng') if needs_checkout && 
+              branch_exists
             yield wd
           end
         end
@@ -363,6 +365,7 @@ module TicGitNG
     def self.which_branch?
       #If has ~/.ticgit dir, and 'ticgit' branch
       #If has ~/.ticgit-ng dir, and 'ticgit-ng' branch, and not ~/.ticgit dir and not 'ticgit' branch
+      'ticgit'
     end
 
   end
