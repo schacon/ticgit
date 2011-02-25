@@ -155,15 +155,22 @@ describe TicGitNG do
       #used transparently instead of ticgit-ng
       git1.checkout( 'origin/ticgit-ng' )
       git1.branch('ticgit').checkout
-      ticgit1=TicGitNG.open( tmp_dir+'/remote_0/', @orig_test_opts )
-      pp ticgit1::Base.respond_to? 'which_branch?'
-      pp ticgit1::Base.which_branch?
-      pp @ticgitng::Base.which_branch?
-      @ticgitng::Base.which_branch?.should == 'ticgit'
+      ticgitng1=TicGitNG.open( tmp_dir+'/remote_0/', @orig_test_opts )
+      ticgitng1.which_branch?.should == 'ticgit'
 
       git2=Git.clone( @path, 'remote_1' )
-      branches=git2.branches.map {|b| b.name }
-      pp branches
+      git2.checkout( 'origin/ticgit-ng' )
+      git2.branch('ticgit-ng').checkout
+      ticgitng2=TicGitNG.open( tmp_dir+'/remote_1/', @orig_test_opts )
+      ticgitng2.which_branch?.should == 'ticgit-ng'
+
+      git3=Git.clone( @path, 'remote_2' )
+      git3.checkout( 'origin/ticgit-ng' )
+      git3.branch('ticgit').checkout
+      git3.checkout( 'origin/ticgit-ng' )
+      git3.branch('ticgit-ng').checkout
+      ticgitng3=TicGitNG.open( tmp_dir+'/remote_2/', @orig_test_opts )
+      ticgitng3.which_branch?.should == 'ticgit-ng'
 
       # if 'ticgit' and 'ticgit-ng'
       #   should use 'ticgit-ng'
