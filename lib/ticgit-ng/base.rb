@@ -278,10 +278,17 @@ module TicGitNG
     end
 
     def sync_tickets(repo='origin', push=true, verbose=true )
+      puts "Fetching #{repo}" if verbose
+      @git.fetch(repo)
+      puts "Syncing tickets with #{repo}" if verbose
+      remote_branches=@git.branches.remote.map{|b| 
+        b.full.gsub('remotes/', '')[Regexp.new("^#{Regexp.escape(repo)}/.*")] 
+      }.compact
+      !remote_branches.include?('ticgit-ng') ? r_ticgit='ticgit-ng' : r_ticgit='ticgit'
       in_branch(false) do 
          repo_g=git.remote(repo)
-         git.pull(repo_g, repo+'/ticgit-ng')
-         git.push(repo_g, 'ticgit-ng:ticgit-ng') if push
+         git.pull(repo_g, repo+'/'+r_ticgit)
+         git.push(repo_g, "#{which_branch?}:"+r_ticgit ) if push
          puts "Tickets synchronized." if verbose
       end
     end
