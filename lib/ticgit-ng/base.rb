@@ -196,9 +196,9 @@ module TicGitNG
     def ticket_recent(ticket_id = nil)
       if ticket_id
         t = ticket_revparse(ticket_id)
-        return git.log.object('ticgit-ng').path(t)
+        return git.log.object(which_branch?).path(t)
       else
-        return git.log.object('ticgit-ng')
+        return git.log.object(which_branch?)
       end
     end
 
@@ -295,12 +295,12 @@ module TicGitNG
 
       bs = git.lib.branches_all.map{|b| b.first }
 
-      unless (bs.include?('ticgit-ng') || bs.include?('ticgit'))  && 
+      unless (bs.include?(which_branch?) || bs.include?(which_branch?))  && 
               File.directory?(@tic_working)
-        init_ticgitng_branch(bs.include?('ticgit-ng'))
+        init_ticgitng_branch(bs.include?(which_branch?))
       end
 
-      tree = git.lib.full_tree('ticgit-ng')
+      tree = git.lib.full_tree(which_branch?)
       tree.each do |t|
         data, file = t.split("\t")
         mode, type, sha = data.split(" ")
@@ -346,10 +346,10 @@ module TicGitNG
 
       old_current = git.lib.branch_current
       begin
-        git.lib.change_head_branch('ticgit-ng')
+        git.lib.change_head_branch(which_branch?)
         git.with_index(@tic_index) do
           git.with_working(@tic_working) do |wd|
-            git.lib.checkout('ticgit-ng') if needs_checkout && 
+            git.lib.checkout(which_branch?) if needs_checkout && 
               branch_exists
             yield wd
           end
@@ -363,9 +363,14 @@ module TicGitNG
       File.open(name, 'w+'){|f| f.puts(contents) }
     end
     def which_branch?
+      branches=@git.branches.local.map {|b| b.name}
+      if branches.include? 'ticgit-ng'
+        return 'ticgit-ng'
+      else
+        return 'ticgit'
+      end
       #If has ~/.ticgit dir, and 'ticgit' branch
       #If has ~/.ticgit-ng dir, and 'ticgit-ng' branch, and not ~/.ticgit dir and not 'ticgit' branch
-      'ticgit'
     end
 
   end
