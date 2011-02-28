@@ -15,7 +15,7 @@ module TicGitNG
 
       proj = Ticket.clean_string(@git.dir.path)
 
-      @tic_dir = opts[:tic_dir] || '~/.ticgit-ng'
+      @tic_dir = opts[:tic_dir] || "~/.#{which_branch?}"
       @tic_working = opts[:working_directory] || File.expand_path(File.join(@tic_dir, proj, 'working'))
       @tic_index = opts[:index_file] || File.expand_path(File.join(@tic_dir, proj, 'index'))
 
