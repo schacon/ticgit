@@ -1,4 +1,5 @@
 require File.dirname(__FILE__) + "/spec_helper"
+require 'pp'
 
 describe TicGitNG do
   include TicGitNGSpecHelper
@@ -23,7 +24,7 @@ describe TicGitNG do
       git_path_2= tmp_dir + '/remote_1/'
 
       #Make ticgit-ng branch in remote_1
-      git2.checkout('origin/ticgit-ng')
+      git2.checkout('origin/ticgit')
       git2.branch('ticgit-ng').checkout
       ticgit2=TicGitNG.open(git_path_2, @orig_test_opts)
 
@@ -31,7 +32,7 @@ describe TicGitNG do
       git2.checkout('master')
 
       git.add_remote('upstream', git_path_2)
-      git.checkout('ticgit-ng')
+      git.checkout('ticgit')
       git.pull('upstream', 'upstream/ticgit-ng')
       git.checkout('master')
 
@@ -51,7 +52,7 @@ describe TicGitNG do
 
       #Make ticgit-ng branch in remote_1
       git2=Git.clone(@path, 'remote_1')
-      git2.checkout('origin/ticgit-ng')
+      git2.checkout('origin/ticgit')
       #this creates the ticgit-ng branch, tracking origin/ticgit-ng
       git2.branch('ticgit-ng').checkout
       git2.checkout('master')
@@ -87,7 +88,7 @@ describe TicGitNG do
 
       #Make ticgit-ng branch in remote_1
       git2=Git.clone(@path, 'remote_1')
-      git2.checkout('origin/ticgit-ng')
+      git2.checkout('origin/ticgit')
       #this creates the ticgit-ng branch, tracking from the 
       #branch we are already on, origin/ticgit-ng
       git2.branch('ticgit-ng').checkout
@@ -95,13 +96,13 @@ describe TicGitNG do
 
       #Make ticgit-ng branch in remote_2
       git3=Git.clone(@path, 'remote_2')
-      git3.checkout('origin/ticgit-ng')
+      git3.checkout('origin/ticgit')
       git3.branch('ticgit-ng').checkout
       git3.checkout('master')
 
       #Make ticgit-ng branch in remote_2
       git4=Git.clone(@path, 'remote_3')
-      git4.checkout('origin/ticgit-ng')
+      git4.checkout('origin/ticgit')
       git4.branch('ticgit-ng').checkout
       git4.checkout('master')
 
@@ -141,6 +142,43 @@ describe TicGitNG do
       ticgit4.tickets.length.should==4
       ticgit3.tickets.length.should==3
       ticgit2.tickets.length.should==4
+    end
+  end
+  it "Use the 'ticgit' branch if 'ticgit-ng' isn't available (legacy support)" do
+    Dir.chdir(File.expand_path( tmp_dir=Dir.mktmpdir('ticgit-ng-gitdir1-') )) do
+      #Because there is no 'ticgit' or 'ticgit-ng' branch
+      #this will create a new ticket in 'ticgit-ng'
+      @ticgitng.ticket_new('original shinanigins')
+      git1=Git.clone( @path, 'remote_0' )
+      #This checks out origin/ticgit-ng and creates a new 
+      #branch following it callled ticgit, which should be
+      #used transparently instead of ticgit-ng
+      git1.checkout( 'origin/ticgit' )
+      git1.branch('ticgit').checkout
+      ticgitng1=TicGitNG.open( tmp_dir+'/remote_0/', @orig_test_opts )
+      ticgitng1.which_branch?.should == 'ticgit'
+
+      git2=Git.clone( @path, 'remote_1' )
+      git2.checkout( 'origin/ticgit' )
+      git2.branch('ticgit-ng').checkout
+      ticgitng2=TicGitNG.open( tmp_dir+'/remote_1/', @orig_test_opts )
+      ticgitng2.which_branch?.should == 'ticgit-ng'
+
+      git3=Git.clone( @path, 'remote_2' )
+      git3.checkout( 'origin/ticgit' )
+      git3.branch('ticgit').checkout
+      git3.checkout( 'origin/ticgit' )
+      git3.branch('ticgit-ng').checkout
+      ticgitng3=TicGitNG.open( tmp_dir+'/remote_2/', @orig_test_opts )
+      ticgitng3.which_branch?.should == 'ticgit-ng'
+
+      # if 'ticgit' and 'ticgit-ng'
+      #   should use 'ticgit-ng'
+      # elsif 'ticgit' and !'ticgit-ng'
+      #   should use 'ticgit'
+      # elsif !'ticgit' and 'ticgit-ng'
+      #   should use 'ticgit-ng'
+      # end
     end
   end
 end

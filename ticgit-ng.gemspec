@@ -1,7 +1,7 @@
 lib= File.expand_path('../lib/', __FILE__)
 $:.unshift lib unless $:.include?(lib)
 
-require 'lib/ticgit-ng'
+require './lib/ticgit-ng'
 
 Gem::Specification.new do |s|
   s.name      = "TicGit-ng"

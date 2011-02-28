@@ -16,7 +16,7 @@ describe TicGitNG do
 
   it "should create a new branch if it's not there" do
     br = @ticgitng.git.branches.map { |b| b.name }
-    br.should include('ticgit-ng')
+    br.should include('ticgit')
   end
 
   it "should find an existing ticgit-ng branch if it's there" do

@@ -3,7 +3,7 @@ module TicGitNG
   class Base
 
     attr_reader :git, :logger
-    attr_reader :tic_working, :tic_index
+    attr_reader :tic_working, :tic_index, :tic_dir
     attr_reader :last_tickets, :current_ticket  # saved in state
     attr_reader :config
     attr_reader :state, :config_file
@@ -15,7 +15,7 @@ module TicGitNG
 
       proj = Ticket.clean_string(@git.dir.path)
 
-      @tic_dir = opts[:tic_dir] || '~/.ticgit-ng'
+      @tic_dir = opts[:tic_dir] || "~/.#{which_branch?}"
       @tic_working = opts[:working_directory] || File.expand_path(File.join(@tic_dir, proj, 'working'))
       @tic_index = opts[:index_file] || File.expand_path(File.join(@tic_dir, proj, 'index'))
 
@@ -196,9 +196,9 @@ module TicGitNG
     def ticket_recent(ticket_id = nil)
       if ticket_id
         t = ticket_revparse(ticket_id)
-        return git.log.object('ticgit-ng').path(t)
+        return git.log.object(which_branch?).path(t)
       else
-        return git.log.object('ticgit-ng')
+        return git.log.object(which_branch?)
       end
     end
 
@@ -278,10 +278,17 @@ module TicGitNG
     end
 
     def sync_tickets(repo='origin', push=true, verbose=true )
+      puts "Fetching #{repo}" if verbose
+      @git.fetch(repo)
+      puts "Syncing tickets with #{repo}" if verbose
+      remote_branches=@git.branches.remote.map{|b| 
+        b.full.gsub('remotes/', '')[Regexp.new("^#{Regexp.escape(repo)}/.*")] 
+      }.compact
+      !remote_branches.include?('ticgit-ng') ? r_ticgit='ticgit-ng' : r_ticgit='ticgit'
       in_branch(false) do 
          repo_g=git.remote(repo)
-         git.pull(repo_g, repo+'/ticgit-ng')
-         git.push(repo_g, 'ticgit-ng:ticgit-ng') if push
+         git.pull(repo_g, repo+'/'+r_ticgit)
+         git.push(repo_g, "#{which_branch?}:"+r_ticgit ) if push
          puts "Tickets synchronized." if verbose
       end
     end
@@ -295,11 +302,12 @@ module TicGitNG
 
       bs = git.lib.branches_all.map{|b| b.first }
 
-      unless bs.include?('ticgit-ng') && File.directory?(@tic_working)
-        init_ticgitng_branch(bs.include?('ticgit-ng'))
+      unless (bs.include?(which_branch?) || bs.include?(which_branch?))  && 
+              File.directory?(@tic_working)
+        init_ticgitng_branch(bs.include?(which_branch?))
       end
 
-      tree = git.lib.full_tree('ticgit-ng')
+      tree = git.lib.full_tree(which_branch?)
       tree.each do |t|
         data, file = t.split("\t")
         mode, type, sha = data.split(" ")
@@ -345,10 +353,11 @@ module TicGitNG
 
       old_current = git.lib.branch_current
       begin
-        git.lib.change_head_branch('ticgit-ng')
+        git.lib.change_head_branch(which_branch?)
         git.with_index(@tic_index) do
           git.with_working(@tic_working) do |wd|
-            git.lib.checkout('ticgit-ng') if needs_checkout && branch_exists
+            git.lib.checkout(which_branch?) if needs_checkout && 
+              branch_exists
             yield wd
           end
         end
@@ -359,6 +368,16 @@ module TicGitNG
 
     def new_file(name, contents)
       File.open(name, 'w+'){|f| f.puts(contents) }
+    end
+    def which_branch?
+      branches=@git.branches.local.map {|b| b.name}
+      if branches.include? 'ticgit-ng'
+        return 'ticgit-ng'
+      else
+        return 'ticgit'
+      end
+      #If has ~/.ticgit dir, and 'ticgit' branch
+      #If has ~/.ticgit-ng dir, and 'ticgit-ng' branch, and not ~/.ticgit dir and not 'ticgit' branch
     end
 
   end
