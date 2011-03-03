@@ -286,10 +286,10 @@ module TicGitNG
       }.compact
       remote_branches.include?('ticgit-ng') ? r_ticgit='ticgit-ng' : r_ticgit='ticgit'
       in_branch(false) do 
-         repo_g=git.remote(repo)
-         git.pull(repo_g, repo+'/'+r_ticgit)
-         git.push(repo_g, "#{which_branch?}:"+r_ticgit ) if push
-         puts "Tickets synchronized." if verbose
+        repo_g=git.remote(repo)
+        git.pull(repo_g, repo+'/'+r_ticgit)
+        git.push(repo_g, "#{which_branch?}:"+r_ticgit ) if push
+        puts "Tickets synchronized." if verbose
       end
     end
 
