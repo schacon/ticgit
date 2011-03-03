@@ -284,7 +284,7 @@ module TicGitNG
       remote_branches=@git.branches.remote.map{|b| 
         b.full.gsub('remotes/', '')[Regexp.new("^#{Regexp.escape(repo)}/.*")] 
       }.compact
-      remote_branches.include?('ticgit-ng') ? r_ticgit='ticgit-ng' : r_ticgit='ticgit'
+      remote_branches.include?("#{repo}/ticgit-ng") ? r_ticgit='ticgit-ng' : r_ticgit='ticgit'
       in_branch(false) do 
          repo_g=git.remote(repo)
          git.pull(repo_g, repo+'/'+r_ticgit)
