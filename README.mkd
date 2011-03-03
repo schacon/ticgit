@@ -395,6 +395,8 @@ This will create a pkg/ directory, which will contain a newly created ticgit-ng 
 
 More information on developing TicGit-ng and collaborating with other TicGit-ng developers at [here](https://github.com/jeffWelling/ticgit/wiki/Development)
 
+More information on developing TicGit-ng and collaborating with other TicGit-ng developers at [here](https://github.com/jeffWelling/ticgit/wiki/Development)
+
 ### Alternatives ###
 
 ditz 
