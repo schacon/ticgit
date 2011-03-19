@@ -78,8 +78,9 @@ module TicGitNG
       end
     end
 
-    def get_editor_message(message_file = nil)
-      message_file = Tempfile.new('ticgitng_message').path if !message_file
+    def get_editor_message(comments = nil)
+      message_file = Tempfile.new('ticgitng_message').path
+      File.open(message_file, 'w') { |f| f.puts comments } if comments
 
       editor = ENV["EDITOR"] || 'vim'
       system("#{editor} #{message_file}");

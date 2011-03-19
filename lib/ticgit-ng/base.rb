@@ -205,10 +205,10 @@ module TicGitNG
     def ticket_revparse(ticket_id)
       if ticket_id
         ticket_id = ticket_id.strip
-        
+
         if /^[0-9]*$/ =~ ticket_id
           if t = @last_tickets[ticket_id.to_i - 1]
-            return t
+           return t
           end
         else # partial or full sha
           regex = /^#{Regexp.escape(ticket_id)}/
@@ -281,11 +281,11 @@ module TicGitNG
       puts "Fetching #{repo}" if verbose
       @git.fetch(repo)
       puts "Syncing tickets with #{repo}" if verbose
-      remote_branches=@git.branches.remote.map{|b| 
-        b.full.gsub('remotes/', '')[Regexp.new("^#{Regexp.escape(repo)}/.*")] 
+      remote_branches=@git.branches.remote.map{|b|
+        b.full.gsub('remotes/', '')[Regexp.new("^#{Regexp.escape(repo)}/.*")]
       }.compact
       remote_branches.include?("#{repo}/ticgit-ng") ? r_ticgit='ticgit-ng' : r_ticgit='ticgit'
-      in_branch(false) do 
+      in_branch(false) do
         repo_g=git.remote(repo)
         git.pull(repo_g, repo+'/'+r_ticgit)
         git.push(repo_g, "#{which_branch?}:"+r_ticgit ) if push
@@ -302,7 +302,7 @@ module TicGitNG
 
       bs = git.lib.branches_all.map{|b| b.first }
 
-      unless (bs.include?(which_branch?) || bs.include?(which_branch?))  && 
+      unless (bs.include?(which_branch?) || bs.include?(which_branch?))  &&
               File.directory?(@tic_working)
         init_ticgitng_branch(bs.include?(which_branch?))
       end
@@ -356,7 +356,7 @@ module TicGitNG
         git.lib.change_head_branch(which_branch?)
         git.with_index(@tic_index) do
           git.with_working(@tic_working) do |wd|
-            git.lib.checkout(which_branch?) if needs_checkout && 
+            git.lib.checkout(which_branch?) if needs_checkout &&
               branch_exists
             yield wd
           end
