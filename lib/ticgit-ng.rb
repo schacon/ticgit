@@ -13,6 +13,23 @@ $:.unshift(File.dirname(__FILE__)) unless
 require 'rubygems'
 # requires git >= 1.0.5
 require 'git'
+
+# FIXME: Monkeypatch git until fixed upstream
+module Git
+  class Lib
+    def config_get(name)
+      do_get = lambda do |name|
+        command('config', ['--get', name])
+      end
+      if @git_dir
+        Dir.chdir(@git_dir, &do_get)
+      else
+        build_list.call
+      end
+    end
+  end
+end
+
 require 'ticgit-ng/base'
 require 'ticgit-ng/cli'
 
