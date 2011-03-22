@@ -2,16 +2,22 @@ require 'rubygems'
 require 'rake'
 require 'rake/clean'
 require 'rake/rdoctask'
-#require 'spec/rake/spectask'
+require 'rspec/core/rake_task'
 
 CLEAN.include('**/*.gem')
 
-desc "Create the postgis_adapter gem"
+desc "Creates the TicGit gem"
 task :create_gem => [:clean] do
   spec = eval(IO.read('ticgit-ng.gemspec'))
   gem = Gem::Builder.new(spec).build
   Dir.mkdir("pkg") unless Dir.exists? "pkg"
   FileUtils.mv("#{File.dirname(__FILE__)}/#{gem}", "pkg")
+end
+
+desc "Runs spec suite"
+RSpec::Core::RakeTask.new(:spec) do |spec|
+  spec.pattern = 'spec/*_spec.rb'
+  spec.rspec_opts = ['--backtrace --colour']
 end
 
 Rake::RDocTask.new do |rdoc|
@@ -23,14 +29,3 @@ Rake::RDocTask.new do |rdoc|
 end
 
 task :default => :create_gem
-
-# Spec::Rake::SpecTask.new(:spec) do |spec|
-#   spec.libs << 'lib' << 'spec'
-#   spec.spec_files = FileList['spec/**/*_spec.rb']
-# end
-
-# Spec::Rake::SpecTask.new(:rcov) do |spec|
-#   spec.libs << 'lib' << 'spec'
-#   spec.pattern = 'spec/**/*_spec.rb'
-#   spec.rcov = true
-# end
