@@ -6,7 +6,7 @@ require 'rspec/core/rake_task'
 
 CLEAN.include('**/*.gem')
 
-desc "Creates the TicGit gem"
+desc "Creates the TicGit-ng gem"
 task :create_gem => [:clean] do
   spec = eval(IO.read('ticgit-ng.gemspec'))
   gem = Gem::Builder.new(spec).build
@@ -20,10 +20,11 @@ RSpec::Core::RakeTask.new(:spec) do |spec|
   spec.rspec_opts = ['--backtrace --colour']
 end
 
+desc "Creates rdoc documentation"
 Rake::RDocTask.new do |rdoc|
   version = File.exist?('VERSION') ? File.read('VERSION').chomp : ""
   rdoc.rdoc_dir = 'rdoc'
-  rdoc.title = "postgis_adapter #{version}"
+  rdoc.title = "TicGit-ng #{version}"
   rdoc.rdoc_files.include('README*')
   rdoc.rdoc_files.include('lib/**/*.rb')
 end
