@@ -7,8 +7,14 @@ module TicGitNG
     attr_accessor :comments, :tags, :attachments # arrays
 
     def initialize(base, options = {})
-      options[:user_name] ||= base.git.config('user.name')
-      options[:user_email] ||= base.git.config('user.email')
+      # FIXME: what/where/who/how changed config to hash?
+      if (cfg = base.git.config).is_a? Hash
+        options[:user_name] ||= cfg["user.name"]
+        options[:user_email] ||= cfg["user.email"]
+      else
+        options[:user_name] ||= cfg("user.name")
+        options[:user_email] ||= cfg("user.email")
+      end
 
       @base = base
       @opts = options || {}

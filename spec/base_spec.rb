@@ -45,6 +45,14 @@ describe TicGitNG::Base do
     tic.state.should_not eql('resolve')
   end
 
+  describe "Testing a ticket" do
+    let(:tic) {  @ticgitng.ticket_list.first }
+
+    it "should get username from git" do
+      tic.opts.should be_a Hash
+    end
+  end
+
   it "should be able to change to whom the ticket is assigned" do
     tic = @ticgitng.ticket_list.first
     @ticgitng.ticket_assign('pope', tic.ticket_id)

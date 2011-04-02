@@ -13,14 +13,11 @@ module TicGitNG
           ticket_show(tic.ticket_new(title, options.to_hash))
         else
           # interactive
-          message_file = Tempfile.new('ticgit_message').path
-          File.open(message_file, 'w') do |f|
-            f.puts "\n# ---"
-            f.puts "tags:"
-            f.puts "# first line will be the title of the tic, the rest will be the first comment"
-            f.puts "# if you would like to add initial tags, put them on the 'tags:' line, comma delim"
-          end
-          if message = get_editor_message(message_file)
+          comment = "\n# ---\ntags:\n"
+          comment += "# first line will be the title of the tic, the rest will be the first comment\n"
+          comment += "# if you would like to add initial tags, put them on the 'tags:' line, comma delim"
+
+          if message = get_editor_message(comment)
             title = message.shift
             if title && title.chomp.length > 0
               title = title.chomp
