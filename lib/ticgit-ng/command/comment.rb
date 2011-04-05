@@ -27,7 +27,7 @@ module TicGitNG
         elsif file
           tic.ticket_comment(File.read(file), tid)
         else
-          return unless message = get_editor_message(tic)
+          return unless message = get_editor_message
           tic.ticket_comment(message.join(''), tid)
         end
       end
