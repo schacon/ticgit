@@ -72,7 +72,7 @@ Installation on a Debian stable system.  Note that the command line interface fo
 
 To install TicGit-ng on your system, you can go one of two ways,
 
-    $ gem install TicGit-ng
+    $ sudo gem install TicGit-ng
 
 or, you can install it from source by downloading this repository building your own gem (see below).
 
