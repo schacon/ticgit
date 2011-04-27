@@ -1,3 +1,6 @@
+Note: the original TicGit author has pulled all the TicGit-ng changes into his repository, creating a potentially confusing situation. The schacon TicGit repo, this one, is not consistently maintained. For up to date TicGit-ng info and code, check the canonical TicGit-ng repository at  
+https://github.com/jeffWelling/ticgit
+
 ## TicGit-ng ##
 
 This project provides a ticketing system built on Git that is kept in a
