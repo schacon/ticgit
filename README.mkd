@@ -8,7 +8,7 @@ separate branch in your projects Git repository. Originally called TicGit,
 it is now known as TicGit-ng to continue development and avoid namespace
 clashes.
 
-### About ###
+### AboutTAKAMINE ###
 
 TicGit-ng is a simple ticketing system, roughly similar to the Lighthouse model, that is based in git. It provides a command line client that uses the ‘git’ gem to keep its ticketing information in a separate branch (called ‘ticgit-ng’) within your existing git repository. All the data is file based and rarely changing, decreasing the likelihood of a merge issue. Right now, ticket branch merges need to be done manually and separately, but work is being done on a `ti sync` command to make this easier and more intuitive.
 
