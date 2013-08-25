@@ -33,7 +33,7 @@ task :default => :create_gem : create_jc
 =======
 task :default => :create_gem
 
-Added by Juan-Carlos '
+Added by Fernando Ramos '
 desc "Creates rdoc documentation"
 Rake::RDocTask.new do |rdoc|
   version = File.exist?('VERSION') ? File.read('VERSION').chomp : ""
