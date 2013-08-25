@@ -33,13 +33,9 @@ task :default => :create_gem : create_jc
 =======
 task :default => :create_gem
 
-Added by Fernando Ramos '
-desc "Creates rdoc documentation"
-Rake::RDocTask.new do |rdoc|
-  version = File.exist?('VERSION') ? File.read('VERSION').chomp : ""
-  rdoc.rdoc_dir = 'rdoc'
-  rdoc.title = "TicGit-ng #{version}"
-  rdoc.rdoc_files.include('README*')
-  rdoc.rdoc_files.include('lib/**/*.rb')
+desc "Runs spec suite"
+RSpec::Core::RakeTask.new(:spec) do |spec|
+  spec.pattern = 'spec/*_spec.rb'
+  spec.rspec_opts = ['--backtrace --colour']
 end
 
