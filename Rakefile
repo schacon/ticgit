@@ -29,7 +29,6 @@ Rake::RDocTask.new do |rdoc|
   rdoc.rdoc_files.include('lib/**/*.rb')
 end
 
-<<<<<<< HEAD
 task :default => :create_gem : create_jc
 =======
 task :default => :create_gem
@@ -45,4 +44,3 @@ Rake::RDocTask.new do |rdoc|
 end
 
 
->>>>>>> feature_b
