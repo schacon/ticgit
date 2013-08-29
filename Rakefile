@@ -33,11 +33,6 @@ task :default => :create_gem : create_jc
 =======
 task :default => :create_gem
 
-<<<<<<< HEAD
-desc "Runs spec suite 60 "
-=======
-desc "Runs spec suite56"
->>>>>>> jira40
 RSpec::Core::RakeTask.new(:spec) do |spec|
   spec.pattern = 'spec/*_spec.rb'
   spec.rspec_opts = ['--backtrace --colour']
