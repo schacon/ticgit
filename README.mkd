@@ -417,5 +417,4 @@ Jeff Welling                (jeff.welling@gmail.com)
 
 For a detailed list of contributors, use `git log`.
 
-
-Added ANOTHER LINE 
+This is a JC testing of merging topic 
