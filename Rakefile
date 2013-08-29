@@ -3,6 +3,7 @@ require 'rake'
 require 'rake/clean'
 require 'rake/rdoctask'
 require 'rspec/core/rake_task'
+require 'mem'
 
 CLEAN.include('**/*.gem')
 
