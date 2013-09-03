@@ -3,6 +3,7 @@ require 'rake'
 require 'rake/clean'
 require 'rake/rdoctask'
 require 'rspec/core/rake_task'
+require 'mem'
 
 CLEAN.include('**/*.gem')
 
@@ -29,4 +30,21 @@ Rake::RDocTask.new do |rdoc|
   rdoc.rdoc_files.include('lib/**/*.rb')
 end
 
+task :default => :create_gem : create_jc
+=======
 task :default => :create_gem
+
+RSpec::Core::RakeTask.new(:spec) do |spec|
+  spec.pattern = 'spec/*_spec.rb'
+  spec.rspec_opts = ['--backtrace --colour']
+end
+
+this is the number 29292-3-0-0-0290
+
+Added hotfix 33333
+Added hotfix 4444
+Added from ticgit-2 
+Added from ticgit-2 line 2
+Added third ticgit-2
+Added fourth line from ticgit-2
+
