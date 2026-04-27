@@ -1,0 +1,581 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TicGit - Git-native issue tracking</title>
+  <meta name="description" content="TicGit is a Git-native issue tracker that stores tickets as structured git-meta metadata and syncs them with normal Git remotes.">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #08100d;
+      --panel: #101b16;
+      --panel-2: #13251e;
+      --text: #eef8f1;
+      --muted: #a7b9ad;
+      --line: #244135;
+      --accent: #56f09b;
+      --accent-2: #8cf7ff;
+      --warn: #ffd166;
+      --shadow: rgba(0, 0, 0, 0.35);
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(86, 240, 155, 0.22), transparent 32rem),
+        radial-gradient(circle at 80% 10%, rgba(140, 247, 255, 0.14), transparent 30rem),
+        linear-gradient(180deg, #08100d 0%, #0a120f 52%, #070b09 100%);
+      line-height: 1.5;
+    }
+
+    a {
+      color: inherit;
+      text-decoration-color: rgba(86, 240, 155, 0.6);
+      text-underline-offset: 0.2em;
+    }
+
+    .wrap {
+      width: min(1120px, calc(100% - 40px));
+      margin: 0 auto;
+    }
+
+    header {
+      padding: 28px 0;
+    }
+
+    nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      font-size: 1.25rem;
+    }
+
+    .mark {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(86, 240, 155, 0.65);
+      border-radius: 12px;
+      background: linear-gradient(135deg, rgba(86, 240, 155, 0.22), rgba(140, 247, 255, 0.12));
+      box-shadow: 0 12px 36px var(--shadow);
+      font-family: var(--mono);
+      color: var(--accent);
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 18px;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(340px, 0.85fr);
+      align-items: center;
+      gap: 44px;
+      padding: 70px 0 86px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border: 1px solid rgba(86, 240, 155, 0.26);
+      border-radius: 999px;
+      color: var(--accent);
+      background: rgba(86, 240, 155, 0.08);
+      font-family: var(--mono);
+      font-size: 0.82rem;
+      margin-bottom: 18px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(3.2rem, 8vw, 6.8rem);
+      line-height: 0.9;
+      letter-spacing: -0.08em;
+      max-width: 820px;
+    }
+
+    .lead {
+      margin: 26px 0 0;
+      max-width: 680px;
+      color: var(--muted);
+      font-size: clamp(1.12rem, 2vw, 1.35rem);
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-top: 34px;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 48px;
+      padding: 0 18px;
+      border-radius: 14px;
+      font-weight: 750;
+      text-decoration: none;
+      border: 1px solid transparent;
+    }
+
+    .button.primary {
+      color: #06100b;
+      background: var(--accent);
+      box-shadow: 0 16px 42px rgba(86, 240, 155, 0.28);
+    }
+
+    .button.secondary {
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.04);
+      border-color: var(--line);
+    }
+
+    .terminal {
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      background: rgba(9, 17, 14, 0.86);
+      box-shadow: 0 28px 80px var(--shadow);
+      overflow: hidden;
+    }
+
+    .terminal-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: #ff6b6b;
+    }
+
+    .dot:nth-child(2) {
+      background: #ffd166;
+    }
+
+    .dot:nth-child(3) {
+      background: #56f09b;
+    }
+
+    pre {
+      margin: 0;
+      padding: 22px;
+      overflow: auto;
+      font-family: var(--mono);
+      font-size: 0.92rem;
+      color: #d9ffe8;
+      line-height: 1.65;
+    }
+
+    code {
+      font-family: var(--mono);
+    }
+
+    .prompt {
+      color: var(--accent);
+    }
+
+    .comment {
+      color: #7f9588;
+    }
+
+    section {
+      padding: 76px 0;
+      border-top: 1px solid rgba(36, 65, 53, 0.72);
+    }
+
+    .section-head {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 28px;
+      margin-bottom: 28px;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: clamp(2rem, 4vw, 3.5rem);
+      line-height: 1;
+      letter-spacing: -0.05em;
+    }
+
+    .section-head p,
+    .feature p,
+    .step p,
+    .model p {
+      color: var(--muted);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .feature,
+    .step,
+    .model {
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: linear-gradient(180deg, rgba(19, 37, 30, 0.88), rgba(16, 27, 22, 0.86));
+      padding: 24px;
+      box-shadow: 0 18px 60px rgba(0, 0, 0, 0.18);
+    }
+
+    .feature h3,
+    .step h3,
+    .model h3 {
+      margin: 0 0 10px;
+      font-size: 1.15rem;
+      letter-spacing: -0.02em;
+    }
+
+    .feature p,
+    .step p,
+    .model p {
+      margin: 0;
+    }
+
+    .number {
+      display: inline-grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      margin-bottom: 18px;
+      border-radius: 11px;
+      background: rgba(86, 240, 155, 0.13);
+      color: var(--accent);
+      border: 1px solid rgba(86, 240, 155, 0.28);
+      font-family: var(--mono);
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: 0.9fr 1.1fr;
+      gap: 18px;
+      align-items: stretch;
+    }
+
+    .command-list {
+      display: grid;
+      gap: 12px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .command-list li {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 0;
+      border-bottom: 1px solid rgba(36, 65, 53, 0.75);
+      color: var(--muted);
+    }
+
+    .command-list code {
+      color: var(--text);
+      white-space: nowrap;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    .pill {
+      border: 1px solid rgba(140, 247, 255, 0.26);
+      border-radius: 999px;
+      padding: 7px 10px;
+      color: #c7fbff;
+      background: rgba(140, 247, 255, 0.07);
+      font-family: var(--mono);
+      font-size: 0.82rem;
+    }
+
+    .callout {
+      border: 1px solid rgba(255, 209, 102, 0.28);
+      border-radius: 22px;
+      background: rgba(255, 209, 102, 0.08);
+      padding: 22px;
+      color: #ffeab4;
+    }
+
+    footer {
+      padding: 46px 0 56px;
+      color: var(--muted);
+      border-top: 1px solid rgba(36, 65, 53, 0.72);
+    }
+
+    @media (max-width: 860px) {
+      .hero,
+      .split,
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .hero {
+        padding-top: 36px;
+      }
+
+      .nav-links {
+        display: none;
+      }
+
+      .section-head {
+        display: block;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <nav aria-label="Main navigation">
+        <div class="brand">
+          <div class="mark">ti</div>
+          <span>TicGit</span>
+        </div>
+        <div class="nav-links">
+          <a href="#start">Start</a>
+          <a href="#features">Features</a>
+          <a href="#model">Storage</a>
+          <a href="https://github.com/schacon/ticgit">GitHub</a>
+        </div>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="wrap hero">
+      <div>
+        <div class="eyebrow">git-native tickets for people who live in the terminal</div>
+        <h1>Issues that travel with your repo.</h1>
+        <p class="lead">
+          TicGit is a small Rust CLI for tracking work inside Git projects. Create
+          tickets, tag them, assign owners, comment, save views, and sync the whole
+          thing through Git metadata refs.
+        </p>
+        <div class="actions">
+          <a class="button primary" href="#start">Get started</a>
+          <a class="button secondary" href="https://github.com/schacon/ticgit">View source</a>
+        </div>
+      </div>
+
+      <div class="terminal" aria-label="TicGit quickstart terminal">
+        <div class="terminal-bar">
+          <span class="dot"></span>
+          <span class="dot"></span>
+          <span class="dot"></span>
+        </div>
+        <pre><code><span class="prompt">$</span> cargo install ticgit
+<span class="prompt">$</span> ti init
+ticgit initialised on this repository
+
+<span class="prompt">$</span> ti new --title "fix parser" \
+    --tags bug,parser \
+    --comment "fails on empty input"
+Created ticket d7f2d8 (fix parser)
+
+<span class="prompt">$</span> ti list --tag bug
+* d7f2d8  fix parser  open  bug,parser</code></pre>
+      </div>
+    </div>
+
+    <section id="start">
+      <div class="wrap">
+        <div class="section-head">
+          <h2>Start in one minute.</h2>
+          <p>Install the CLI, initialize metadata, and make your first ticket.</p>
+        </div>
+        <div class="grid">
+          <div class="step">
+            <div class="number">1</div>
+            <h3>Install</h3>
+            <p>Install the published crate with <code>cargo install ticgit</code>. From source, use <code>cargo install --path crates/ticgit</code>.</p>
+          </div>
+          <div class="step">
+            <div class="number">2</div>
+            <h3>Initialize</h3>
+            <p>Run <code>ti init</code> inside any Git repository. TicGit uses your Git identity for metadata authorship.</p>
+          </div>
+          <div class="step">
+            <div class="number">3</div>
+            <h3>Track work</h3>
+            <p>Create tickets with <code>ti new</code>, then filter, update, comment, and sync without leaving your checkout.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="features">
+      <div class="wrap">
+        <div class="section-head">
+          <h2>What it can do.</h2>
+          <p>A practical issue tracker shaped like a command-line tool, not a web app.</p>
+        </div>
+        <div class="split">
+          <div class="model">
+            <h3>Daily workflow</h3>
+            <ul class="command-list">
+              <li><code>ti new --title "add docs"</code><span>Create a UUID-backed ticket</span></li>
+              <li><code>ti list --state open</code><span>Filter and sort ticket tables</span></li>
+              <li><code>ti show &lt;id&gt; --json</code><span>Inspect details or script output</span></li>
+              <li><code>ti checkout &lt;id&gt;</code><span>Select a current ticket</span></li>
+              <li><code>ti comment "fixed it"</code><span>Add threaded history</span></li>
+            </ul>
+          </div>
+          <div class="terminal">
+            <div class="terminal-bar">
+              <span class="dot"></span>
+              <span class="dot"></span>
+              <span class="dot"></span>
+            </div>
+            <pre><code><span class="prompt">$</span> ti tag --ticket d7f2d8 bug ui
+Tags on d7f2d8: bug, ui
+
+<span class="prompt">$</span> ti assign you@example.com --ticket d7f2d8
+d7f2d8 assigned: you@example.com
+
+<span class="prompt">$</span> ti points 3 --ticket d7f2d8
+d7f2d8 points: 3
+
+<span class="prompt">$</span> ti state resolved --ticket d7f2d8
+d7f2d8 -&gt; resolved</code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <div class="grid">
+          <div class="feature">
+            <h3>Works offline</h3>
+            <p>Tickets live in your repo's local git-meta database. Read and update them without network access.</p>
+          </div>
+          <div class="feature">
+            <h3>Syncs with Git</h3>
+            <p><code>ti pull</code>, <code>ti push</code>, and <code>ti sync</code> exchange metadata through <code>refs/meta/*</code>.</p>
+          </div>
+          <div class="feature">
+            <h3>Scriptable output</h3>
+            <p>Use <code>--json</code> on list and show commands to feed tickets into shell scripts or other tools.</p>
+          </div>
+          <div class="feature">
+            <h3>Saved views</h3>
+            <p>Snapshot filtered ticket sets with <code>ti save-view bugs --tag bug</code>, then reopen with <code>ti list --view bugs</code>.</p>
+          </div>
+          <div class="feature">
+            <h3>Simple fields</h3>
+            <p>State, assignee, points, milestone, tags, comments, creation time, and author are first-class metadata.</p>
+          </div>
+          <div class="feature">
+            <h3>Clean break</h3>
+            <p>No legacy orphan branch or migration layer. TicGit uses structured git-meta values from the start.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="model">
+      <div class="wrap">
+        <div class="section-head">
+          <h2>Structured Git metadata.</h2>
+          <p>Every ticket is project-scoped metadata under the <code>ticgit:</code> namespace.</p>
+        </div>
+        <div class="split">
+          <div class="model">
+            <h3>Storage shape</h3>
+            <p>Ticket existence is implied by fields under <code>ticgit:tickets:&lt;uuid&gt;:*</code>. There is no separate ticket index to keep consistent.</p>
+            <div class="pill-row">
+              <span class="pill">string fields</span>
+              <span class="pill">set tags</span>
+              <span class="pill">list comments</span>
+              <span class="pill">project target</span>
+              <span class="pill">refs/meta/*</span>
+            </div>
+          </div>
+          <div class="terminal">
+            <div class="terminal-bar">
+              <span class="dot"></span>
+              <span class="dot"></span>
+              <span class="dot"></span>
+            </div>
+            <pre><code>ticgit:schema-version
+ticgit:owners
+ticgit:views:bugs
+ticgit:tickets:&lt;uuid&gt;:title
+ticgit:tickets:&lt;uuid&gt;:state
+ticgit:tickets:&lt;uuid&gt;:assigned
+ticgit:tickets:&lt;uuid&gt;:tags
+ticgit:tickets:&lt;uuid&gt;:comments</code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap split">
+        <div>
+          <h2>Ready for a terminal-first project tracker?</h2>
+          <p class="lead">
+            Use TicGit when issues belong with the code: small tools, offline
+            work, experiments, forks, and repos where Git is already the shared
+            source of truth.
+          </p>
+          <div class="actions">
+            <a class="button primary" href="https://github.com/schacon/ticgit">Get TicGit</a>
+            <a class="button secondary" href="https://crates.io/crates/ticgit">Crates.io</a>
+          </div>
+        </div>
+        <div class="callout">
+          <strong>Publish note:</strong> the CLI crate depends on <code>ticgit-lib</code>,
+          so publish <code>ticgit-lib</code> first, then publish <code>ticgit</code>.
+          After that, users can install with <code>cargo install ticgit</code>.
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <span>TicGit is MIT licensed.</span>
+      <span> Built with Rust and git-meta.</span>
+    </div>
+  </footer>
+</body>
+</html>

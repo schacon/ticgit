@@ -1,0 +1,43 @@
+[package]
+name = "ticgit"
+description = "Tickets in your Git repo, stored as git-meta metadata"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
+keywords.workspace = true
+categories.workspace = true
+include = [
+    "src/**",
+    "tests/**",
+    "Cargo.toml",
+    "../../README.md",
+    "../../LICENSE_MIT",
+]
+
+[[bin]]
+name = "ti"
+path = "src/main.rs"
+
+[dependencies]
+ticgit-lib = { version = "0.1.0", path = "../ticgit-lib" }
+
+anyhow      = { workspace = true }
+clap        = { workspace = true }
+comfy-table = { workspace = true }
+dirs        = { workspace = true }
+gix         = { workspace = true }
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+tempfile    = { workspace = true }
+time        = { workspace = true }
+uuid        = { workspace = true }
+
+[dev-dependencies]
+assert_cmd = { workspace = true }
+predicates = { workspace = true }
+tempfile   = { workspace = true }
+ticgit-lib = { version = "0.1.0", path = "../ticgit-lib", features = ["test-support"] }
