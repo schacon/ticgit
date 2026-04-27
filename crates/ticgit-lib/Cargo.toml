@@ -1,0 +1,42 @@
+[package]
+name = "ticgit-lib"
+description = "Ticket-tracking metadata stored via git-meta"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
+keywords.workspace = true
+categories.workspace = true
+include = [
+    "src/**",
+    "Cargo.toml",
+    "../../README.md",
+    "../../LICENSE_MIT",
+]
+
+[dependencies]
+git-meta-lib = { workspace = true }
+gix          = { workspace = true }
+# Force the older gix-actor to work around the winnow split.
+gix-actor    = { workspace = true }
+serde        = { workspace = true }
+serde_json   = { workspace = true }
+thiserror    = { workspace = true }
+time         = { workspace = true }
+uuid         = { workspace = true }
+
+[features]
+default = []
+# Re-export the `test_support` module so downstream crates (the CLI's
+# integration tests) can spin up isolated stores.
+test-support = ["dep:tempfile"]
+
+[dependencies.tempfile]
+workspace = true
+optional = true
+
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -1,0 +1,34 @@
+[workspace]
+resolver = "2"
+members = ["crates/ticgit-lib", "crates/ticgit"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Scott Chacon <schacon@gmail.com>"]
+repository = "https://github.com/schacon/ticgit"
+homepage = "https://github.com/schacon/ticgit"
+readme = "README.md"
+keywords = ["git", "issues", "tickets", "metadata", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+
+[workspace.dependencies]
+git-meta-lib = "0.1"
+gix          = { version = "0.81", default-features = false, features = ["sha1", "revision", "merge", "tree-editor", "blob-diff"] }
+# Pin gix-actor: 0.40.1 (Apr 2026) bumped winnow to 1.0 but gix-object 0.58 still needs 0.7.
+gix-actor    = "=0.40.0"
+serde        = { version = "1", features = ["derive"] }
+serde_json   = "1"
+thiserror    = "2"
+time         = { version = "0.3", features = ["formatting", "parsing", "macros", "serde-well-known"] }
+uuid         = { version = "1", features = ["v4", "serde"] }
+
+anyhow       = "1"
+clap         = { version = "4", features = ["derive"] }
+comfy-table  = "7"
+dirs         = "5"
+
+tempfile     = "3"
+assert_cmd   = "2"
+predicates   = "3"
