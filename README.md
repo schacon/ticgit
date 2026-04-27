@@ -7,32 +7,6 @@ files on an orphan branch.
 This is a clean Rust reimplementation of the old `ticgit-ng` idea. It does not
 read or migrate legacy `ticgit-ng` branches.
 
-## What It Stores
-
-All TicGit data is written on the git-meta `project` target under the
-`ticgit:` namespace:
-
-```text
-ticgit:schema-version                    string
-ticgit:owners                            set
-ticgit:views:<name>                      set of ticket UUIDs
-ticgit:tickets:<uuid>:title              string
-ticgit:tickets:<uuid>:state              string
-ticgit:tickets:<uuid>:assigned           string
-ticgit:tickets:<uuid>:points             string
-ticgit:tickets:<uuid>:milestone          string
-ticgit:tickets:<uuid>:tags               set
-ticgit:tickets:<uuid>:comments           list
-ticgit:tickets:<uuid>:created-at         string
-ticgit:tickets:<uuid>:created-by         string
-```
-
-Ticket existence is implied by the presence of fields under
-`ticgit:tickets:<uuid>:*`; there is no separate ticket index.
-
-The local query database is git-meta's `.git/git-meta.sqlite`. Exchange with
-other clones happens through `refs/meta/*` using normal Git transfer.
-
 ## Install
 
 From a checkout:
