@@ -1,0 +1,3 @@
+As I'm working on `git-meta` project, which solves a lot of the issues I had with implementing `ticgit`, and now I have agents, I figured I would see if I could reboot this project with a proper metadata system to help kick it's tires. Also do it in Rust so it can be distributed more easily.
+
+Leggo
