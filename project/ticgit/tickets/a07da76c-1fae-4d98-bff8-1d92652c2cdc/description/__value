@@ -1,0 +1,59 @@
+GitHub issue: https://github.com/schacon/ticgit/issues/2
+
+I created a ticket and checked it out.  Then I resolved it and created another ticket.  Running 'ti comment' at this point attaches a comment to the first ticket (the resolved one).  I would expect an error stating there is no current ticket to operate on.  I also don't see an action to "check in" a ticket -- so I expected resolving the ticket would do this.
+
+<pre>
+[~/tmp (git on master)]
+0717 08:47:01 $ ti 
+I, [2009-07-17T08:47:03.596345 #992]  INFO -- : creating ticgit repo branch
+Please specify at least one action to execute.
+ list state show new checkout comment tag assign 
+
+[~/tmp (git on master)]
+0717 08:47:32 $ ti new -t 'new ticket'
+I, [2009-07-17T08:47:37.379716 #1178]  INFO -- : saving 1247842057_new-ticket_524
+
+Title     : new ticket
+TicId     : 74b4e341e8fa899c9f11d2ec2ac641805c0f96a0
+
+Assigned  : dbueno@...
+Opened    : Fri Jul 17 08:47:37 -0600 2009 (0 days)
+State     : OPEN
+
+
+[~/tmp (git on master)]
+0717 08:47:37 $ ti list
+
+     # TicId  Title                     State Date  Assgn    Tags                
+--------------------------------------------------------------------------------
+     1 74b4e3 new ticket                open  07/17 dbueno                       
+
+[~/tmp (git on master)]
+0717 08:47:50 $ ti checkout 1
+
+[~/tmp (git on master)]
+0717 08:47:53 $ ti state resolved
+
+[~/tmp (git on master)]
+0717 08:48:00 $ ti new -t 'another new ticket'
+I, [2009-07-17T08:48:09.784401 #1285]  INFO -- : saving 1247842089_another-new-ticket_913
+
+Title     : another new ticket
+TicId     : e1b43ab5f5c9e269278613f717a0a3531931fabb
+
+Assigned  : dbueno@...
+Opened    : Fri Jul 17 08:48:09 -0600 2009 (0 days)
+State     : OPEN
+
+
+[~/tmp (git on master)]
+0717 08:48:09 $ ti list
+
+     # TicId  Title                     State Date  Assgn    Tags                
+--------------------------------------------------------------------------------
+     1 e1b43a another new ticket        open  07/17 dbueno                       
+
+
+[~/tmp (git on master)]
+0717 08:48:11 $ ti comment # comments on the first ticket
+</pre>
