@@ -27,7 +27,9 @@ uuid         = { version = "1", features = ["v4", "serde"] }
 anyhow       = "1"
 clap         = { version = "4", features = ["derive"] }
 comfy-table  = "7"
+crossterm    = "0.29"
 dirs         = "5"
+ratatui      = "0.30"
 
 tempfile     = "3"
 assert_cmd   = "2"

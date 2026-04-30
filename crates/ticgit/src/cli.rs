@@ -36,8 +36,17 @@ pub enum Command {
     /// Select a ticket as "current" for subsequent commands.
     Checkout(commands::checkout::Args),
 
+    /// Edit a ticket's title and description in your editor.
+    Edit(commands::edit::Args),
+
+    /// Import tickets from external systems.
+    Import(commands::import::Args),
+
     /// Show the most recently touched tickets.
     Recent(commands::recent::Args),
+
+    /// Browse open tickets in an interactive terminal UI.
+    Tui(commands::tui::Args),
 
     /// Add or remove a tag on a ticket.
     Tag(commands::tag::Args),
@@ -80,7 +89,10 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
         Command::List(args) => commands::list::run(args),
         Command::Show(args) => commands::show::run(args),
         Command::Checkout(args) => commands::checkout::run(args),
+        Command::Edit(args) => commands::edit::run(args),
+        Command::Import(args) => commands::import::run(args),
         Command::Recent(args) => commands::recent::run(args),
+        Command::Tui(args) => commands::tui::run(args),
         Command::Tag(args) => commands::tag::run(args),
         Command::State(args) => commands::state::run(args),
         Command::Assign(args) => commands::assign::run(args),

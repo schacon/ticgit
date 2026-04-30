@@ -152,6 +152,7 @@ mod tests {
         Ticket {
             id: Uuid::new_v4(),
             title: title.into(),
+            description: None,
             state,
             assigned: assigned.map(String::from),
             points: None,

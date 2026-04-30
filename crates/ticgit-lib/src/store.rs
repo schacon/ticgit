@@ -182,6 +182,20 @@ impl TicketStore {
         Ok(())
     }
 
+    pub fn set_description(&self, id: &Uuid, description: Option<&str>) -> Result<()> {
+        let p = self.project_handle();
+        let key = keys::ticket_field(id, "description");
+        match description {
+            Some(d) if !d.is_empty() => {
+                p.set(&key, d)?;
+            }
+            _ => {
+                p.remove(&key)?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn set_state(&self, id: &Uuid, state: TicketState) -> Result<()> {
         self.project_handle()
             .set(&keys::ticket_field(id, "state"), state.as_str())?;
@@ -382,6 +396,7 @@ fn build_ticket(id: Uuid, fields: Vec<(String, MetaValue)>) -> Option<Ticket> {
     }
 
     let mut title: Option<String> = None;
+    let mut description: Option<String> = None;
     let mut state = TicketState::Open;
     let mut assigned: Option<String> = None;
     let mut points: Option<i64> = None;
@@ -394,6 +409,7 @@ fn build_ticket(id: Uuid, fields: Vec<(String, MetaValue)>) -> Option<Ticket> {
     for (field, value) in fields {
         match (field.as_str(), value) {
             ("title", MetaValue::String(s)) => title = Some(s),
+            ("description", MetaValue::String(s)) => description = Some(s),
             ("state", MetaValue::String(s)) => {
                 state = TicketState::parse(&s).unwrap_or(TicketState::Open);
             }
@@ -416,6 +432,7 @@ fn build_ticket(id: Uuid, fields: Vec<(String, MetaValue)>) -> Option<Ticket> {
     Some(Ticket {
         id,
         title,
+        description,
         state,
         assigned,
         points,

@@ -4,6 +4,8 @@
 pub mod assign;
 pub mod checkout;
 pub mod comment;
+pub mod edit;
+pub mod import;
 pub mod init;
 pub mod list;
 pub mod milestone;
@@ -14,6 +16,7 @@ pub mod show;
 pub mod state;
 pub mod sync;
 pub mod tag;
+pub mod tui;
 pub mod view;
 
 use anyhow::{Context, Result};
