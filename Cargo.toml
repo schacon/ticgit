@@ -15,7 +15,7 @@ categories = ["command-line-utilities", "development-tools"]
 
 [workspace.dependencies]
 git-meta-lib = "0.1"
-gix          = { version = "0.81", default-features = false, features = ["sha1", "revision", "merge", "tree-editor", "blob-diff"] }
+gix          = { version = "0.83", default-features = false, features = ["sha1", "revision", "merge", "tree-editor", "blob-diff"] }
 # Pin gix-actor: 0.40.1 (Apr 2026) bumped winnow to 1.0 but gix-object 0.58 still needs 0.7.
 gix-actor    = "=0.40.0"
 serde        = { version = "1", features = ["derive"] }
