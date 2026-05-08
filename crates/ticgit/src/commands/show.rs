@@ -15,8 +15,8 @@ pub struct Args {
     pub json: bool,
 
     /// Output only one JSON field, using a small jq-like path (e.g. `.title` or `.comments[0].body`).
-    #[arg(long = "filter")]
-    pub filter: Option<String>,
+    #[arg(long = "filter", num_args = 0..=1)]
+    pub filter: Option<Option<String>>,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -24,7 +24,12 @@ pub fn run(args: Args) -> Result<()> {
     let id = resolve_ticket(&store, args.ticket.as_deref())?;
     let ticket = store.load(&id)?;
 
-    if let Some(filter) = &args.filter {
+    if matches!(args.filter, Some(None)) {
+        print_filter_help();
+        return Ok(());
+    }
+
+    if let Some(Some(filter)) = &args.filter {
         let json = serde_json::to_value(&ticket)?;
         let filtered = apply_filter(&json, filter)?;
         println!("{}", render_filtered(filtered)?);
@@ -96,6 +101,29 @@ fn render_filtered(value: &Value) -> Result<String> {
         Value::String(s) => s.clone(),
         _ => serde_json::to_string_pretty(value)?,
     })
+}
+
+fn print_filter_help() {
+    println!(
+        "\
+Available filters:
+  .id
+  .title
+  .description
+  .state
+  .assigned
+  .points
+  .milestone
+  .tags
+  .comments
+  .created_at
+  .created_by
+
+Examples:
+  ti show <id> --filter '.title'
+  ti show <id> --filter '.tags'
+  ti show <id> --filter '.comments[0].body'"
+    );
 }
 
 #[cfg(test)]
