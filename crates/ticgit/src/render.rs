@@ -5,6 +5,14 @@ use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+const ANSI_RESET: &str = "\x1b[0m";
+const ANSI_DIM: &str = "\x1b[2m";
+const ANSI_BLUE: &str = "\x1b[34m";
+const ANSI_GREEN: &str = "\x1b[32m";
+const ANSI_PURPLE: &str = "\x1b[35m";
+const ANSI_YELLOW: &str = "\x1b[33m";
+const ANSI_CYAN: &str = "\x1b[36m";
+
 /// Render a list of tickets as a compact table. `current` (if any) gets a `*`.
 pub fn tickets_table(tickets: &[Ticket], current: Option<&uuid::Uuid>) -> String {
     let width = crossterm::terminal::size()
@@ -33,20 +41,18 @@ fn tickets_table_with_width(
     let title_width = width.saturating_sub(fixed_width).max(MIN_TITLE_WIDTH);
 
     let mut out = String::new();
-    out.push_str("   ");
-    out.push_str(&fit("TicId", ID_WIDTH));
-    out.push(' ');
-    out.push_str(&fit("Title", title_width));
-    out.push(' ');
-    out.push_str(&fit("State", STATE_WIDTH));
-    out.push(' ');
-    out.push_str(&fit("Date", DATE_WIDTH));
-    out.push(' ');
-    out.push_str(&fit("Assgn", ASSIGNED_WIDTH));
-    out.push(' ');
-    out.push_str(&fit("Tags", TAGS_WIDTH));
+    let header = format!(
+        "  {} {}  {} {} {} {}",
+        fit("TicId", ID_WIDTH),
+        fit("Date", DATE_WIDTH),
+        fit("Title", title_width),
+        fit("State", STATE_WIDTH),
+        fit("Assgn", ASSIGNED_WIDTH),
+        fit("Tags", TAGS_WIDTH)
+    );
+    out.push_str(&ansi(ANSI_DIM, &header));
     out.push('\n');
-    out.push_str(&"-".repeat(width));
+    out.push_str(&ansi(ANSI_DIM, &"-".repeat(width)));
     out.push('\n');
 
     for t in tickets {
@@ -54,18 +60,23 @@ fn tickets_table_with_width(
         let assigned = t.assigned_short().unwrap_or_default();
         let tags = t.tags.iter().cloned().collect::<Vec<_>>().join(",");
         out.push_str(marker);
+        out.push(' ');
+        out.push_str(&ansi(ANSI_CYAN, &fit(&t.short_id(), ID_WIDTH)));
+        out.push(' ');
+        out.push_str(&ansi(
+            ANSI_DIM,
+            &fit(&relative_date(t.created_at, now), DATE_WIDTH),
+        ));
         out.push_str("  ");
-        out.push_str(&fit(&t.short_id(), ID_WIDTH));
+        out.push_str(&ansi(ANSI_BLUE, &fit(&flatten(&t.title), title_width)));
         out.push(' ');
-        out.push_str(&fit(&flatten(&t.title), title_width));
-        out.push(' ');
-        out.push_str(&fit(t.state.as_str(), STATE_WIDTH));
-        out.push(' ');
-        out.push_str(&fit(&relative_date(t.created_at, now), DATE_WIDTH));
-        out.push(' ');
+        out.push_str(&ansi(
+            state_color(t.state.as_str()),
+            &fit(t.state.as_str(), STATE_WIDTH),
+        ));
         out.push_str(&fit(&flatten(&assigned), ASSIGNED_WIDTH));
         out.push(' ');
-        out.push_str(&fit(&flatten(&tags), TAGS_WIDTH));
+        out.push_str(&ansi(ANSI_YELLOW, &fit(&flatten(&tags), TAGS_WIDTH)));
         out.push('\n');
     }
 
@@ -154,6 +165,19 @@ fn truncate_display(value: &str, max_width: usize) -> String {
 
 fn flatten(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn ansi(color: &str, value: &str) -> String {
+    format!("{color}{value}{ANSI_RESET}")
+}
+
+fn state_color(state: &str) -> &'static str {
+    match state {
+        "open" => ANSI_GREEN,
+        "hold" => ANSI_YELLOW,
+        "resolved" | "invalid" => ANSI_PURPLE,
+        _ => ANSI_DIM,
+    }
 }
 
 fn relative_date(then: OffsetDateTime, now: OffsetDateTime) -> String {
