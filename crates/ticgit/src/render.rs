@@ -3,6 +3,7 @@
 use ticgit_lib::Ticket;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// Render a list of tickets as a compact table. `current` (if any) gets a `*`.
 pub fn tickets_table(tickets: &[Ticket], current: Option<&uuid::Uuid>) -> String {
@@ -10,13 +11,14 @@ pub fn tickets_table(tickets: &[Ticket], current: Option<&uuid::Uuid>) -> String
         .map(|(columns, _)| columns as usize)
         .unwrap_or(100)
         .max(40);
-    tickets_table_with_width(tickets, current, width)
+    tickets_table_with_width(tickets, current, width, OffsetDateTime::now_utc())
 }
 
 fn tickets_table_with_width(
     tickets: &[Ticket],
     current: Option<&uuid::Uuid>,
     width: usize,
+    now: OffsetDateTime,
 ) -> String {
     const ID_WIDTH: usize = 6;
     const STATE_WIDTH: usize = 5;
@@ -31,10 +33,19 @@ fn tickets_table_with_width(
     let title_width = width.saturating_sub(fixed_width).max(MIN_TITLE_WIDTH);
 
     let mut out = String::new();
-    out.push_str(&format!(
-        "   {:<ID_WIDTH$} {:<title_width$} {:<STATE_WIDTH$} {:<DATE_WIDTH$} {:<ASSIGNED_WIDTH$} {:<TAGS_WIDTH$}\n",
-        "TicId", "Title", "State", "Date", "Assgn", "Tags"
-    ));
+    out.push_str("   ");
+    out.push_str(&fit("TicId", ID_WIDTH));
+    out.push(' ');
+    out.push_str(&fit("Title", title_width));
+    out.push(' ');
+    out.push_str(&fit("State", STATE_WIDTH));
+    out.push(' ');
+    out.push_str(&fit("Date", DATE_WIDTH));
+    out.push(' ');
+    out.push_str(&fit("Assgn", ASSIGNED_WIDTH));
+    out.push(' ');
+    out.push_str(&fit("Tags", TAGS_WIDTH));
+    out.push('\n');
     out.push_str(&"-".repeat(width));
     out.push('\n');
 
@@ -42,15 +53,20 @@ fn tickets_table_with_width(
         let marker = if Some(&t.id) == current { "*" } else { " " };
         let assigned = t.assigned_short().unwrap_or_default();
         let tags = t.tags.iter().cloned().collect::<Vec<_>>().join(",");
-        out.push_str(&format!(
-            "{marker}  {:<ID_WIDTH$} {:<title_width$} {:<STATE_WIDTH$} {:<DATE_WIDTH$} {:<ASSIGNED_WIDTH$} {:<TAGS_WIDTH$}\n",
-            t.short_id(),
-            truncate(&flatten(&t.title), title_width),
-            t.state.as_str(),
-            short_date(t.created_at),
-            truncate(&flatten(&assigned), ASSIGNED_WIDTH),
-            truncate(&flatten(&tags), TAGS_WIDTH),
-        ));
+        out.push_str(marker);
+        out.push_str("  ");
+        out.push_str(&fit(&t.short_id(), ID_WIDTH));
+        out.push(' ');
+        out.push_str(&fit(&flatten(&t.title), title_width));
+        out.push(' ');
+        out.push_str(&fit(t.state.as_str(), STATE_WIDTH));
+        out.push(' ');
+        out.push_str(&fit(&relative_date(t.created_at, now), DATE_WIDTH));
+        out.push(' ');
+        out.push_str(&fit(&flatten(&assigned), ASSIGNED_WIDTH));
+        out.push(' ');
+        out.push_str(&fit(&flatten(&tags), TAGS_WIDTH));
+        out.push('\n');
     }
 
     out
@@ -108,23 +124,51 @@ pub fn tickets_json(t: &[Ticket]) -> Result<String, serde_json::Error> {
     serde_json::to_string_pretty(t)
 }
 
-fn truncate(value: &str, max_chars: usize) -> String {
-    if value.chars().count() <= max_chars {
+fn fit(value: &str, width: usize) -> String {
+    let truncated = truncate_display(value, width);
+    let padding = width.saturating_sub(UnicodeWidthStr::width(truncated.as_str()));
+    format!("{truncated}{}", " ".repeat(padding))
+}
+
+fn truncate_display(value: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(value) <= max_width {
         return value.to_string();
     }
-    if max_chars > 3 {
-        let mut out: String = value.chars().take(max_chars - 3).collect();
-        out.push_str("...");
-        out
-    } else {
-        ".".repeat(max_chars)
+
+    let ellipsis = if max_width > 3 { "..." } else { "." };
+    let ellipsis_width = UnicodeWidthStr::width(ellipsis);
+    let content_width = max_width.saturating_sub(ellipsis_width);
+    let mut out = String::new();
+    let mut width = 0;
+    for ch in value.chars() {
+        let char_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + char_width > content_width {
+            break;
+        }
+        out.push(ch);
+        width += char_width;
     }
+    out.push_str(ellipsis);
+    out
 }
 
 fn flatten(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn short_date(when: OffsetDateTime) -> String {
-    format!("{:02}/{:02}", u8::from(when.month()), when.day())
+fn relative_date(then: OffsetDateTime, now: OffsetDateTime) -> String {
+    let seconds = (now - then).whole_seconds().max(0);
+    if seconds < 60 * 60 {
+        return "0d".to_string();
+    }
+    if seconds < 60 * 60 * 24 {
+        return format!("{}h", seconds / (60 * 60));
+    }
+    if seconds < 60 * 60 * 24 * 30 {
+        return format!("{}d", seconds / (60 * 60 * 24));
+    }
+    if seconds < 60 * 60 * 24 * 365 {
+        return format!("{}mo", seconds / (60 * 60 * 24 * 30));
+    }
+    format!("{}y", seconds / (60 * 60 * 24 * 365))
 }
