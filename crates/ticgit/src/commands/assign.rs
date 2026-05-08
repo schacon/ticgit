@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 
 use crate::commands::{open_store, resolve_ticket};
+use crate::render;
 
 #[derive(Debug, Parser)]
 pub struct Args {
@@ -15,6 +16,10 @@ pub struct Args {
     /// Clear the current assignee.
     #[arg(short = 'c', long = "clear", conflicts_with = "user")]
     pub clear: bool,
+
+    /// Output the updated ticket as JSON.
+    #[arg(long = "json")]
+    pub json: bool,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -31,6 +36,11 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     let ticket = store.load(&id)?;
+    if args.json {
+        println!("{}", render::ticket_json(&ticket)?);
+        return Ok(());
+    }
+
     let display = ticket.assigned.as_deref().unwrap_or("(unassigned)");
     println!("{} assigned: {}", ticket.short_id(), display);
     Ok(())

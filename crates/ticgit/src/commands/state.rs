@@ -3,6 +3,7 @@ use clap::Parser;
 use ticgit_lib::TicketState;
 
 use crate::commands::{open_store, resolve_ticket};
+use crate::render;
 
 #[derive(Debug, Parser)]
 pub struct Args {
@@ -12,6 +13,10 @@ pub struct Args {
     /// Ticket id (or prefix). Defaults to the currently checked-out ticket.
     #[arg(short = 't', long = "ticket")]
     pub ticket: Option<String>,
+
+    /// Output the updated ticket as JSON.
+    #[arg(long = "json")]
+    pub json: bool,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -20,6 +25,10 @@ pub fn run(args: Args) -> Result<()> {
     let new_state = TicketState::parse(&args.state)?;
     store.set_state(&id, new_state)?;
     let ticket = store.load(&id)?;
+    if args.json {
+        println!("{}", render::ticket_json(&ticket)?);
+        return Ok(());
+    }
     println!("{} -> {}", ticket.short_id(), ticket.state);
     Ok(())
 }

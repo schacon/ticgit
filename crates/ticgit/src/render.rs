@@ -1,41 +1,86 @@
 //! Terminal output: tables, single-ticket details, and JSON.
 
-use comfy_table::{presets::UTF8_FULL, ContentArrangement, Table};
 use ticgit_lib::Ticket;
 use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-/// Render a list of tickets as a table. `current` (if any) gets a `*`.
+const ANSI_RESET: &str = "\x1b[0m";
+const ANSI_DIM: &str = "\x1b[2m";
+const ANSI_BLUE: &str = "\x1b[34m";
+const ANSI_GREEN: &str = "\x1b[32m";
+const ANSI_PURPLE: &str = "\x1b[35m";
+const ANSI_YELLOW: &str = "\x1b[33m";
+const ANSI_CYAN: &str = "\x1b[36m";
+
+/// Render a list of tickets as a compact table. `current` (if any) gets a `*`.
 pub fn tickets_table(tickets: &[Ticket], current: Option<&uuid::Uuid>) -> String {
-    let mut table = Table::new();
-    table
-        .load_preset(UTF8_FULL)
-        .set_content_arrangement(ContentArrangement::Dynamic)
-        .set_header(vec![
-            "", "Id", "Title", "State", "Assigned", "Tags", "Created",
-        ]);
+    let width = crossterm::terminal::size()
+        .map(|(columns, _)| columns as usize)
+        .unwrap_or(100)
+        .max(40);
+    tickets_table_with_width(tickets, current, width, OffsetDateTime::now_utc())
+}
+
+fn tickets_table_with_width(
+    tickets: &[Ticket],
+    current: Option<&uuid::Uuid>,
+    width: usize,
+    now: OffsetDateTime,
+) -> String {
+    const ID_WIDTH: usize = 6;
+    const STATE_WIDTH: usize = 5;
+    const DATE_WIDTH: usize = 5;
+    const ASSIGNED_WIDTH: usize = 8;
+    const TAGS_WIDTH: usize = 20;
+    const GAPS_AND_MARKER: usize = 15;
+    const MIN_TITLE_WIDTH: usize = 12;
+
+    let fixed_width =
+        ID_WIDTH + STATE_WIDTH + DATE_WIDTH + ASSIGNED_WIDTH + TAGS_WIDTH + GAPS_AND_MARKER;
+    let title_width = width.saturating_sub(fixed_width).max(MIN_TITLE_WIDTH);
+
+    let mut out = String::new();
+    let header = format!(
+        "  {} {}  {} {} {} {}",
+        fit("TicId", ID_WIDTH),
+        fit("Date", DATE_WIDTH),
+        fit("Title", title_width),
+        fit("State", STATE_WIDTH),
+        fit("Assgn", ASSIGNED_WIDTH),
+        fit("Tags", TAGS_WIDTH)
+    );
+    out.push_str(&ansi(ANSI_DIM, &header));
+    out.push('\n');
+    out.push_str(&ansi(ANSI_DIM, &"-".repeat(width)));
+    out.push('\n');
 
     for t in tickets {
-        let marker = if Some(&t.id) == current { "*" } else { "" };
+        let marker = if Some(&t.id) == current { "*" } else { " " };
         let assigned = t.assigned_short().unwrap_or_default();
         let tags = t.tags.iter().cloned().collect::<Vec<_>>().join(",");
-        let created = t.created_at.format(&Rfc3339).unwrap_or_default();
-        let title = if t.title.chars().count() > 64 {
-            format!("{}...", t.title.chars().take(61).collect::<String>())
-        } else {
-            t.title.clone()
-        };
-        table.add_row(vec![
-            marker.into(),
-            t.short_id(),
-            title,
-            t.state.to_string(),
-            assigned,
-            tags,
-            created,
-        ]);
+        out.push_str(marker);
+        out.push(' ');
+        out.push_str(&ansi(ANSI_CYAN, &fit(&t.short_id(), ID_WIDTH)));
+        out.push(' ');
+        out.push_str(&ansi(
+            ANSI_DIM,
+            &fit(&relative_date(t.created_at, now), DATE_WIDTH),
+        ));
+        out.push_str("  ");
+        out.push_str(&ansi(ANSI_BLUE, &fit(&flatten(&t.title), title_width)));
+        out.push(' ');
+        out.push_str(&ansi(
+            state_color(t.state.as_str()),
+            &fit(t.state.as_str(), STATE_WIDTH),
+        ));
+        out.push_str(&fit(&flatten(&assigned), ASSIGNED_WIDTH));
+        out.push(' ');
+        out.push_str(&ansi(ANSI_YELLOW, &fit(&flatten(&tags), TAGS_WIDTH)));
+        out.push('\n');
     }
 
-    table.to_string()
+    out
 }
 
 /// Render a single ticket and its comments.
@@ -88,4 +133,66 @@ pub fn ticket_json(t: &Ticket) -> Result<String, serde_json::Error> {
 
 pub fn tickets_json(t: &[Ticket]) -> Result<String, serde_json::Error> {
     serde_json::to_string_pretty(t)
+}
+
+fn fit(value: &str, width: usize) -> String {
+    let truncated = truncate_display(value, width);
+    let padding = width.saturating_sub(UnicodeWidthStr::width(truncated.as_str()));
+    format!("{truncated}{}", " ".repeat(padding))
+}
+
+fn truncate_display(value: &str, max_width: usize) -> String {
+    if UnicodeWidthStr::width(value) <= max_width {
+        return value.to_string();
+    }
+
+    let ellipsis = if max_width > 3 { "..." } else { "." };
+    let ellipsis_width = UnicodeWidthStr::width(ellipsis);
+    let content_width = max_width.saturating_sub(ellipsis_width);
+    let mut out = String::new();
+    let mut width = 0;
+    for ch in value.chars() {
+        let char_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + char_width > content_width {
+            break;
+        }
+        out.push(ch);
+        width += char_width;
+    }
+    out.push_str(ellipsis);
+    out
+}
+
+fn flatten(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn ansi(color: &str, value: &str) -> String {
+    format!("{color}{value}{ANSI_RESET}")
+}
+
+fn state_color(state: &str) -> &'static str {
+    match state {
+        "open" => ANSI_GREEN,
+        "hold" => ANSI_YELLOW,
+        "resolved" | "invalid" => ANSI_PURPLE,
+        _ => ANSI_DIM,
+    }
+}
+
+fn relative_date(then: OffsetDateTime, now: OffsetDateTime) -> String {
+    let seconds = (now - then).whole_seconds().max(0);
+    if seconds < 60 * 60 {
+        return "0d".to_string();
+    }
+    if seconds < 60 * 60 * 24 {
+        return format!("{}h", seconds / (60 * 60));
+    }
+    if seconds < 60 * 60 * 24 * 30 {
+        return format!("{}d", seconds / (60 * 60 * 24));
+    }
+    if seconds < 60 * 60 * 24 * 365 {
+        return format!("{}mo", seconds / (60 * 60 * 24 * 30));
+    }
+    format!("{}y", seconds / (60 * 60 * 24 * 365))
 }

@@ -4,6 +4,7 @@ use ticgit_lib::NewTicketOpts;
 
 use crate::commands::open_store;
 use crate::editor;
+use crate::render;
 
 #[derive(Debug, Parser)]
 pub struct Args {
@@ -30,6 +31,10 @@ pub struct Args {
     /// Don't print the new ticket; just print the new id.
     #[arg(long = "id-only")]
     pub id_only: bool,
+
+    /// Output the created ticket as JSON.
+    #[arg(long = "json")]
+    pub json: bool,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -54,6 +59,11 @@ pub fn run(args: Args) -> Result<()> {
         assigned: args.assigned,
     };
     let ticket = store.create(&title, opts)?;
+
+    if args.json {
+        println!("{}", render::ticket_json(&ticket)?);
+        return Ok(());
+    }
 
     if args.id_only {
         println!("{}", ticket.id);

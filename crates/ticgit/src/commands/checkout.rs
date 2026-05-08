@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 
 use crate::commands::{open_store, SessionGitDir};
+use crate::render;
 use crate::session_state::State;
 
 #[derive(Debug, Parser)]
@@ -12,6 +13,10 @@ pub struct Args {
     /// Clear the currently-checked-out ticket.
     #[arg(short = 'c', long = "clear", conflicts_with = "ticket")]
     pub clear: bool,
+
+    /// Output the checked-out ticket as JSON.
+    #[arg(long = "json")]
+    pub json: bool,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -22,6 +27,10 @@ pub fn run(args: Args) -> Result<()> {
     if args.clear {
         state.clear_current(&git_dir);
         state.save()?;
+        if args.json {
+            println!("{}", serde_json::json!({ "current": null }));
+            return Ok(());
+        }
         println!("Cleared current ticket.");
         return Ok(());
     }
@@ -34,6 +43,10 @@ pub fn run(args: Args) -> Result<()> {
     state.save()?;
 
     let ticket = store.load(&id)?;
+    if args.json {
+        println!("{}", render::ticket_json(&ticket)?);
+        return Ok(());
+    }
     println!("Checked out: {} - {}", ticket.short_id(), ticket.title);
     Ok(())
 }
