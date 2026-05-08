@@ -1,0 +1,11 @@
+Separate human comments from machine progress notes so tickets can act as persistent agent memory.
+
+Expected examples:
+
+```sh
+ti note <id> --kind observation "test fails in parser module"
+ti note <id> --kind plan "will add empty-input guard"
+ti note <id> --kind result "fixed by commit abc123"
+```
+
+Notes should preserve kind, body, author/agent, and timestamp, and should be available in JSON output.

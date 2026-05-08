@@ -1,0 +1,13 @@
+Add and document strong machine-mode guarantees for agent-facing commands.
+
+Relevant examples:
+
+```sh
+ti list --json
+ti show <id> --json
+ti new --json ...
+ti state --json ...
+ti comment --json ...
+```
+
+Document stable exit codes, stderr versus stdout behavior, no color in JSON mode, unique prefix ambiguity errors, and any `--porcelain` or `--format json` compatibility promises.

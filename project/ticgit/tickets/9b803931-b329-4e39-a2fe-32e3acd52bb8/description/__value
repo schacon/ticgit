@@ -1,0 +1,9 @@
+Add a command that emits everything an agent needs to start work on a ticket.
+
+Expected example:
+
+```sh
+ti context <id> --json
+```
+
+The context bundle should include title, description, comments, agent notes, linked files, dependencies, related commits, branch, test command, and recent history.

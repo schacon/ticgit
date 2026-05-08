@@ -1,0 +1,11 @@
+Add first-class blockers and ticket relationships so agents can plan multi-ticket work and avoid starting blocked tasks.
+
+Expected examples:
+
+```sh
+ti depends <id> <other-id>
+ti blocks <id> <other-id>
+ti graph --json
+```
+
+The graph output should be machine-readable and suitable for planning tools.

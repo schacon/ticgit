@@ -1,0 +1,11 @@
+Add lightweight agent coordination without central locking.
+
+Expected examples:
+
+```sh
+ti claim <id> --agent cursor --ttl 2h
+ti release <id>
+ti list --claimed
+```
+
+Store claim owner, timestamp, and expiry in git metadata. Claims should behave like expiring leases rather than permanent locks.

@@ -1,0 +1,11 @@
+Add `ti next` so agents can ask TicGit what they should work on next.
+
+Expected examples:
+
+```sh
+ti next --json
+ti next --assigned agent@example.com
+ti next --tag bug --state open
+```
+
+The ranking should consider useful signals such as priority, blockers, age, assignment, and saved views.

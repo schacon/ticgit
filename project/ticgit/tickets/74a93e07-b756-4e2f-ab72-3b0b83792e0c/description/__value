@@ -1,0 +1,16 @@
+Define a richer recommended workflow vocabulary for agent automation while keeping custom states possible if supported by the data model.
+
+Recommended states from `AI_IDEAS.md`:
+
+```text
+open
+claimed
+in-progress
+blocked
+needs-review
+needs-test
+resolved
+wontfix
+```
+
+Document how agents should use these states and how they relate to existing TicGit states.

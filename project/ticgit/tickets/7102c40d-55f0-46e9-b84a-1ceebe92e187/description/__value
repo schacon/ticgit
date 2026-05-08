@@ -1,0 +1,5 @@
+Add first-class structured task fields beyond title, description, tags, and comments.
+
+Candidate fields from `AI_IDEAS.md` include `priority`, `type`, `acceptance`, `steps`, `blocked-by`, `depends-on`, `related-commits`, `branch`, `files`, and `test-command`.
+
+The implementation should decide which fields are core ticket fields versus metadata conventions, and document the resulting behavior for agents.

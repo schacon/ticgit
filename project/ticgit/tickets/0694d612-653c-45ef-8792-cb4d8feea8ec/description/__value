@@ -1,0 +1,3 @@
+Create a small MCP server that makes TicGit directly usable by Cursor, Claude Desktop, custom agents, and CI bots.
+
+Useful tools should include `list_tickets`, `show_ticket`, `create_ticket`, `claim_ticket`, `update_ticket`, `add_note`, and `resolve_ticket`.

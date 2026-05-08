@@ -1,0 +1,11 @@
+Let tickets track implementation artifacts such as branches and commits.
+
+Expected examples:
+
+```sh
+ti link-branch <id> feature/parser-fix
+ti link-commit <id> HEAD
+ti links <id> --json
+```
+
+This should help multiple local agents coordinate implementation work while syncing through Git.

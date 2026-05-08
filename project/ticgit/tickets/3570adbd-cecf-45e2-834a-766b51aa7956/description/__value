@@ -1,0 +1,3 @@
+Publish a versioned JSON schema for the machine-readable TicGit surfaces agents depend on, including `ti list --json`, `ti show --json`, and ticket metadata.
+
+The schema should define stable field names, field types, predictable enums, metadata shape, and compatibility guarantees so agents can safely parse TicGit output across releases.
