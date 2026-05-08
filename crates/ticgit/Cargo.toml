@@ -27,13 +27,15 @@ ticgit-lib = { version = "0.1.0", path = "../ticgit-lib" }
 
 anyhow      = { workspace = true }
 clap        = { workspace = true }
-comfy-table = { workspace = true }
+crossterm   = { workspace = true }
 dirs        = { workspace = true }
 gix         = { workspace = true }
+ratatui     = { workspace = true }
 serde       = { workspace = true }
 serde_json  = { workspace = true }
 tempfile    = { workspace = true }
 time        = { workspace = true }
+unicode-width = { workspace = true }
 uuid        = { workspace = true }
 
 [dev-dependencies]

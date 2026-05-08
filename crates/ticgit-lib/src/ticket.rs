@@ -80,6 +80,7 @@ pub(crate) struct CommentBody {
 pub struct Ticket {
     pub id: Uuid,
     pub title: String,
+    pub description: Option<String>,
     pub state: TicketState,
     pub assigned: Option<String>,
     pub points: Option<i64>,
@@ -142,6 +143,7 @@ mod tests {
         let t = Ticket {
             id: Uuid::parse_str("d7f2d8f6-d6ec-3da1-a180-0a33fb090d59").unwrap(),
             title: "x".into(),
+            description: None,
             state: TicketState::Open,
             assigned: None,
             points: None,
@@ -159,6 +161,7 @@ mod tests {
         let t = Ticket {
             id: Uuid::nil(),
             title: "x".into(),
+            description: None,
             state: TicketState::Open,
             assigned: Some("jeff.welling@gmail.com".into()),
             points: None,
@@ -176,6 +179,7 @@ mod tests {
         let t = Ticket {
             id: Uuid::nil(),
             title: "x".into(),
+            description: None,
             state: TicketState::Open,
             assigned: Some("jdoe".into()),
             points: None,

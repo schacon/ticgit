@@ -95,6 +95,10 @@ pub fn ticket_detail(t: &Ticket) -> String {
         t.created_by
     ));
     out.push_str(&format!("State    : {}\n", t.state));
+    if let Some(description) = &t.description {
+        out.push_str("Description:\n");
+        out.push_str(&format!("  {}\n", description.replace('\n', "\n  ")));
+    }
     if let Some(a) = &t.assigned {
         out.push_str(&format!("Assigned : {a}\n"));
     }

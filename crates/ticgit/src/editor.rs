@@ -9,6 +9,12 @@ use anyhow::{Context, Result};
 /// and return the user's saved content with the prompt comment lines
 /// stripped. Returns `None` if the user saved an empty buffer.
 pub fn capture(prompt: &str) -> Result<Option<String>> {
+    capture_with_initial(prompt, "")
+}
+
+/// Open `$EDITOR` with editable initial content followed by comment-only
+/// instructions. Lines beginning with `#` are stripped from the result.
+pub fn capture_with_initial(prompt: &str, initial: &str) -> Result<Option<String>> {
     let editor = std::env::var("EDITOR").unwrap_or_else(|_| {
         if cfg!(windows) {
             "notepad".to_string()
@@ -22,6 +28,14 @@ pub fn capture(prompt: &str) -> Result<Option<String>> {
         .suffix(".md")
         .tempfile()
         .context("creating editor tempfile")?;
+
+    if !initial.is_empty() {
+        write!(tf, "{initial}").context("writing initial content to tempfile")?;
+        if !initial.ends_with('\n') {
+            writeln!(tf).context("terminating initial content")?;
+        }
+        writeln!(tf).ok();
+    }
 
     for line in prompt.lines() {
         writeln!(tf, "# {line}").context("writing prompt to tempfile")?;

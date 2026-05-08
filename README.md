@@ -7,32 +7,6 @@ files on an orphan branch.
 This is a clean Rust reimplementation of the old `ticgit-ng` idea. It does not
 read or migrate legacy `ticgit-ng` branches.
 
-## What It Stores
-
-All TicGit data is written on the git-meta `project` target under the
-`ticgit:` namespace:
-
-```text
-ticgit:schema-version                    string
-ticgit:owners                            set
-ticgit:views:<name>                      set of ticket UUIDs
-ticgit:tickets:<uuid>:title              string
-ticgit:tickets:<uuid>:state              string
-ticgit:tickets:<uuid>:assigned           string
-ticgit:tickets:<uuid>:points             string
-ticgit:tickets:<uuid>:milestone          string
-ticgit:tickets:<uuid>:tags               set
-ticgit:tickets:<uuid>:comments           list
-ticgit:tickets:<uuid>:created-at         string
-ticgit:tickets:<uuid>:created-by         string
-```
-
-Ticket existence is implied by the presence of fields under
-`ticgit:tickets:<uuid>:*`; there is no separate ticket index.
-
-The local query database is git-meta's `.git/git-meta.sqlite`. Exchange with
-other clones happens through `refs/meta/*` using normal Git transfer.
-
 ## Install
 
 From a checkout:
@@ -111,6 +85,7 @@ ti points 3 --ticket <id>
 ti milestone v1.0 --ticket <id>
 ti tag --ticket <id> bug ui
 ti tag --ticket <id> --remove ui
+ti edit <id>
 ti comment --ticket <id> "fixed in the latest patch"
 ```
 
@@ -119,6 +94,13 @@ Recent tickets:
 ```sh
 ti recent
 ti recent --limit 20
+```
+
+Import open GitHub issues:
+
+```sh
+ti import gh
+ti import gh --repo owner/repo
 ```
 
 Saved views are named snapshots of ticket UUIDs:
@@ -143,6 +125,33 @@ ti sync
 `ti sync` performs a pull followed by a push. If you pass `--remote <name>`, the
 named git-meta remote is used; otherwise git-meta resolves the default metadata
 remote from Git config.
+
+## What It Stores
+
+All TicGit data is written on the git-meta `project` target under the
+`ticgit:` namespace:
+
+```text
+ticgit:schema-version                    string
+ticgit:owners                            set
+ticgit:views:<name>                      set of ticket UUIDs
+ticgit:tickets:<uuid>:title              string
+ticgit:tickets:<uuid>:description        string (optional)
+ticgit:tickets:<uuid>:state              string
+ticgit:tickets:<uuid>:assigned           string
+ticgit:tickets:<uuid>:points             string
+ticgit:tickets:<uuid>:milestone          string
+ticgit:tickets:<uuid>:tags               set
+ticgit:tickets:<uuid>:comments           list
+ticgit:tickets:<uuid>:created-at         string
+ticgit:tickets:<uuid>:created-by         string
+```
+
+Ticket existence is implied by the presence of fields under
+`ticgit:tickets:<uuid>:*`; there is no separate ticket index.
+
+The local query database is git-meta's `.git/git-meta.sqlite`. Exchange with
+other clones happens through `refs/meta/*` using normal Git transfer.
 
 ## Rust API
 

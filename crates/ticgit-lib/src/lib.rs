@@ -6,6 +6,7 @@
 //!
 //! ```text
 //! ticgit:tickets:<uuid>:title          # string
+//! ticgit:tickets:<uuid>:description    # string (optional)
 //! ticgit:tickets:<uuid>:state          # string ("open" | ...)
 //! ticgit:tickets:<uuid>:assigned       # string (optional)
 //! ticgit:tickets:<uuid>:tags           # set
