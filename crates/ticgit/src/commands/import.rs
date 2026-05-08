@@ -8,7 +8,7 @@ use ticgit_lib::{NewTicketOpts, Ticket, TicketStore};
 
 use crate::commands::open_store;
 
-const GH_ISSUE_FIELDS: &str = "number,title,body,url,labels,assignees,milestone";
+const GH_ISSUE_FIELDS: &str = "number,title,body,url,author,labels,assignees,milestone";
 const GITHUB_TAG: &str = "github";
 const GITHUB_ISSUE_TAG_PREFIX: &str = "github-issue-";
 
@@ -34,6 +34,10 @@ pub struct GhArgs {
     /// Maximum number of open issues to request from GitHub.
     #[arg(long = "limit", default_value_t = 1000, value_parser = clap::value_parser!(u32).range(1..))]
     pub limit: u32,
+
+    /// Output an import summary and imported tickets as JSON.
+    #[arg(long = "json")]
+    pub json: bool,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -49,6 +53,7 @@ fn run_gh(args: GhArgs) -> Result<()> {
 
     let mut imported = 0usize;
     let mut skipped = 0usize;
+    let mut imported_tickets = Vec::new();
 
     for issue in issues {
         if seen.contains(&issue.number) {
@@ -68,8 +73,21 @@ fn run_gh(args: GhArgs) -> Result<()> {
             store.set_milestone(&ticket.id, Some(milestone))?;
         }
 
+        imported_tickets.push(store.load(&ticket.id)?);
         seen.insert(issue.number);
         imported += 1;
+    }
+
+    if args.json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "imported": imported,
+                "skipped": skipped,
+                "tickets": imported_tickets,
+            })
+        );
+        return Ok(());
     }
 
     println!("Imported {imported} GitHub issue(s).");
@@ -156,6 +174,14 @@ fn primary_assignee(issue: &GhIssue) -> Option<String> {
 fn issue_description(issue: &GhIssue) -> String {
     let mut description = format!("GitHub issue: {}", issue.url);
 
+    if let Some(author) = issue
+        .author
+        .as_ref()
+        .and_then(|author| non_empty(&author.login))
+    {
+        description.push_str(&format!("\nGitHub author: {author}"));
+    }
+
     let assignees: Vec<_> = issue
         .assignees
         .iter()
@@ -189,6 +215,8 @@ struct GhIssue {
     body: Option<String>,
     url: String,
     #[serde(default)]
+    author: Option<GhUser>,
+    #[serde(default)]
     labels: Vec<GhLabel>,
     #[serde(default)]
     assignees: Vec<GhUser>,
@@ -220,6 +248,9 @@ mod tests {
             title: "import me".to_string(),
             body: Some("body text".to_string()),
             url: "https://github.com/example/repo/issues/42".to_string(),
+            author: Some(GhUser {
+                login: "monalisa".to_string(),
+            }),
             labels: vec![GhLabel {
                 name: "bug".to_string(),
             }],
@@ -253,7 +284,7 @@ mod tests {
     fn github_issue_description_preserves_source_body_and_extra_assignees() {
         assert_eq!(
             issue_description(&issue()),
-            "GitHub issue: https://github.com/example/repo/issues/42\nGitHub assignees: octocat, hubot\n\nbody text"
+            "GitHub issue: https://github.com/example/repo/issues/42\nGitHub author: monalisa\nGitHub assignees: octocat, hubot\n\nbody text"
         );
     }
 }

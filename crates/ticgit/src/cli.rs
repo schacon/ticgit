@@ -15,7 +15,7 @@ use crate::commands;
 )]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Command,
+    pub command: Option<Command>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -84,25 +84,26 @@ pub enum Command {
 
 pub fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
-        Command::Init => commands::init::run(),
-        Command::New(args) => commands::new::run(args),
-        Command::List(args) => commands::list::run(args),
-        Command::Show(args) => commands::show::run(args),
-        Command::Checkout(args) => commands::checkout::run(args),
-        Command::Edit(args) => commands::edit::run(args),
-        Command::Import(args) => commands::import::run(args),
-        Command::Recent(args) => commands::recent::run(args),
-        Command::Tui(args) => commands::tui::run(args),
-        Command::Tag(args) => commands::tag::run(args),
-        Command::State(args) => commands::state::run(args),
-        Command::Assign(args) => commands::assign::run(args),
-        Command::Points(args) => commands::points::run(args),
-        Command::Milestone(args) => commands::milestone::run(args),
-        Command::Comment(args) => commands::comment::run(args),
-        Command::SaveView(args) => commands::view::run_save(args),
-        Command::Views(args) => commands::view::run_list(args),
-        Command::Sync(args) => commands::sync::run_sync(args),
-        Command::Pull(args) => commands::sync::run_pull(args),
-        Command::Push(args) => commands::sync::run_push(args),
+        None => commands::list::run(commands::list::Args::default()),
+        Some(Command::Init) => commands::init::run(),
+        Some(Command::New(args)) => commands::new::run(args),
+        Some(Command::List(args)) => commands::list::run(args),
+        Some(Command::Show(args)) => commands::show::run(args),
+        Some(Command::Checkout(args)) => commands::checkout::run(args),
+        Some(Command::Edit(args)) => commands::edit::run(args),
+        Some(Command::Import(args)) => commands::import::run(args),
+        Some(Command::Recent(args)) => commands::recent::run(args),
+        Some(Command::Tui(args)) => commands::tui::run(args),
+        Some(Command::Tag(args)) => commands::tag::run(args),
+        Some(Command::State(args)) => commands::state::run(args),
+        Some(Command::Assign(args)) => commands::assign::run(args),
+        Some(Command::Points(args)) => commands::points::run(args),
+        Some(Command::Milestone(args)) => commands::milestone::run(args),
+        Some(Command::Comment(args)) => commands::comment::run(args),
+        Some(Command::SaveView(args)) => commands::view::run_save(args),
+        Some(Command::Views(args)) => commands::view::run_list(args),
+        Some(Command::Sync(args)) => commands::sync::run_sync(args),
+        Some(Command::Pull(args)) => commands::sync::run_pull(args),
+        Some(Command::Push(args)) => commands::sync::run_push(args),
     }
 }

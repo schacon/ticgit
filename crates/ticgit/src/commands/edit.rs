@@ -4,11 +4,16 @@ use ticgit_lib::Ticket;
 
 use crate::commands::{open_store, resolve_ticket};
 use crate::editor;
+use crate::render;
 
 #[derive(Debug, Parser)]
 pub struct Args {
     /// Ticket id (or prefix). Defaults to the currently checked-out ticket.
     pub ticket: Option<String>,
+
+    /// Output the updated ticket as JSON.
+    #[arg(long = "json")]
+    pub json: bool,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -27,6 +32,10 @@ pub fn run(args: Args) -> Result<()> {
     store.set_description(&id, description.as_deref())?;
 
     let ticket = store.load(&id)?;
+    if args.json {
+        println!("{}", render::ticket_json(&ticket)?);
+        return Ok(());
+    }
     println!("Updated {}.", ticket.short_id());
     Ok(())
 }

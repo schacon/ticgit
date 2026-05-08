@@ -179,6 +179,19 @@ fn new_show_and_list_round_trip() {
         .success()
         .stdout(predicate::str::contains("first bug"))
         .stdout(predicate::str::contains(&id[..6]));
+
+    repo.ti()
+        .args(["show", &id, "--filter", ".title"])
+        .assert()
+        .success()
+        .stdout(predicate::eq("first bug\n"));
+
+    repo.ti()
+        .args(["show", &id, "--filter"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Available filters:"))
+        .stdout(predicate::str::contains("ti show <id> --filter '.title'"));
 }
 
 #[test]
@@ -253,6 +266,100 @@ fn mutating_commands_update_ticket() {
     assert_eq!(json["milestone"], "v1");
     assert_eq!(json["tags"].as_array().unwrap().len(), 2);
     assert_eq!(json["comments"][0]["body"], "fixed now");
+}
+
+#[test]
+fn ticket_mutations_support_json_output() {
+    let repo = TestRepo::new();
+
+    let output = repo
+        .ti()
+        .args(["new", "--title", "json ticket", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).unwrap();
+    let id = json["id"].as_str().unwrap().to_string();
+    assert_eq!(json["title"], "json ticket");
+
+    let output = repo
+        .ti()
+        .args(["tag", "-t", &id, "bug", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).unwrap();
+    assert!(json["tags"].as_array().unwrap().iter().any(|t| t == "bug"));
+
+    let output = repo
+        .ti()
+        .args(["assign", "-t", &id, "octocat", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(json["assigned"], "octocat");
+
+    let output = repo
+        .ti()
+        .args(["points", "-t", &id, "8", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(json["points"], 8);
+
+    let output = repo
+        .ti()
+        .args(["milestone", "-t", &id, "v2", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(json["milestone"], "v2");
+
+    let output = repo
+        .ti()
+        .args(["comment", "-t", &id, "hello", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(json["comments"][0]["body"], "hello");
+
+    let output = repo
+        .ti()
+        .args(["state", "hold", "-t", &id, "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(json["state"], "hold");
+
+    let output = repo
+        .ti()
+        .args(["checkout", &id, "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(json["id"], id);
 }
 
 #[test]
@@ -331,6 +438,7 @@ cat <<'JSON'
     "title": "first gh issue",
     "body": "Imported body",
     "url": "https://github.com/owner/repo/issues/7",
+    "author": {"login": "monalisa"},
     "labels": [{"name": "bug"}],
     "assignees": [{"login": "octocat"}, {"login": "hubot"}],
     "milestone": {"title": "v1"}
@@ -340,6 +448,7 @@ cat <<'JSON'
     "title": "second gh issue",
     "body": "",
     "url": "https://github.com/owner/repo/issues/8",
+    "author": {"login": "hubot"},
     "labels": [],
     "assignees": [],
     "milestone": null
@@ -381,7 +490,7 @@ JSON
     assert_eq!(first["milestone"], "v1");
     assert_eq!(
         first["description"],
-        "GitHub issue: https://github.com/owner/repo/issues/7\nGitHub assignees: octocat, hubot\n\nImported body"
+        "GitHub issue: https://github.com/owner/repo/issues/7\nGitHub author: monalisa\nGitHub assignees: octocat, hubot\n\nImported body"
     );
     let tags = first["tags"].as_array().unwrap();
     assert!(tags.iter().any(|tag| tag == "github"));

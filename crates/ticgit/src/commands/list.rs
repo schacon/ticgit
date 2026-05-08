@@ -6,9 +6,9 @@ use crate::commands::{open_store, SessionGitDir};
 use crate::render;
 use crate::session_state::State;
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Default, Parser)]
 pub struct Args {
-    /// Show only tickets in this state.
+    /// Show only tickets in this state. Defaults to open.
     #[arg(short = 's', long = "state")]
     pub state: Option<String>,
 
@@ -32,6 +32,10 @@ pub struct Args {
     #[arg(short = 'V', long = "view")]
     pub view: Option<String>,
 
+    /// Maximum number of tickets to show.
+    #[arg(short = 'n', long = "limit", default_value_t = 20)]
+    pub limit: usize,
+
     /// Output as JSON.
     #[arg(long = "json")]
     pub json: bool,
@@ -48,7 +52,7 @@ pub fn run(args: Args) -> Result<()> {
 
     let state = match args.state.as_deref() {
         Some(s) => Some(TicketState::parse(s)?),
-        None => None,
+        None => Some(TicketState::Open),
     };
     let order = match args.order.as_deref() {
         Some(spec) => Some(
@@ -64,7 +68,10 @@ pub fn run(args: Args) -> Result<()> {
         only_tagged: args.only_tagged,
         order,
     };
-    let tickets = ticgit_lib::query::apply(tickets, &filter);
+    let mut tickets = ticgit_lib::query::apply(tickets, &filter);
+    if args.limit > 0 {
+        tickets.truncate(args.limit);
+    }
 
     if args.json {
         println!("{}", render::tickets_json(&tickets)?);
