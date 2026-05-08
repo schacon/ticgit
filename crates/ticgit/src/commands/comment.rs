@@ -3,6 +3,7 @@ use clap::Parser;
 
 use crate::commands::{open_store, resolve_ticket};
 use crate::editor;
+use crate::render;
 
 #[derive(Debug, Parser)]
 pub struct Args {
@@ -16,6 +17,10 @@ pub struct Args {
     /// Force opening `$EDITOR`, ignoring positional body text.
     #[arg(short = 'e', long = "edit")]
     pub edit: bool,
+
+    /// Output the updated ticket as JSON.
+    #[arg(long = "json")]
+    pub json: bool,
 }
 
 pub fn run(args: Args) -> Result<()> {
@@ -31,6 +36,10 @@ pub fn run(args: Args) -> Result<()> {
 
     store.add_comment(&id, &body)?;
     let ticket = store.load(&id)?;
+    if args.json {
+        println!("{}", render::ticket_json(&ticket)?);
+        return Ok(());
+    }
     println!("Added comment to {}.", ticket.short_id());
     Ok(())
 }
