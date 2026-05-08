@@ -4,48 +4,52 @@ use ticgit_lib::Ticket;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
-/// Render a list of tickets as a table. `current` (if any) gets a `*`.
-pub fn tickets_table(tickets: &[Ticket], _current: Option<&uuid::Uuid>) -> String {
+/// Render a list of tickets as a compact table. `current` (if any) gets a `*`.
+pub fn tickets_table(tickets: &[Ticket], current: Option<&uuid::Uuid>) -> String {
     let width = crossterm::terminal::size()
         .map(|(columns, _)| columns as usize)
         .unwrap_or(100)
         .max(40);
-    tickets_table_with_width(tickets, width, OffsetDateTime::now_utc())
+    tickets_table_with_width(tickets, current, width)
 }
 
-fn tickets_table_with_width(tickets: &[Ticket], width: usize, now: OffsetDateTime) -> String {
+fn tickets_table_with_width(
+    tickets: &[Ticket],
+    current: Option<&uuid::Uuid>,
+    width: usize,
+) -> String {
     const ID_WIDTH: usize = 6;
-    const STATE_WIDTH: usize = 8;
-    const OPENED_WIDTH: usize = 8;
-    const COMMENTS_WIDTH: usize = 4;
-    const LAST_WIDTH: usize = 8;
-    const GAPS: usize = 10;
-    const MIN_TITLE_WIDTH: usize = 8;
+    const STATE_WIDTH: usize = 5;
+    const DATE_WIDTH: usize = 5;
+    const ASSIGNED_WIDTH: usize = 8;
+    const TAGS_WIDTH: usize = 20;
+    const GAPS_AND_MARKER: usize = 15;
+    const MIN_TITLE_WIDTH: usize = 12;
 
-    let fixed_width = ID_WIDTH + STATE_WIDTH + OPENED_WIDTH + COMMENTS_WIDTH + LAST_WIDTH + GAPS;
+    let fixed_width =
+        ID_WIDTH + STATE_WIDTH + DATE_WIDTH + ASSIGNED_WIDTH + TAGS_WIDTH + GAPS_AND_MARKER;
     let title_width = width.saturating_sub(fixed_width).max(MIN_TITLE_WIDTH);
 
     let mut out = String::new();
     out.push_str(&format!(
-        "{:<ID_WIDTH$}  {:<title_width$}  {:<STATE_WIDTH$}  {:>OPENED_WIDTH$}  {:>COMMENTS_WIDTH$}  {:>LAST_WIDTH$}\n",
-        "ID", "Title", "State", "Opened", "Com", "Last"
+        "   {:<ID_WIDTH$} {:<title_width$} {:<STATE_WIDTH$} {:<DATE_WIDTH$} {:<ASSIGNED_WIDTH$} {:<TAGS_WIDTH$}\n",
+        "TicId", "Title", "State", "Date", "Assgn", "Tags"
     ));
+    out.push_str(&"-".repeat(width));
+    out.push('\n');
 
     for t in tickets {
-        let opened = relative_time(t.created_at, now);
-        let last_comment = t
-            .comments
-            .last()
-            .map(|comment| relative_time(comment.at, now))
-            .unwrap_or_else(|| "-".to_string());
+        let marker = if Some(&t.id) == current { "*" } else { " " };
+        let assigned = t.assigned_short().unwrap_or_default();
+        let tags = t.tags.iter().cloned().collect::<Vec<_>>().join(",");
         out.push_str(&format!(
-            "{:<ID_WIDTH$}  {:<title_width$}  {:<STATE_WIDTH$}  {:>OPENED_WIDTH$}  {:>COMMENTS_WIDTH$}  {:>LAST_WIDTH$}\n",
+            "{marker}  {:<ID_WIDTH$} {:<title_width$} {:<STATE_WIDTH$} {:<DATE_WIDTH$} {:<ASSIGNED_WIDTH$} {:<TAGS_WIDTH$}\n",
             t.short_id(),
-            truncate(&t.title, title_width),
+            truncate(&flatten(&t.title), title_width),
             t.state.as_str(),
-            opened,
-            t.comments.len(),
-            last_comment,
+            short_date(t.created_at),
+            truncate(&flatten(&assigned), ASSIGNED_WIDTH),
+            truncate(&flatten(&tags), TAGS_WIDTH),
         ));
     }
 
@@ -117,24 +121,10 @@ fn truncate(value: &str, max_chars: usize) -> String {
     }
 }
 
-fn relative_time(then: OffsetDateTime, now: OffsetDateTime) -> String {
-    let duration = now - then;
-    let seconds = duration.whole_seconds().max(0);
-    if seconds < 60 {
-        return "now".to_string();
-    }
+fn flatten(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
 
-    let (amount, unit) = if seconds < 60 * 60 {
-        (seconds / 60, "m")
-    } else if seconds < 60 * 60 * 24 {
-        (seconds / (60 * 60), "h")
-    } else if seconds < 60 * 60 * 24 * 30 {
-        (seconds / (60 * 60 * 24), "d")
-    } else if seconds < 60 * 60 * 24 * 365 {
-        (seconds / (60 * 60 * 24 * 30), "mo")
-    } else {
-        (seconds / (60 * 60 * 24 * 365), "y")
-    };
-
-    format!("{amount}{unit}")
+fn short_date(when: OffsetDateTime) -> String {
+    format!("{:02}/{:02}", u8::from(when.month()), when.day())
 }
