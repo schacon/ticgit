@@ -1,16 +1,36 @@
-Define a richer recommended workflow vocabulary for agent automation while keeping custom states possible if supported by the data model.
-
-Recommended states from `AI_IDEAS.md`:
+Model:
 
 ```text
-open
-claimed
-in-progress
-blocked
-needs-review
-needs-test
-resolved
-wontfix
+status = open | closed
+
+open states = new | assigned | in-progress | blocked | review
+closed states = resolved | wontfix | duplicate | invalid
 ```
 
-Document how agents should use these states and how they relate to existing TicGit states.
+Invariants:
+
+```text
+status=open   => state is one of new, assigned, in-progress, blocked, review
+status=closed => state is one of resolved, wontfix, duplicate, invalid
+```
+
+Default new tickets should be `status=open` and `state=new`.
+
+CLI requirements:
+
+- Keep `ti state` and add `ti status` as an alias for the same behavior.
+- Accept either broad status values or specific state values with either verb.
+- `ti state closed` should default to `closed:resolved`.
+- `ti state open` should default to `open:new`.
+- `ti state closed:wontfix` should set both fields explicitly.
+- `ti state open:blocked` should set both fields explicitly.
+- Existing unique ticket prefix behavior should continue to work.
+
+TUI requirements:
+
+- Allow changing lifecycle status/state from the TUI using the same model.
+
+Machine output:
+
+- Include both `status` and `state` in JSON output and schema.
+- Preserve stable machine-mode guarantees.

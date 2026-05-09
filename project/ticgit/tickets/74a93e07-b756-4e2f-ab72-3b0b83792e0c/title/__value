@@ -1,1 +1,1 @@
-Document and support automation lifecycle states
+Split ticket lifecycle into two fields: a broad status and a specific state.
