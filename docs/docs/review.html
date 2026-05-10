@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>code review - ticgit docs</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <button class="menu-toggle" onclick="document.querySelector('.sidebar').classList.toggle('open')">MENU</button>
+    <div class="layout">
+      <nav class="sidebar">
+        <a class="sidebar-title" href="../index.html">TICGIT</a>
+        <ul>
+          <li><a href="getting-started.html">Getting Started</a></li>
+          <li><a href="creating-tickets.html">Creating &amp; Browsing</a></li>
+          <li><a href="working-on-tickets.html">Working on Tickets</a></li>
+          <li><a href="ticket-fields.html">Ticket Fields</a></li>
+          <li class="active"><a href="review.html">Code Review</a></li>
+          <li><a href="views-and-import.html">Views &amp; Import</a></li>
+          <li><a href="sync-and-setup.html">Sync &amp; Setup</a></li>
+          <li><a href="agents.html">Agent Integration</a></li>
+        </ul>
+        <div class="sidebar-footer">
+          <a href="https://github.com/schacon/ticgit">github</a>
+          <a href="https://github.com/schacon/ticgit/releases">changelog</a>
+        </div>
+      </nav>
+
+      <main class="content">
+        <header class="doc-header">
+          <div class="topline">
+            <span>TICGIT DOCS</span>
+            <span>CODE REVIEW</span>
+          </div>
+        </header>
+
+        <h1>Code Review</h1>
+        <p>Commands: <code>ti review</code>, <code>ti state review</code>, <code>ti code</code></p>
+        <p>TicGit reviews are lightweight signoffs attached to tickets. A review ties together a branch, a set of reviewers, and their verdicts &mdash; all stored as git-meta metadata that syncs with the repo.</p>
+
+        <h2>Walkthrough: three-person review</h2>
+        <p>Alice finishes work on a feature branch. She links it to her ticket, requests review from Bob and Carol, and marks it ready.</p>
+
+        <h3>1. Author sets up the review</h3>
+
+        <div class="terminal dark">
+          <div class="term-header"><span>ALICE</span></div>
+          <div class="term-body">
+            <div class="line dim"># Link the branch to the ticket</div>
+            <div class="line"><span class="prompt">$</span> ti code https://github.com/team/repo:feature-auth -t a3f</div>
+            <div class="line">&nbsp;</div>
+            <div class="line dim"># Request reviewers</div>
+            <div class="line"><span class="prompt">$</span> ti review request bob@example.com -t a3f</div>
+            <div class="line dim">Requested review from bob@example.com on a3f29c.</div>
+            <div class="line">&nbsp;</div>
+            <div class="line"><span class="prompt">$</span> ti review request carol@example.com -t a3f</div>
+            <div class="line dim">Requested review from carol@example.com on a3f29c.</div>
+            <div class="line">&nbsp;</div>
+            <div class="line dim"># Mark the ticket as ready for review</div>
+            <div class="line"><span class="prompt">$</span> ti state review -t a3f</div>
+            <div class="line">&nbsp;</div>
+            <div class="line dim"># Push the ticket metadata so reviewers can see it</div>
+            <div class="line"><span class="prompt">$</span> ti sync</div>
+          </div>
+        </div>
+
+        <h3>2. Reviewers pull and respond</h3>
+
+        <div class="terminal dark">
+          <div class="term-header"><span>BOB</span></div>
+          <div class="term-body">
+            <div class="line dim"># Pull latest ticket data</div>
+            <div class="line"><span class="prompt">$</span> ti sync</div>
+            <div class="line">&nbsp;</div>
+            <div class="line dim"># See what needs review</div>
+            <div class="line"><span class="prompt">$</span> ti list --state review</div>
+            <div class="line dim">&nbsp;&nbsp;a3f29c 2d  Add auth tokens  open  review  alice  feature</div>
+            <div class="line">&nbsp;</div>
+            <div class="line dim"># Check the ticket and its branch</div>
+            <div class="line"><span class="prompt">$</span> ti show a3f</div>
+            <div class="line dim">&nbsp;&nbsp;Code     : https://github.com/team/repo:feature-auth</div>
+            <div class="line dim">&nbsp;&nbsp;Reviewers: bob@example.com, carol@example.com</div>
+            <div class="line dim">&nbsp;&nbsp;Reviews  : (none yet)</div>
+            <div class="line">&nbsp;</div>
+            <div class="line dim"># Approve</div>
+            <div class="line"><span class="prompt">$</span> ti review approve -t a3f</div>
+            <div class="line dim">bob@example.com approved a3f29c.</div>
+            <div class="line">&nbsp;</div>
+            <div class="line"><span class="prompt">$</span> ti sync</div>
+          </div>
+        </div>
+
+        <div class="terminal dark">
+          <div class="term-header"><span>CAROL</span></div>
+          <div class="term-body">
+            <div class="line"><span class="prompt">$</span> ti sync</div>
+            <div class="line">&nbsp;</div>
+            <div class="line dim"># Request changes with a reason</div>
+            <div class="line"><span class="prompt">$</span> ti review reject -t a3f "Token expiry should be configurable, not hardcoded to 24h"</div>
+            <div class="line dim">carol@example.com requested changes on a3f29c.</div>
+            <div class="line">&nbsp;</div>
+            <div class="line"><span class="prompt">$</span> ti sync</div>
+          </div>
+        </div>
+
+        <h3>3. Author addresses feedback and re-requests</h3>
+
+        <div class="terminal dark">
+          <div class="term-header"><span>ALICE</span></div>
+          <div class="term-body">
+            <div class="line"><span class="prompt">$</span> ti sync</div>
+            <div class="line">&nbsp;</div>
+            <div class="line dim"># See review status</div>
+            <div class="line"><span class="prompt">$</span> ti show a3f</div>
+            <div class="line dim">&nbsp;&nbsp;Reviews:</div>
+            <div class="line dim">&nbsp;&nbsp;&nbsp;&nbsp;bob@example.com    approved    2026-05-10</div>
+            <div class="line dim">&nbsp;&nbsp;&nbsp;&nbsp;carol@example.com  rejected    2026-05-10</div>
+            <div class="line dim">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"Token expiry should be configurable, not hardcoded to 24h"</div>
+            <div class="line">&nbsp;</div>
+            <div class="line dim"># Fix the code, push, then re-request Carol</div>
+            <div class="line"><span class="prompt">$</span> ti review request carol@example.com -t a3f</div>
+            <div class="line"><span class="prompt">$</span> ti comment -t a3f "Made token expiry configurable via env var"</div>
+            <div class="line"><span class="prompt">$</span> ti sync</div>
+          </div>
+        </div>
+
+        <h3>4. Final approval and merge</h3>
+
+        <div class="terminal dark">
+          <div class="term-header"><span>CAROL</span></div>
+          <div class="term-body">
+            <div class="line"><span class="prompt">$</span> ti sync</div>
+            <div class="line"><span class="prompt">$</span> ti review approve -t a3f "Looks good now"</div>
+            <div class="line dim">carol@example.com approved a3f29c.</div>
+            <div class="line"><span class="prompt">$</span> ti sync</div>
+          </div>
+        </div>
+
+        <div class="terminal dark">
+          <div class="term-header"><span>ALICE</span></div>
+          <div class="term-body">
+            <div class="line"><span class="prompt">$</span> ti sync</div>
+            <div class="line">&nbsp;</div>
+            <div class="line dim"># All reviewers approved — merge the branch and close</div>
+            <div class="line"><span class="prompt">$</span> git merge feature-auth</div>
+            <div class="line"><span class="prompt">$</span> ti close a3f</div>
+            <div class="line"><span class="prompt">$</span> ti sync</div>
+          </div>
+        </div>
+
+        <h2>Command reference</h2>
+
+        <h3>Request a reviewer</h3>
+        <div class="terminal dark">
+          <div class="term-header"><span>REQUEST</span></div>
+          <div class="term-body">
+            <div class="line"><span class="prompt">$</span> ti review request alice@example.com</div>
+            <div class="line"><span class="prompt">$</span> ti review request alice@example.com bob@example.com</div>
+            <div class="line">&nbsp;</div>
+            <div class="line dim"># Remove a reviewer</div>
+            <div class="line"><span class="prompt">$</span> ti review unrequest alice@example.com</div>
+          </div>
+        </div>
+
+        <h3>Submit a verdict</h3>
+        <div class="terminal dark">
+          <div class="term-header"><span>VERDICTS</span></div>
+          <div class="term-body">
+            <div class="line"><span class="prompt">$</span> ti review approve</div>
+            <div class="line"><span class="prompt">$</span> ti review approve "LGTM"</div>
+            <div class="line">&nbsp;</div>
+            <div class="line"><span class="prompt">$</span> ti review reject "Needs error handling on line 42"</div>
+            <div class="line">&nbsp;</div>
+            <div class="line"><span class="prompt">$</span> ti review comment "Have you considered using an enum here?"</div>
+          </div>
+        </div>
+        <p>Verdicts: <code>approve</code>, <code>reject</code>, <code>comment</code>. A new verdict from the same reviewer replaces their previous one.</p>
+
+        <h3>Check review status</h3>
+        <div class="terminal dark">
+          <div class="term-header"><span>STATUS</span></div>
+          <div class="term-body">
+            <div class="line"><span class="prompt">$</span> ti review -t a3f</div>
+            <div class="line dim">&nbsp;&nbsp;a3f29c  Add auth tokens</div>
+            <div class="line dim">&nbsp;&nbsp;Branch: https://github.com/team/repo:feature-auth</div>
+            <div class="line dim">&nbsp;&nbsp;Reviewers:</div>
+            <div class="line dim">&nbsp;&nbsp;&nbsp;&nbsp;bob@example.com    approved</div>
+            <div class="line dim">&nbsp;&nbsp;&nbsp;&nbsp;carol@example.com  approved   "Looks good now"</div>
+            <div class="line dim">&nbsp;&nbsp;Status: all approved</div>
+          </div>
+        </div>
+
+        <h3>Find tickets needing review</h3>
+        <div class="terminal dark">
+          <div class="term-header"><span>FILTER</span></div>
+          <div class="term-body">
+            <div class="line"><span class="prompt">$</span> ti list --state review</div>
+            <div class="line">&nbsp;</div>
+            <div class="line dim"># Tickets where you are a requested reviewer</div>
+            <div class="line"><span class="prompt">$</span> ti list --reviewer bob@example.com</div>
+          </div>
+        </div>
+
+        <footer class="doc-footer">
+          <span>$ cargo install ticgit</span>
+          <span><a href="https://github.com/schacon/ticgit">github</a> &middot; <a href="https://github.com/schacon/ticgit/releases">changelog</a></span>
+        </footer>
+      </main>
+    </div>
+  </body>
+</html>
