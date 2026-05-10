@@ -1,0 +1,58 @@
+# ti import linear — Implementation Spec
+
+## Command
+
+    ti import linear --team <TEAM-KEY> [--limit N] [--json] [--markdown]
+
+Imports open issues from a Linear team into ticgit tickets.
+
+## Authentication
+
+Uses the Linear CLI (`linear`). User must have it installed and authenticated
+via `linear auth`. Error with a clear message if the CLI is not found.
+
+## Data Fetching
+
+Shell out to `linear issue list --team <TEAM-KEY> --status "In Progress,Todo,Backlog,Triage" --json`
+to get open issues. Use `--limit` to cap results.
+
+For each issue, fetch full details with `linear issue show <ID> --json` to get
+description, labels, assignee, project, and priority.
+
+## Field Mapping
+
+| Linear field       | ticgit field     | Notes                                      |
+|--------------------|------------------|--------------------------------------------|
+| title              | title            | Direct copy                                |
+| description        | description      | Prepend `Linear issue: <url>\n` + body     |
+| assignee.email     | assigned         | Use email if available, else name           |
+| labels[].name      | tags             | Plus `linear` and `linear-<identifier>`    |
+| project.name       | milestone        | If set                                     |
+| priority           | points           | Linear priority 0-4 → points 0-4           |
+| state.name         | state (comment)  | Note Linear state in description           |
+
+## Deduplication
+
+Tag each imported ticket with `linear-<identifier>` (e.g. `linear-ENG-123`).
+Before importing, scan existing tickets for these tags. Skip any issue whose
+identifier tag already exists.
+
+## Implementation
+
+Add a `Linear` variant to the `Source` enum in `import.rs`.
+Follow the same pattern as `run_gh`:
+1. Fetch issues via `linear` CLI (like `gh` for GitHub import)
+2. Deduplicate against existing tags
+3. Create tickets via `store.create()` + field setters
+4. Output: plain text summary, `--json`, or `--markdown`
+
+## Dependencies
+
+No new dependencies — shells out to `linear` CLI just like GitHub import
+shells out to `gh`.
+
+## Error Handling
+
+- Missing `linear` CLI: bail with install instructions
+- CLI errors: surface the error message from Linear
+- No issues found: print summary with 0 imported
