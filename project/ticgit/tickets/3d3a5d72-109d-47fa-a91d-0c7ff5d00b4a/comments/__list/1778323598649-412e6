@@ -1,0 +1,1 @@
+{"author":"schacon@gmail.com","body":"Add a top-level 'spec' field (like title and description) that holds the implementation specification for a ticket, kept separate from the description. Description is the what/why, spec is the how."}

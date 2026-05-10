@@ -1,0 +1,74 @@
+# Sub-Tickets Implementation Plan
+
+## Overview
+
+Add first-class parent/child relationships to tickets. Stored as two
+denormalized fields: `parent: Option<Uuid>` on the child, and
+`children: BTreeSet<Uuid>` on the parent. Both sides are written
+atomically so lookups in either direction are cheap (no full scan).
+
+## Data Model
+
+Add to `Ticket` struct:
+```
+pub parent: Option<Uuid>,
+pub children: BTreeSet<Uuid>,
+```
+
+Git-meta keys:
+- `ticgit:tickets:<uuid>:parent`   — stores parent UUID as string
+- `ticgit:tickets:<uuid>:children` — stores MetaValue::Set of UUID strings
+
+## Storage (ticgit-lib)
+
+### store.rs
+- **create()**: Accept optional `parent: Option<Uuid>`. If set:
+  validate parent exists, write child's `parent` key, and add child UUID
+  to parent's `children` set.
+- **build_ticket()**: Parse both `"parent"` and `"children"` fields.
+- **set_parent(child_id, parent_id)**: Set or change parent.
+  Remove child from old parent's children set, add to new parent's set.
+- **clear_parent(child_id)**: Remove parent link and remove from
+  parent's children set.
+
+### ticket.rs
+- Add `parent: Option<Uuid>` field.
+- Add `children: BTreeSet<Uuid>` field.
+- Add `parent_short()` helper (6-char prefix).
+
+### Validation
+- Parent must exist.
+- No self-reference (`parent != id`).
+- No circular chains (walk ancestors, depth limit ~20).
+
+## CLI Commands
+
+### ti new --parent <ticket_id>
+- Add `--parent` / `-p` option to `NewTicketOpts`.
+
+### ti parent <ticket_id> [parent_id | --clear]
+- New command to set or clear a ticket's parent after creation.
+
+### ti show (updated)
+- Show "Parent: <short_id> <title>" line when parent is set.
+- Show "Sub-tickets:" section listing children (short_id + title + state).
+
+### ti list (updated)
+- Add `--parent <ticket_id>` filter.
+- Add `--roots` filter (only tickets with no parent).
+
+## Schema Update (v1.json)
+
+Add to properties:
+```json
+"parent": { "type": ["string", "null"], "format": "uuid" },
+"children": { "type": "array", "items": { "type": "string", "format": "uuid" } }
+```
+
+## Implementation Order
+
+1. Data model + storage (ticket.rs, store.rs) + tests
+2. Schema update (v1.json)
+3. `ti new --parent` and `ti parent` command
+4. `ti show` parent/children display
+5. `ti list --parent` and `--roots` filters

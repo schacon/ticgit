@@ -1,0 +1,50 @@
+# ti pull — fetch and merge tickets from a fork
+
+## Command
+
+    ti pull <url-or-nick> [<nickname>]
+
+- `ti pull <url>` — fetch `refs/meta/main` from the URL, diff against local tickets, import new tickets and merge modifications.
+- `ti pull <url> <nickname>` — same as above, but first save the URL as `ticgit.remotes.<nick>.url` in `.git/config` so future pulls can use the nickname.
+- `ti pull <nickname>` — look up a previously saved URL and pull from it.
+
+## Nickname storage
+
+Stored in `.git/config` as:
+
+    [ticgit "remotes.<nick>"]
+        url = <url>
+
+## Algorithm
+
+1. Resolve `<url-or-nick>` to a URL (check `.git/config` first, then treat as URL).
+2. If a second arg `<nickname>` is provided, save `ticgit.remotes.<nick>.url = <url>` in `.git/config`.
+3. Create a temp bare repo. Fetch `refs/meta/main` from the URL into it.
+4. Open a TicketStore on the temp repo (read-only). List all tickets.
+5. List all tickets from the local store.
+6. Diff:
+   - **New tickets**: UUIDs on fork not in local — import via local store's create/write API.
+   - **Modified tickets**: same UUID, different field values — update local fields (title, description, status, state, tags, assigned, points, milestone, parent, comments, meta, spec).
+   - **Deletes**: ignored.
+7. Only process keys in the `ticgit:` namespace (ignore non-ticgit git-meta data).
+8. Print a summary: new tickets imported, tickets updated, total.
+
+## Scope
+
+- Additions and modifications only, no deletes.
+- Only the `ticgit:` namespace — foreign git-meta keys are ignored.
+- Comments are appended (deduplicated by timestamp+author+body).
+- Tags and children sets are unioned, not replaced.
+- Scalar fields (title, status, state, assigned, points, milestone, description, spec, parent) use the fork's value if it differs from local (fork wins for modifications).
+
+## Output flags
+
+- Default: human-readable summary
+- `--json`: JSON summary of imported/updated tickets
+- `--markdown`: markdown summary
+
+## Error handling
+
+- If the URL is unreachable or the fetch fails, report and exit.
+- If the temp repo has no ticgit data, report "no tickets found on remote" and exit.
+- If a nickname doesn't resolve, suggest using a URL.

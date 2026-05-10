@@ -1,0 +1,1 @@
+{"author":"schacon@gmail.com","body":"Import issues from Linear, similar to the existing GitHub import. Should map Linear issue title, description, assignee, labels, priority, and project to ticgit fields."}
