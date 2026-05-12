@@ -529,6 +529,28 @@ impl TicketStore {
         Ok(())
     }
 
+    pub fn add_writeup_tag(&self, id: &Uuid, tag: &str) -> Result<()> {
+        self.load_writeup(id)?;
+        let tag = tag.trim();
+        if tag.is_empty() {
+            return Ok(());
+        }
+        self.project_handle()
+            .set_add(&keys::writeup_field(id, "tags"), tag)?;
+        Ok(())
+    }
+
+    pub fn remove_writeup_tag(&self, id: &Uuid, tag: &str) -> Result<()> {
+        self.load_writeup(id)?;
+        let tag = tag.trim();
+        if tag.is_empty() {
+            return Ok(());
+        }
+        self.project_handle()
+            .set_remove(&keys::writeup_field(id, "tags"), tag)?;
+        Ok(())
+    }
+
     pub fn add_comment(&self, id: &Uuid, body: &str) -> Result<()> {
         let p = self.project_handle();
         self.push_comment(&p, id, body)?;
@@ -1409,11 +1431,14 @@ mod tests {
         store
             .set_writeup_status(&writeup.id, WriteupStatus::Closed)
             .unwrap();
+        store.add_writeup_tag(&writeup.id, "review").unwrap();
+        store.remove_writeup_tag(&writeup.id, "design").unwrap();
 
         let loaded = store.load_writeup(&writeup.id).unwrap();
         assert_eq!(loaded.title, "Design note");
         assert_eq!(loaded.status, WriteupStatus::Closed);
-        assert!(loaded.tags.contains("design"));
+        assert!(!loaded.tags.contains("design"));
+        assert!(loaded.tags.contains("review"));
         assert!(loaded.authors.contains(store.email()));
         assert_eq!(loaded.versions.len(), 2);
         assert_eq!(loaded.versions[0].author, store.email());

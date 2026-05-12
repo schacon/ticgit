@@ -19,6 +19,7 @@
 //! ticgit:tickets:<uuid>:created-by     # string (email)
 //! ticgit:writeups:<uuid>:title         # string
 //! ticgit:writeups:<uuid>:status        # string ("open" | "closed")
+//! ticgit:writeups:<uuid>:tags          # set
 //! ticgit:writeups:<uuid>:authors       # set of emails
 //! ticgit:writeups:<uuid>:versions      # list of markdown documents
 //! ticgit:writeups:<uuid>:tickets       # set of linked ticket UUIDs

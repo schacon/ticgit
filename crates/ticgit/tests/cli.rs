@@ -997,10 +997,21 @@ fn writeup_workflow_creates_versions_links_and_promotes() {
         .stdout(predicate::str::contains("Appended version 2"));
 
     repo.ti()
+        .args(["tag", "--writeup", writeup_prefix, "review"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("review"));
+    repo.ti()
+        .args(["tag", "--writeup", writeup_prefix, "--remove", "design"])
+        .assert()
+        .success();
+
+    repo.ti()
         .args(["writeup", "show", writeup_prefix])
         .assert()
         .success()
         .stdout(predicate::str::contains("# Writeup: Rethink sync"))
+        .stdout(predicate::str::contains("- Tags: review"))
         .stdout(predicate::str::contains("Second notes"))
         .stdout(predicate::str::contains("Initial notes").not());
 
@@ -1038,6 +1049,7 @@ fn writeup_workflow_creates_versions_links_and_promotes() {
         .assert()
         .success()
         .stdout(predicate::str::contains("# Ticket: Rethink sync"))
+        .stdout(predicate::str::contains("review"))
         .stdout(predicate::str::contains("Second notes"));
 
     repo.ti()

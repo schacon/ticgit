@@ -182,6 +182,12 @@ enum TuiTab {
     Writeups,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TagTarget {
+    Ticket(uuid::Uuid),
+    Writeup(uuid::Uuid),
+}
+
 struct SyncState {
     receiver: Receiver<Result<SyncResult>>,
     selected_id: Option<uuid::Uuid>,
@@ -562,7 +568,7 @@ impl App {
                 ],
             ),
             Mode::ManageTags => (
-                "ticket tags",
+                "tags",
                 None,
                 vec![
                     MenuHint {
@@ -779,6 +785,10 @@ impl App {
                         MenuHint {
                             key: "e",
                             desc: "edit",
+                        },
+                        MenuHint {
+                            key: "t",
+                            desc: "tags",
                         },
                         MenuHint {
                             key: "n",
@@ -1514,12 +1524,11 @@ impl App {
 
     fn draw_manage_tags_modal(&mut self, frame: &mut Frame<'_>) {
         let area = centered_rect(64, 20, frame.area());
-        let Some(ticket) = self.selected_ticket() else {
+        let Some((_, target_label, target_tags)) = self.selected_tag_target() else {
             return;
         };
-        let ticket_tags = ticket.tags.clone();
-        let title = format!("Manage Tags: {}", ticket.short_id());
-        let tags = self.manageable_tags(&ticket_tags);
+        let title = format!("Manage Tags: {target_label}");
+        let tags = self.manageable_tags(&target_tags);
         let selected = self
             .manage_tag_state
             .selected()
@@ -1533,13 +1542,13 @@ impl App {
 
         let items: Vec<ListItem<'_>> = if tags.is_empty() {
             vec![ListItem::new(Line::from(Span::styled(
-                "No known tags. Press n to create one on this ticket.",
+                "No known tags. Press n to create one here.",
                 Style::default().fg(Color::DarkGray),
             )))]
         } else {
             tags.iter()
                 .map(|tag| {
-                    let checked = if ticket_tags.contains(tag) {
+                    let checked = if target_tags.contains(tag) {
                         "[x]"
                     } else {
                         "[ ]"
@@ -1901,7 +1910,7 @@ impl App {
                 lines.push(help_columns(("Enter", "apply"), Some(("Esc", "finish"))));
             }
             Mode::ManageTags => {
-                help_section(&mut lines, "Ticket Tags");
+                help_section(&mut lines, "Tags");
                 lines.push(help_columns(
                     ("j/k", "move tag"),
                     Some(("Space", "add / remove")),
@@ -2003,8 +2012,9 @@ impl App {
                 lines.push(help_columns(("p", "promote"), Some(("l", "link issue"))));
                 lines.push(help_columns(
                     ("u", "unlink issue"),
-                    Some(("1-9", "jump issue")),
+                    Some(("t", "manage tags")),
                 ));
+                lines.push(help_columns(("1-9", "jump issue"), None));
                 lines.push(help_columns(
                     ("+/-", "resize detail"),
                     Some(("r", "refresh")),
@@ -2199,9 +2209,7 @@ impl App {
                 false
             }
             KeyCode::Char('t') => {
-                if self.active_tab == TuiTab::Issues {
-                    self.begin_manage_tags();
-                }
+                self.begin_manage_tags();
                 false
             }
             KeyCode::Char('v') => {
@@ -2425,7 +2433,7 @@ impl App {
             }
             KeyCode::Down | KeyCode::Char('j') => self.next_manage_tag(),
             KeyCode::Up | KeyCode::Char('k') => self.previous_manage_tag(),
-            KeyCode::Char(' ') => self.toggle_selected_ticket_tag()?,
+            KeyCode::Char(' ') => self.toggle_selected_target_tag()?,
             KeyCode::Char('n') => self.begin_input(InputKind::AddTags),
             KeyCode::Char('r') => self.begin_input(InputKind::RemoveTags),
             _ => {}
@@ -2622,11 +2630,11 @@ impl App {
     }
 
     fn begin_manage_tags(&mut self) {
-        let Some(ticket) = self.selected_ticket() else {
-            self.status = Some("Select a ticket first.".to_string());
+        let Some((_, _, target_tags)) = self.selected_tag_target() else {
+            self.status = Some("Select an issue or writeup first.".to_string());
             return;
         };
-        let tags = self.manageable_tags(&ticket.tags);
+        let tags = self.manageable_tags(&target_tags);
         if tags.is_empty() {
             self.manage_tag_state.select(None);
         } else {
@@ -3171,6 +3179,13 @@ impl App {
 
     fn begin_input(&mut self, kind: InputKind) {
         let ticket = match kind {
+            InputKind::AddTags | InputKind::RemoveTags => {
+                if self.selected_tag_target().is_none() {
+                    self.status = Some("Select an issue or writeup first.".to_string());
+                    return;
+                }
+                None
+            }
             InputKind::LinkIssue | InputKind::UnlinkIssue => {
                 if self.selected_writeup().is_none() {
                     self.status = Some("Select a writeup first.".to_string());
@@ -3227,6 +3242,9 @@ impl App {
         if matches!(kind, InputKind::LinkIssue | InputKind::UnlinkIssue) {
             return self.submit_writeup_link_input(kind);
         }
+        if matches!(kind, InputKind::AddTags | InputKind::RemoveTags) {
+            return self.submit_tag_input(kind);
+        }
 
         let Some(ticket) = self.selected_ticket() else {
             self.status = Some("Select a ticket first.".to_string());
@@ -3277,29 +3295,10 @@ impl App {
                     None => "Cleared points.".to_string(),
                 });
             }
-            InputKind::AddTags => {
-                let tags = split_tags(&self.input);
-                if tags.is_empty() {
-                    self.status = Some("Enter at least one tag.".to_string());
-                    return Ok(false);
-                }
-                for tag in tags {
-                    self.store.add_tag(&id, &tag)?;
-                }
-                self.status = Some("Added tag(s).".to_string());
-            }
-            InputKind::RemoveTags => {
-                let tags = split_tags(&self.input);
-                if tags.is_empty() {
-                    self.status = Some("Enter at least one tag.".to_string());
-                    return Ok(false);
-                }
-                for tag in tags {
-                    self.store.remove_tag(&id, &tag)?;
-                }
-                self.status = Some("Removed tag(s).".to_string());
-            }
-            InputKind::LinkIssue | InputKind::UnlinkIssue => unreachable!("handled above"),
+            InputKind::AddTags
+            | InputKind::RemoveTags
+            | InputKind::LinkIssue
+            | InputKind::UnlinkIssue => unreachable!("handled above"),
         }
 
         self.reload(preferred_after_reload)?;
@@ -3310,6 +3309,47 @@ impl App {
                 }
             }
         }
+        Ok(true)
+    }
+
+    fn submit_tag_input(&mut self, kind: InputKind) -> Result<bool> {
+        let Some((target, _, _)) = self.selected_tag_target() else {
+            self.status = Some("Select an issue or writeup first.".to_string());
+            return Ok(false);
+        };
+        let tags = split_tags(&self.input);
+        if tags.is_empty() {
+            self.status = Some("Enter at least one tag.".to_string());
+            return Ok(false);
+        }
+
+        match target {
+            TagTarget::Ticket(id) => {
+                for tag in tags {
+                    match kind {
+                        InputKind::AddTags => self.store.add_tag(&id, &tag)?,
+                        InputKind::RemoveTags => self.store.remove_tag(&id, &tag)?,
+                        _ => unreachable!("only tag inputs are submitted here"),
+                    }
+                }
+                self.reload(Some(id))?;
+            }
+            TagTarget::Writeup(id) => {
+                for tag in tags {
+                    match kind {
+                        InputKind::AddTags => self.store.add_writeup_tag(&id, &tag)?,
+                        InputKind::RemoveTags => self.store.remove_writeup_tag(&id, &tag)?,
+                        _ => unreachable!("only tag inputs are submitted here"),
+                    }
+                }
+                self.reload_writeups(Some(id))?;
+            }
+        }
+        self.status = Some(match kind {
+            InputKind::AddTags => "Added tag(s).".to_string(),
+            InputKind::RemoveTags => "Removed tag(s).".to_string(),
+            _ => unreachable!("only tag inputs are submitted here"),
+        });
         Ok(true)
     }
 
@@ -3547,20 +3587,23 @@ impl App {
         Ok(())
     }
 
-    fn manageable_tags(&self, ticket_tags: &BTreeSet<String>) -> Vec<String> {
-        let mut tags = ticket_tags.clone();
+    fn manageable_tags(&self, current_tags: &BTreeSet<String>) -> Vec<String> {
+        let mut tags = current_tags.clone();
         for ticket in &self.tickets {
             tags.extend(ticket.tags.iter().cloned());
+        }
+        for writeup in &self.writeups {
+            tags.extend(writeup.tags.iter().cloned());
         }
         tags.into_iter().collect()
     }
 
     fn next_manage_tag(&mut self) {
-        let Some(ticket) = self.selected_ticket() else {
+        let Some((_, _, current_tags)) = self.selected_tag_target() else {
             self.manage_tag_state.select(None);
             return;
         };
-        let tags = self.manageable_tags(&ticket.tags);
+        let tags = self.manageable_tags(&current_tags);
         if tags.is_empty() {
             self.manage_tag_state.select(None);
             return;
@@ -3571,11 +3614,11 @@ impl App {
     }
 
     fn previous_manage_tag(&mut self) {
-        let Some(ticket) = self.selected_ticket() else {
+        let Some((_, _, current_tags)) = self.selected_tag_target() else {
             self.manage_tag_state.select(None);
             return;
         };
-        let tags = self.manageable_tags(&ticket.tags);
+        let tags = self.manageable_tags(&current_tags);
         if tags.is_empty() {
             self.manage_tag_state.select(None);
             return;
@@ -3587,14 +3630,12 @@ impl App {
         self.manage_tag_state.select(Some(previous));
     }
 
-    fn toggle_selected_ticket_tag(&mut self) -> Result<()> {
-        let Some(ticket) = self.selected_ticket() else {
-            self.status = Some("Select a ticket first.".to_string());
+    fn toggle_selected_target_tag(&mut self) -> Result<()> {
+        let Some((target, _, current_tags)) = self.selected_tag_target() else {
+            self.status = Some("Select an issue or writeup first.".to_string());
             return Ok(());
         };
-        let id = ticket.id;
-        let ticket_tags = ticket.tags.clone();
-        let tags = self.manageable_tags(&ticket_tags);
+        let tags = self.manageable_tags(&current_tags);
         let Some(tag) = self
             .manage_tag_state
             .selected()
@@ -3605,16 +3646,37 @@ impl App {
             return Ok(());
         };
 
-        if ticket_tags.contains(&tag) {
-            self.store.remove_tag(&id, &tag)?;
-            self.status = Some(format!("Removed tag `{tag}`."));
-        } else {
-            self.store.add_tag(&id, &tag)?;
-            self.status = Some(format!("Added tag `{tag}`."));
-        }
-        self.reload(Some(id))?;
-        if !self.visible.iter().any(|idx| self.tickets[*idx].id == id) {
-            self.mode = Mode::Normal;
+        match target {
+            TagTarget::Ticket(id) => {
+                if current_tags.contains(&tag) {
+                    self.store.remove_tag(&id, &tag)?;
+                    self.status = Some(format!("Removed tag `{tag}`."));
+                } else {
+                    self.store.add_tag(&id, &tag)?;
+                    self.status = Some(format!("Added tag `{tag}`."));
+                }
+                self.reload(Some(id))?;
+                if !self.visible.iter().any(|idx| self.tickets[*idx].id == id) {
+                    self.mode = Mode::Normal;
+                }
+            }
+            TagTarget::Writeup(id) => {
+                if current_tags.contains(&tag) {
+                    self.store.remove_writeup_tag(&id, &tag)?;
+                    self.status = Some(format!("Removed tag `{tag}`."));
+                } else {
+                    self.store.add_writeup_tag(&id, &tag)?;
+                    self.status = Some(format!("Added tag `{tag}`."));
+                }
+                self.reload_writeups(Some(id))?;
+                if !self
+                    .visible_writeups
+                    .iter()
+                    .any(|idx| self.writeups[*idx].id == id)
+                {
+                    self.mode = Mode::Normal;
+                }
+            }
         }
         Ok(())
     }
@@ -4031,6 +4093,27 @@ impl App {
 
     fn selected_ticket(&self) -> Option<&Ticket> {
         self.selected_ticket_index().map(|idx| &self.tickets[idx])
+    }
+
+    fn selected_tag_target(&self) -> Option<(TagTarget, String, BTreeSet<String>)> {
+        match self.active_tab {
+            TuiTab::Issues => {
+                let ticket = self.selected_ticket()?;
+                Some((
+                    TagTarget::Ticket(ticket.id),
+                    ticket.short_id(),
+                    ticket.tags.clone(),
+                ))
+            }
+            TuiTab::Writeups => {
+                let writeup = self.selected_writeup()?;
+                Some((
+                    TagTarget::Writeup(writeup.id),
+                    format!("writeup {}", writeup.short_id()),
+                    writeup.tags.clone(),
+                ))
+            }
+        }
     }
 
     fn selected_ticket_index(&self) -> Option<usize> {
