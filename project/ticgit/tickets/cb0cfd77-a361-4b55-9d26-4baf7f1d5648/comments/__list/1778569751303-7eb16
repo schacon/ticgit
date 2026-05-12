@@ -1,0 +1,1 @@
+{"author":"schacon@gmail.com","body":"Implemented board view toggle with state columns, h/l column navigation, j/k ticket navigation, Enter details, and existing edit/state actions against the selected board ticket. Verified with cargo test -p ticgit."}
