@@ -22,7 +22,7 @@ use ratatui::widgets::{
 use ratatui::{Frame, Terminal};
 use ticgit_lib::{
     query, Comment, Filter, NewTicketOpts, SortKey, SortOrder, Ticket, TicketLifecycle,
-    TicketState, TicketStatus, TicketStore,
+    TicketState, TicketStatus, TicketStore, Writeup,
 };
 use time::OffsetDateTime;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -132,10 +132,14 @@ struct App {
     store: TicketStore,
     tickets: Vec<Ticket>,
     visible: Vec<usize>,
+    writeups: Vec<Writeup>,
+    visible_writeups: Vec<usize>,
     list_state: ListState,
+    writeup_state: ListState,
     board_column: usize,
     board_rows: [usize; BOARD_STATES.len()],
     view: ViewMode,
+    active_tab: TuiTab,
     active_view_name: Option<String>,
     saved_view_state: ListState,
     pending_delete_view: Option<String>,
@@ -155,6 +159,7 @@ struct App {
     input: String,
     new_ticket: NewTicketDraft,
     detail: Option<usize>,
+    writeup_detail: Option<usize>,
     detail_width_percent: u16,
     comments_mode: bool,
     comment_state: ListState,
@@ -168,6 +173,12 @@ struct App {
 enum ViewMode {
     List,
     Board,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TuiTab {
+    Issues,
+    Writeups,
 }
 
 struct SyncState {
@@ -236,6 +247,8 @@ enum InputKind {
     Points,
     AddTags,
     RemoveTags,
+    LinkIssue,
+    UnlinkIssue,
 }
 
 #[derive(Debug, Default)]
@@ -269,10 +282,14 @@ impl App {
             store,
             tickets: Vec::new(),
             visible: Vec::new(),
+            writeups: Vec::new(),
+            visible_writeups: Vec::new(),
             list_state: ListState::default(),
+            writeup_state: ListState::default(),
             board_column: 0,
             board_rows: [0; BOARD_STATES.len()],
             view: ViewMode::List,
+            active_tab: TuiTab::Issues,
             active_view_name: None,
             saved_view_state: ListState::default(),
             pending_delete_view: None,
@@ -292,6 +309,7 @@ impl App {
             input: String::new(),
             new_ticket: NewTicketDraft::default(),
             detail: None,
+            writeup_detail: None,
             detail_width_percent,
             comments_mode: false,
             comment_state: ListState::default(),
@@ -300,7 +318,7 @@ impl App {
             status: None,
             sync: None,
         };
-        app.reload(None)?;
+        app.reload_all(None, None)?;
         Ok(app)
     }
 
@@ -342,6 +360,44 @@ impl App {
         Ok(())
     }
 
+    fn reload_all(
+        &mut self,
+        preferred_ticket_id: Option<uuid::Uuid>,
+        preferred_writeup_id: Option<uuid::Uuid>,
+    ) -> Result<()> {
+        self.reload(preferred_ticket_id)?;
+        self.reload_writeups(preferred_writeup_id)?;
+        Ok(())
+    }
+
+    fn reload_writeups(&mut self, preferred_id: Option<uuid::Uuid>) -> Result<()> {
+        self.writeups = self.store.list_writeups()?;
+        self.writeups.sort_by(|a, b| {
+            writeup_recent_at(b)
+                .cmp(&writeup_recent_at(a))
+                .then_with(|| a.title.cmp(&b.title))
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        self.apply_writeup_filter();
+
+        if let Some(id) = preferred_id {
+            if let Some(visible_pos) = self
+                .visible_writeups
+                .iter()
+                .position(|idx| self.writeups[*idx].id == id)
+            {
+                self.writeup_state.select(Some(visible_pos));
+                if self.writeup_detail.is_some() {
+                    self.writeup_detail = self.visible_writeups.get(visible_pos).copied();
+                }
+            } else if self.writeup_detail.is_some() {
+                self.writeup_detail = None;
+            }
+        }
+
+        Ok(())
+    }
+
     fn run(&mut self, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
         loop {
             self.poll_sync()?;
@@ -379,7 +435,7 @@ impl App {
             .constraints(constraints)
             .split(area);
 
-        if self.detail.is_some() {
+        if self.active_tab == TuiTab::Issues && self.detail.is_some() {
             let list_width = 100_u16.saturating_sub(self.detail_width_percent);
             let panes = Layout::default()
                 .direction(Direction::Horizontal)
@@ -395,10 +451,24 @@ impl App {
                 self.draw_list(frame, panes[0]);
                 self.draw_detail(frame, panes[1]);
             }
+        } else if self.active_tab == TuiTab::Writeups && self.writeup_detail.is_some() {
+            let list_width = 100_u16.saturating_sub(self.detail_width_percent);
+            let panes = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(list_width),
+                    Constraint::Percentage(self.detail_width_percent),
+                ])
+                .split(outer[0]);
+            self.draw_writeup_list(frame, panes[0]);
+            self.draw_writeup_detail(frame, panes[1]);
         } else {
-            match self.view {
-                ViewMode::List => self.draw_list(frame, outer[0]),
-                ViewMode::Board => self.draw_board(frame, outer[0]),
+            match self.active_tab {
+                TuiTab::Issues => match self.view {
+                    ViewMode::List => self.draw_list(frame, outer[0]),
+                    ViewMode::Board => self.draw_board(frame, outer[0]),
+                },
+                TuiTab::Writeups => self.draw_writeup_list(frame, outer[0]),
             }
         }
         if self.sync.is_some() {
@@ -690,8 +760,51 @@ impl App {
                             desc: "quit",
                         },
                     ]
+                } else if self.active_tab == TuiTab::Writeups {
+                    vec![
+                        MenuHint {
+                            key: "Tab",
+                            desc: "issues",
+                        },
+                        MenuHint {
+                            key: "j/k",
+                            desc: "writeups",
+                        },
+                        MenuHint {
+                            key: "Enter",
+                            desc: "details",
+                        },
+                        MenuHint {
+                            key: "e",
+                            desc: "edit",
+                        },
+                        MenuHint {
+                            key: "p",
+                            desc: "promote",
+                        },
+                        MenuHint {
+                            key: "l/u",
+                            desc: "link",
+                        },
+                        MenuHint {
+                            key: "1-9",
+                            desc: "jump",
+                        },
+                        MenuHint {
+                            key: "r",
+                            desc: "refresh",
+                        },
+                        MenuHint {
+                            key: "q",
+                            desc: "quit",
+                        },
+                    ]
                 } else if self.view == ViewMode::Board && self.detail.is_none() {
                     vec![
+                        MenuHint {
+                            key: "Tab",
+                            desc: "writeups",
+                        },
                         MenuHint {
                             key: "j/k",
                             desc: "tickets",
@@ -740,6 +853,10 @@ impl App {
                 } else if self.detail.is_some() {
                     vec![
                         MenuHint {
+                            key: "Tab",
+                            desc: "writeups",
+                        },
+                        MenuHint {
                             key: "j/k",
                             desc: "tickets",
                         },
@@ -780,6 +897,10 @@ impl App {
                             desc: "order",
                         },
                         MenuHint {
+                            key: "1-9",
+                            desc: "writeup",
+                        },
+                        MenuHint {
                             key: "Esc",
                             desc: "close",
                         },
@@ -794,6 +915,10 @@ impl App {
                     ]
                 } else {
                     vec![
+                        MenuHint {
+                            key: "Tab",
+                            desc: "writeups",
+                        },
                         MenuHint {
                             key: "j/k",
                             desc: "tickets",
@@ -875,6 +1000,7 @@ impl App {
         } else {
             format!("{scope} matching {filter} ({count})")
         };
+        let title = tabs_title(self.active_tab, &title);
 
         let block = Block::default().borders(Borders::ALL).title(title);
         let row_width = usize::from(block.inner(area).width)
@@ -906,6 +1032,48 @@ impl App {
             .highlight_symbol(HIGHLIGHT_SYMBOL)
             .highlight_spacing(HighlightSpacing::Always);
         frame.render_stateful_widget(list, area, &mut self.list_state);
+    }
+
+    fn draw_writeup_list(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        let count = self.visible_writeups.len();
+        let title = if self.filter.is_empty() {
+            format!("Writeups by recency ({count})")
+        } else {
+            format!("Writeups matching \"{}\" ({count})", self.filter)
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(tabs_title(self.active_tab, &title));
+        let row_width = usize::from(block.inner(area).width)
+            .saturating_sub(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL));
+        let compact = self.writeup_detail.is_some();
+
+        let items: Vec<ListItem<'_>> = if self.visible_writeups.is_empty() {
+            vec![ListItem::new(Line::from(Span::styled(
+                "No writeups yet.",
+                Style::default().fg(Color::DarkGray),
+            )))]
+        } else {
+            self.visible_writeups
+                .iter()
+                .map(|&idx| {
+                    let writeup = &self.writeups[idx];
+                    ListItem::new(writeup_list_line(writeup, row_width, compact))
+                })
+                .collect()
+        };
+
+        let list = List::new(items)
+            .block(block)
+            .highlight_style(
+                Style::default()
+                    .bg(Color::Rgb(0, 0, 95))
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol(HIGHLIGHT_SYMBOL)
+            .highlight_spacing(HighlightSpacing::Always);
+        frame.render_stateful_widget(list, area, &mut self.writeup_state);
     }
 
     fn draw_board(&mut self, frame: &mut Frame<'_>, area: Rect) {
@@ -988,6 +1156,30 @@ impl App {
             ),
             status_state_line(ticket),
         ];
+        let linked_writeups = self.linked_writeups(ticket.id);
+        if !linked_writeups.is_empty() {
+            detail_lines.push(Line::raw(""));
+            detail_lines.push(Line::from(Span::styled(
+                "Writeups",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            for (idx, writeup) in linked_writeups.iter().take(9).enumerate() {
+                detail_lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("{}", idx + 1),
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(" "),
+                    Span::styled(writeup.short_id(), Style::default().fg(Color::DarkGray)),
+                    Span::raw(" "),
+                    Span::raw(writeup.title.clone()),
+                ]));
+            }
+        }
         if !ticket.tags.is_empty() {
             detail_lines.push(tags_field_line(&ticket.tags));
         }
@@ -1032,6 +1224,107 @@ impl App {
         let detail_block = Block::default().borders(Borders::ALL).title("Details");
         let detail = Paragraph::new(detail_lines)
             .block(detail_block)
+            .wrap(Wrap { trim: false });
+        frame.render_widget(detail, area);
+    }
+
+    fn draw_writeup_detail(&self, frame: &mut Frame<'_>, area: Rect) {
+        let Some(idx) = self.writeup_detail else {
+            return;
+        };
+        let writeup = &self.writeups[idx];
+        let mut lines = vec![
+            Line::from(Span::styled(
+                writeup.id.to_string(),
+                Style::default().fg(Color::DarkGray),
+            )),
+            Line::from(Span::styled(
+                writeup.title.clone(),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            field_line(
+                "Updated",
+                &format!(
+                    "{} ago",
+                    relative_date(writeup_recent_at(writeup), OffsetDateTime::now_utc())
+                ),
+            ),
+            field_line("Status", writeup.status.as_str()),
+            field_line("Versions", &writeup.versions.len().to_string()),
+        ];
+        if !writeup.tags.is_empty() {
+            lines.push(tags_field_line(&writeup.tags));
+        }
+        if !writeup.authors.is_empty() {
+            lines.push(field_line(
+                "Authors",
+                &writeup
+                    .authors
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ));
+        }
+        if !writeup.tickets.is_empty() {
+            lines.push(Line::raw(""));
+            lines.push(Line::from(Span::styled(
+                "Issues",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            for (idx, ticket_id) in writeup.tickets.iter().take(9).enumerate() {
+                let ticket = self.tickets.iter().find(|ticket| ticket.id == *ticket_id);
+                let title = ticket
+                    .map(|ticket| ticket.title.clone())
+                    .unwrap_or_else(|| "missing ticket".to_string());
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("{}", idx + 1),
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(" "),
+                    Span::styled(
+                        ticket_id.to_string()[..6].to_string(),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                    Span::raw(" "),
+                    Span::raw(title),
+                ]));
+            }
+        }
+        lines.push(Line::raw(""));
+        if let Some(version) = writeup.versions.last() {
+            lines.push(Line::from(Span::styled(
+                "Latest Version",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            lines.push(Line::from(vec![
+                Span::styled(
+                    relative_date(version.at, OffsetDateTime::now_utc()),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::raw("  "),
+                Span::styled(&version.author, Style::default().fg(Color::Cyan)),
+            ]));
+            lines.push(Line::raw(""));
+            lines.extend(version.body.lines().map(|line| Line::raw(line.to_string())));
+        } else {
+            lines.push(Line::from(Span::styled(
+                "No versions yet. Press e to add one.",
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+
+        let detail = Paragraph::new(lines)
+            .block(Block::default().borders(Borders::ALL).title("Writeup"))
             .wrap(Wrap { trim: false });
         frame.render_widget(detail, area);
     }
@@ -1120,6 +1413,8 @@ impl App {
             InputKind::Points => "Enter points estimate. Empty clears it.".to_string(),
             InputKind::AddTags => "Enter comma- or space-separated tags to add.".to_string(),
             InputKind::RemoveTags => "Enter comma- or space-separated tags to remove.".to_string(),
+            InputKind::LinkIssue => "Enter an issue id to link to this writeup.".to_string(),
+            InputKind::UnlinkIssue => "Enter an issue id to unlink from this writeup.".to_string(),
         };
         let lines = vec![
             Line::from(Span::styled(help, Style::default().fg(Color::DarkGray))),
@@ -1667,6 +1962,26 @@ impl App {
                 ));
                 lines.push(help_columns(("r", "refresh"), None));
             }
+            Mode::Normal if self.active_tab == TuiTab::Writeups => {
+                help_section(&mut lines, "Writeups");
+                lines.push(help_columns(
+                    ("Tab", "issues tab"),
+                    Some(("j/k", "move writeups")),
+                ));
+                lines.push(help_columns(
+                    ("Enter", "details"),
+                    Some(("e", "edit latest")),
+                ));
+                lines.push(help_columns(("p", "promote"), Some(("l", "link issue"))));
+                lines.push(help_columns(
+                    ("u", "unlink issue"),
+                    Some(("1-9", "jump issue")),
+                ));
+                lines.push(help_columns(
+                    ("+/-", "resize detail"),
+                    Some(("r", "refresh")),
+                ));
+            }
             Mode::Normal if self.view == ViewMode::Board && self.detail.is_none() => {
                 help_section(&mut lines, "Navigation");
                 lines.push(help_columns(
@@ -1692,8 +2007,12 @@ impl App {
             Mode::Normal => {
                 help_section(&mut lines, "Navigation");
                 lines.push(help_columns(
-                    ("j/k", "move tickets"),
-                    Some(("Up/Down", "move tickets")),
+                    ("Tab", "writeups tab"),
+                    Some(("j/k", "move tickets")),
+                ));
+                lines.push(help_columns(
+                    ("Up/Down", "move tickets"),
+                    Some(("1-9", "jump writeup")),
                 ));
                 lines.push(help_columns(
                     ("Enter", "details"),
@@ -1815,9 +2134,16 @@ impl App {
         self.status = None;
         let quit = match key.code {
             KeyCode::Char('q') => true,
+            KeyCode::Tab | KeyCode::BackTab => {
+                self.toggle_tab();
+                false
+            }
             KeyCode::Esc => {
                 if self.comments_mode {
                     self.comments_mode = false;
+                    false
+                } else if self.active_tab == TuiTab::Writeups && self.writeup_detail.is_some() {
+                    self.writeup_detail = None;
                     false
                 } else if self.detail.is_some() {
                     self.detail = None;
@@ -1839,23 +2165,33 @@ impl App {
                 false
             }
             KeyCode::Char('g') => {
-                self.begin_tag_filter();
+                if self.active_tab == TuiTab::Issues {
+                    self.begin_tag_filter();
+                }
                 false
             }
             KeyCode::Char('t') => {
-                self.begin_manage_tags();
+                if self.active_tab == TuiTab::Issues {
+                    self.begin_manage_tags();
+                }
                 false
             }
             KeyCode::Char('v') => {
-                self.begin_saved_views();
+                if self.active_tab == TuiTab::Issues {
+                    self.begin_saved_views();
+                }
                 false
             }
             KeyCode::Char('V') => {
-                self.begin_save_view();
+                if self.active_tab == TuiTab::Issues {
+                    self.begin_save_view();
+                }
                 false
             }
             KeyCode::Char('b') => {
-                self.handle_board_key();
+                if self.active_tab == TuiTab::Issues {
+                    self.handle_board_key();
+                }
                 false
             }
             KeyCode::Char('r') => {
@@ -1863,13 +2199,18 @@ impl App {
                 false
             }
             KeyCode::Char('n') => {
-                self.begin_create();
+                if self.active_tab == TuiTab::Issues {
+                    self.begin_create();
+                }
                 false
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 if self.comments_mode {
                     self.next_comment();
-                } else if self.view == ViewMode::Board && self.detail.is_none() {
+                } else if self.active_tab == TuiTab::Issues
+                    && self.view == ViewMode::Board
+                    && self.detail.is_none()
+                {
                     self.next_board_ticket();
                 } else {
                     self.next();
@@ -1879,7 +2220,10 @@ impl App {
             KeyCode::Up | KeyCode::Char('k') => {
                 if self.comments_mode {
                     self.previous_comment();
-                } else if self.view == ViewMode::Board && self.detail.is_none() {
+                } else if self.active_tab == TuiTab::Issues
+                    && self.view == ViewMode::Board
+                    && self.detail.is_none()
+                {
                     self.previous_board_ticket();
                 } else {
                     self.previous();
@@ -1887,13 +2231,21 @@ impl App {
                 false
             }
             KeyCode::Right | KeyCode::Char('l') => {
-                if self.view == ViewMode::Board && self.detail.is_none() {
+                if self.active_tab == TuiTab::Writeups && self.writeup_detail.is_some() {
+                    self.begin_input(InputKind::LinkIssue);
+                } else if self.active_tab == TuiTab::Issues
+                    && self.view == ViewMode::Board
+                    && self.detail.is_none()
+                {
                     self.next_board_column();
                 }
                 false
             }
             KeyCode::Left | KeyCode::Char('h') => {
-                if self.view == ViewMode::Board && self.detail.is_none() {
+                if self.active_tab == TuiTab::Issues
+                    && self.view == ViewMode::Board
+                    && self.detail.is_none()
+                {
                     self.previous_board_column();
                 }
                 false
@@ -1903,35 +2255,55 @@ impl App {
                 false
             }
             KeyCode::Char('e') => {
-                self.edit_ticket_in_editor(terminal)?;
+                if self.active_tab == TuiTab::Writeups {
+                    self.edit_writeup_in_editor(terminal)?;
+                } else {
+                    self.edit_ticket_in_editor(terminal)?;
+                }
                 false
             }
             KeyCode::Char('i') => {
-                self.edit_spec_in_editor(terminal)?;
+                if self.active_tab == TuiTab::Issues {
+                    self.edit_spec_in_editor(terminal)?;
+                }
                 false
             }
             KeyCode::Char('c') => {
-                self.begin_input(InputKind::Comment);
+                if self.active_tab == TuiTab::Issues {
+                    self.begin_input(InputKind::Comment);
+                }
                 false
             }
             KeyCode::Char('C') => {
-                self.claim_selected()?;
+                if self.active_tab == TuiTab::Issues {
+                    self.claim_selected()?;
+                }
                 false
             }
             KeyCode::Char('m') => {
-                self.enter_comments_mode();
+                if self.active_tab == TuiTab::Issues {
+                    self.enter_comments_mode();
+                }
                 false
             }
             KeyCode::Char('p') => {
-                self.begin_input(InputKind::Priority);
+                if self.active_tab == TuiTab::Writeups {
+                    self.promote_selected_writeup()?;
+                } else {
+                    self.begin_input(InputKind::Priority);
+                }
                 false
             }
             KeyCode::Char('o') => {
-                self.begin_order();
+                if self.active_tab == TuiTab::Issues {
+                    self.begin_order();
+                }
                 false
             }
             KeyCode::Char('O') => {
-                self.begin_input(InputKind::Points);
+                if self.active_tab == TuiTab::Issues {
+                    self.begin_input(InputKind::Points);
+                }
                 false
             }
             KeyCode::Char('+') | KeyCode::Char('=') => {
@@ -1942,8 +2314,14 @@ impl App {
                 self.resize_detail(-(DETAIL_WIDTH_PERCENT_STEP as i16));
                 false
             }
+            KeyCode::Char('u') => {
+                if self.active_tab == TuiTab::Writeups && self.writeup_detail.is_some() {
+                    self.begin_input(InputKind::UnlinkIssue);
+                }
+                false
+            }
             KeyCode::Char('s') => {
-                if self.selected_ticket().is_some() {
+                if self.active_tab == TuiTab::Issues && self.selected_ticket().is_some() {
                     self.mode = Mode::State;
                 } else {
                     self.status = Some("Select a ticket first.".to_string());
@@ -1952,6 +2330,10 @@ impl App {
             }
             KeyCode::Char('S') => {
                 self.start_sync();
+                false
+            }
+            KeyCode::Char(c) if ('1'..='9').contains(&c) => {
+                self.jump_linked_item(usize::from(c as u8 - b'1'));
                 false
             }
             _ => false,
@@ -2402,7 +2784,9 @@ impl App {
             None => None,
         };
         self.detail = None;
+        self.writeup_detail = None;
         self.comments_mode = false;
+        self.active_tab = TuiTab::Issues;
         self.view = ViewMode::List;
         self.reload(None)?;
         self.status = Some(format!("Loaded view `{name}`."));
@@ -2421,6 +2805,7 @@ impl App {
         self.tag_filter.clear();
         self.tag_filter_match_all = true;
         self.detail = None;
+        self.writeup_detail = None;
         self.comments_mode = false;
         self.reload(None)?;
         self.status = Some("Cleared to default view.".to_string());
@@ -2507,6 +2892,114 @@ impl App {
         Ok(())
     }
 
+    fn edit_writeup_in_editor(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) -> Result<()> {
+        let Some(writeup) = self.selected_writeup() else {
+            self.status = Some("Select a writeup first.".to_string());
+            return Ok(());
+        };
+        let id = writeup.id;
+        let initial = writeup.latest_body().unwrap_or("").to_string();
+
+        suspend_terminal(terminal)?;
+        let edited = editor::capture_with_initial(
+            "Edit the writeup body. Saving appends a new version.",
+            &initial,
+        );
+        resume_terminal(terminal)?;
+
+        match edited? {
+            Some(edited) if !edited.trim().is_empty() => {
+                self.store.append_writeup_version(&id, edited.trim())?;
+                self.status = Some("Appended writeup version.".to_string());
+            }
+            _ => {
+                self.status = Some("Cancelled.".to_string());
+            }
+        }
+
+        self.reload_writeups(Some(id))?;
+        Ok(())
+    }
+
+    fn promote_selected_writeup(&mut self) -> Result<()> {
+        let Some(writeup) = self.selected_writeup() else {
+            self.status = Some("Select a writeup first.".to_string());
+            return Ok(());
+        };
+        let writeup_id = writeup.id;
+        let ticket = self.store.promote_writeup(&writeup_id)?;
+        self.reload_all(Some(ticket.id), Some(writeup_id))?;
+        self.status = Some(format!("Promoted to issue {}.", ticket.short_id()));
+        Ok(())
+    }
+
+    fn linked_writeups(&self, ticket_id: uuid::Uuid) -> Vec<&Writeup> {
+        self.writeups
+            .iter()
+            .filter(|writeup| writeup.tickets.contains(&ticket_id))
+            .collect()
+    }
+
+    fn jump_linked_item(&mut self, index: usize) {
+        match self.active_tab {
+            TuiTab::Issues => {
+                let Some(ticket) = self.selected_ticket() else {
+                    return;
+                };
+                let ticket_id = ticket.id;
+                let Some(writeup_id) = self
+                    .linked_writeups(ticket_id)
+                    .get(index)
+                    .map(|writeup| writeup.id)
+                else {
+                    self.status = Some("No linked writeup at that number.".to_string());
+                    return;
+                };
+                self.jump_to_writeup(writeup_id);
+            }
+            TuiTab::Writeups => {
+                let Some(writeup) = self.selected_writeup() else {
+                    return;
+                };
+                let Some(ticket_id) = writeup.tickets.iter().nth(index).copied() else {
+                    self.status = Some("No linked issue at that number.".to_string());
+                    return;
+                };
+                self.jump_to_ticket(ticket_id);
+            }
+        }
+    }
+
+    fn jump_to_writeup(&mut self, id: uuid::Uuid) {
+        let Some(idx) = self.writeups.iter().position(|writeup| writeup.id == id) else {
+            self.status = Some("Linked writeup is not loaded.".to_string());
+            return;
+        };
+        self.active_tab = TuiTab::Writeups;
+        self.view = ViewMode::List;
+        self.comments_mode = false;
+        self.writeup_detail = Some(idx);
+        if let Some(visible_pos) = self
+            .visible_writeups
+            .iter()
+            .position(|visible| *visible == idx)
+        {
+            self.writeup_state.select(Some(visible_pos));
+        }
+    }
+
+    fn jump_to_ticket(&mut self, id: uuid::Uuid) {
+        self.active_tab = TuiTab::Issues;
+        self.view = ViewMode::List;
+        self.open_ticket_by_id(id);
+        if self.detail.is_none() {
+            self.status = Some("Linked issue is hidden by current filters.".to_string());
+        }
+    }
+
     fn start_sync(&mut self) {
         if self.sync.is_some() {
             self.status = Some("Sync already running.".to_string());
@@ -2550,7 +3043,10 @@ impl App {
         self.sync = None;
         match result {
             Ok(result) => {
-                self.reload(selected_id)?;
+                self.reload_all(
+                    selected_id,
+                    self.selected_writeup().map(|writeup| writeup.id),
+                )?;
                 self.status = Some(result.summary);
             }
             Err(err) => {
@@ -2561,18 +3057,34 @@ impl App {
     }
 
     fn begin_input(&mut self, kind: InputKind) {
-        let Some(ticket) = self.selected_ticket() else {
-            self.status = Some("Select a ticket first.".to_string());
-            return;
+        let ticket = match kind {
+            InputKind::LinkIssue | InputKind::UnlinkIssue => {
+                if self.selected_writeup().is_none() {
+                    self.status = Some("Select a writeup first.".to_string());
+                    return;
+                }
+                None
+            }
+            _ => {
+                let Some(ticket) = self.selected_ticket() else {
+                    self.status = Some("Select a ticket first.".to_string());
+                    return;
+                };
+                Some(ticket)
+            }
         };
 
         self.input = match kind {
             InputKind::Priority => String::new(),
             InputKind::Points => ticket
-                .points
+                .and_then(|ticket| ticket.points)
                 .map(|value| value.to_string())
                 .unwrap_or_default(),
-            InputKind::Comment | InputKind::AddTags | InputKind::RemoveTags => String::new(),
+            InputKind::Comment
+            | InputKind::AddTags
+            | InputKind::RemoveTags
+            | InputKind::LinkIssue
+            | InputKind::UnlinkIssue => String::new(),
         };
         self.mode = Mode::Input(kind);
     }
@@ -2596,14 +3108,18 @@ impl App {
     }
 
     fn submit_input(&mut self) -> Result<bool> {
+        let Mode::Input(kind) = self.mode else {
+            return Ok(false);
+        };
+        if matches!(kind, InputKind::LinkIssue | InputKind::UnlinkIssue) {
+            return self.submit_writeup_link_input(kind);
+        }
+
         let Some(ticket) = self.selected_ticket() else {
             self.status = Some("Select a ticket first.".to_string());
             return Ok(false);
         };
         let id = ticket.id;
-        let Mode::Input(kind) = self.mode else {
-            return Ok(false);
-        };
         let preferred_after_reload = if kind == InputKind::Priority {
             self.adjacent_ticket_for_priority_triage(id)
         } else {
@@ -2670,6 +3186,7 @@ impl App {
                 }
                 self.status = Some("Removed tag(s).".to_string());
             }
+            InputKind::LinkIssue | InputKind::UnlinkIssue => unreachable!("handled above"),
         }
 
         self.reload(preferred_after_reload)?;
@@ -2680,6 +3197,33 @@ impl App {
                 }
             }
         }
+        Ok(true)
+    }
+
+    fn submit_writeup_link_input(&mut self, kind: InputKind) -> Result<bool> {
+        let Some(writeup) = self.selected_writeup() else {
+            self.status = Some("Select a writeup first.".to_string());
+            return Ok(false);
+        };
+        let writeup_id = writeup.id;
+        let ticket_ref = self.input.trim();
+        if ticket_ref.is_empty() {
+            self.status = Some("Enter an issue id.".to_string());
+            return Ok(false);
+        }
+        let ticket_id = self.store.resolve_id(ticket_ref)?;
+        match kind {
+            InputKind::LinkIssue => {
+                self.store.link_writeup_ticket(&writeup_id, &ticket_id)?;
+                self.status = Some(format!("Linked issue {}.", &ticket_id.to_string()[..6]));
+            }
+            InputKind::UnlinkIssue => {
+                self.store.unlink_writeup_ticket(&writeup_id, &ticket_id)?;
+                self.status = Some(format!("Unlinked issue {}.", &ticket_id.to_string()[..6]));
+            }
+            _ => unreachable!("only writeup link input is handled here"),
+        }
+        self.reload_all(None, Some(writeup_id))?;
         Ok(true)
     }
 
@@ -2991,9 +3535,44 @@ impl App {
                 .min(self.visible.len() - 1);
             self.list_state.select(Some(selected));
         }
+        self.apply_writeup_filter();
+    }
+
+    fn apply_writeup_filter(&mut self) {
+        let needle = self.filter.to_ascii_lowercase();
+        self.visible_writeups = self
+            .writeups
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, writeup)| {
+                if needle.is_empty() || writeup_matches(writeup, &needle) {
+                    Some(idx)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        self.writeup_detail = self
+            .writeup_detail
+            .filter(|idx| self.visible_writeups.contains(idx));
+        if self.visible_writeups.is_empty() {
+            self.writeup_state.select(None);
+        } else {
+            let selected = self
+                .writeup_state
+                .selected()
+                .unwrap_or(0)
+                .min(self.visible_writeups.len() - 1);
+            self.writeup_state.select(Some(selected));
+        }
     }
 
     fn next(&mut self) {
+        if self.active_tab == TuiTab::Writeups {
+            self.next_writeup();
+            return;
+        }
         if self.visible.is_empty() {
             return;
         }
@@ -3004,6 +3583,10 @@ impl App {
     }
 
     fn previous(&mut self) {
+        if self.active_tab == TuiTab::Writeups {
+            self.previous_writeup();
+            return;
+        }
         if self.visible.is_empty() {
             return;
         }
@@ -3015,9 +3598,31 @@ impl App {
         self.sync_open_detail();
     }
 
+    fn next_writeup(&mut self) {
+        if self.visible_writeups.is_empty() {
+            return;
+        }
+        let selected = self.writeup_state.selected().unwrap_or(0);
+        let next = (selected + 1) % self.visible_writeups.len();
+        self.writeup_state.select(Some(next));
+        self.sync_open_writeup_detail();
+    }
+
+    fn previous_writeup(&mut self) {
+        if self.visible_writeups.is_empty() {
+            return;
+        }
+        let selected = self.writeup_state.selected().unwrap_or(0);
+        let previous = selected
+            .checked_sub(1)
+            .unwrap_or_else(|| self.visible_writeups.len().saturating_sub(1));
+        self.writeup_state.select(Some(previous));
+        self.sync_open_writeup_detail();
+    }
+
     fn resize_detail(&mut self, delta: i16) {
-        if self.detail.is_none() {
-            self.status = Some("Open ticket details first.".to_string());
+        if self.detail.is_none() && self.writeup_detail.is_none() {
+            self.status = Some("Open details first.".to_string());
             return;
         }
         let next = if delta.is_negative() {
@@ -3048,8 +3653,9 @@ impl App {
 
     fn refresh_data(&mut self) -> Result<()> {
         let selected_id = self.selected_ticket().map(|ticket| ticket.id);
+        let selected_writeup_id = self.selected_writeup().map(|writeup| writeup.id);
         let was_board = self.view == ViewMode::Board && self.detail.is_none();
-        self.reload(selected_id)?;
+        self.reload_all(selected_id, selected_writeup_id)?;
         if was_board {
             if let Some(id) = selected_id {
                 self.select_board_ticket_by_id(id);
@@ -3057,6 +3663,17 @@ impl App {
         }
         self.status = Some("Refreshed.".to_string());
         Ok(())
+    }
+
+    fn toggle_tab(&mut self) {
+        self.active_tab = match self.active_tab {
+            TuiTab::Issues => {
+                self.comments_mode = false;
+                self.view = ViewMode::List;
+                TuiTab::Writeups
+            }
+            TuiTab::Writeups => TuiTab::Issues,
+        };
     }
 
     fn toggle_view(&mut self) {
@@ -3122,6 +3739,10 @@ impl App {
     }
 
     fn open_selected(&mut self) {
+        if self.active_tab == TuiTab::Writeups {
+            self.open_selected_writeup();
+            return;
+        }
         if let Some(idx) = self.selected_ticket_index() {
             self.detail = Some(idx);
             if let Some(visible_pos) = self.visible.iter().position(|visible| *visible == idx) {
@@ -3129,6 +3750,19 @@ impl App {
             }
             self.comments_mode = false;
             self.sync_comment_selection();
+        }
+    }
+
+    fn open_selected_writeup(&mut self) {
+        if let Some(idx) = self.selected_writeup_index() {
+            self.writeup_detail = Some(idx);
+            if let Some(visible_pos) = self
+                .visible_writeups
+                .iter()
+                .position(|visible| *visible == idx)
+            {
+                self.writeup_state.select(Some(visible_pos));
+            }
         }
     }
 
@@ -3148,6 +3782,12 @@ impl App {
     fn sync_open_detail(&mut self) {
         if self.detail.is_some() {
             self.open_selected();
+        }
+    }
+
+    fn sync_open_writeup_detail(&mut self) {
+        if self.writeup_detail.is_some() {
+            self.open_selected_writeup();
         }
     }
 
@@ -3275,6 +3915,9 @@ impl App {
     }
 
     fn selected_ticket_index(&self) -> Option<usize> {
+        if self.active_tab != TuiTab::Issues {
+            return None;
+        }
         if self.view == ViewMode::Board && self.detail.is_none() {
             let tickets = self.board_column_tickets(self.board_column);
             return tickets
@@ -3284,6 +3927,20 @@ impl App {
         self.list_state
             .selected()
             .and_then(|selected| self.visible.get(selected))
+            .copied()
+    }
+
+    fn selected_writeup(&self) -> Option<&Writeup> {
+        self.selected_writeup_index().map(|idx| &self.writeups[idx])
+    }
+
+    fn selected_writeup_index(&self) -> Option<usize> {
+        if self.active_tab != TuiTab::Writeups {
+            return None;
+        }
+        self.writeup_state
+            .selected()
+            .and_then(|selected| self.visible_writeups.get(selected))
             .copied()
     }
 }
@@ -3373,6 +4030,8 @@ impl InputKind {
             InputKind::Points => "points",
             InputKind::AddTags => "add tags",
             InputKind::RemoveTags => "remove tags",
+            InputKind::LinkIssue => "link issue",
+            InputKind::UnlinkIssue => "unlink issue",
         }
     }
 
@@ -3382,7 +4041,9 @@ impl InputKind {
             InputKind::Priority
             | InputKind::Points
             | InputKind::AddTags
-            | InputKind::RemoveTags => 9,
+            | InputKind::RemoveTags
+            | InputKind::LinkIssue
+            | InputKind::UnlinkIssue => 9,
         }
     }
 }
@@ -3537,6 +4198,20 @@ fn first_non_empty_line(value: &str) -> Option<&str> {
     value.lines().map(str::trim).find(|line| !line.is_empty())
 }
 
+fn tabs_title(active: TuiTab, title: &str) -> String {
+    let issues = if active == TuiTab::Issues {
+        "[issues]"
+    } else {
+        " issues "
+    };
+    let writeups = if active == TuiTab::Writeups {
+        "[writeups]"
+    } else {
+        " writeups "
+    };
+    format!("{issues} {writeups}  {title}")
+}
+
 fn ticket_list_line(
     ticket: &Ticket,
     width: usize,
@@ -3567,6 +4242,57 @@ fn ticket_list_line(
         ticket.assigned.as_deref() == Some(current_user),
         width,
     )
+}
+
+fn writeup_list_line(writeup: &Writeup, width: usize, compact: bool) -> Line<'static> {
+    let short_id = writeup
+        .short_id()
+        .chars()
+        .take(LIST_ID_WIDTH)
+        .collect::<String>();
+    let title = flatten_display(&writeup.title);
+    let mut meta = vec![
+        (
+            fit_display(
+                &relative_date(writeup_recent_at(writeup), OffsetDateTime::now_utc()),
+                LIST_AGE_WIDTH,
+            ),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM),
+        ),
+        (
+            fit_display(&format!("v{}", writeup.versions.len()), LIST_STATE_WIDTH),
+            Style::default().fg(Color::LightBlue),
+        ),
+    ];
+    if !writeup.tickets.is_empty() {
+        meta.push((
+            fit_display(&format!("i{}", writeup.tickets.len()), LIST_PRIORITY_WIDTH),
+            Style::default().fg(Color::Magenta),
+        ));
+    }
+
+    if compact {
+        return ticket_list_line_from_parts(Some(&short_id), &title, &meta, None, false, width);
+    }
+
+    ticket_list_line_from_parts(
+        Some(&short_id),
+        &title,
+        &meta,
+        Some(&writeup.tags),
+        false,
+        width,
+    )
+}
+
+fn writeup_recent_at(writeup: &Writeup) -> OffsetDateTime {
+    writeup
+        .versions
+        .last()
+        .map(|version| version.at)
+        .unwrap_or(writeup.created_at)
 }
 
 fn board_ticket_line(ticket: &Ticket, width: usize) -> Line<'static> {
@@ -3862,6 +4588,18 @@ fn ticket_matches(ticket: &Ticket, needle: &str) -> bool {
             .unwrap_or("")
             .to_ascii_lowercase()
             .contains(needle)
+}
+
+fn writeup_matches(writeup: &Writeup, needle: &str) -> bool {
+    writeup.title.to_ascii_lowercase().contains(needle)
+        || writeup
+            .latest_body()
+            .map(|body| body.to_ascii_lowercase().contains(needle))
+            .unwrap_or(false)
+        || writeup
+            .tags
+            .iter()
+            .any(|tag| tag.to_ascii_lowercase().contains(needle))
 }
 
 fn ticket_edit_body(ticket: &Ticket) -> String {
