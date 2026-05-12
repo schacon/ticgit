@@ -1,0 +1,1 @@
+Create an inbox-style view focused on new tickets that lack priority, points, tags, assignment, or milestone. The view should guide users through fast triage with single-key edits and move tickets out of the inbox once enough metadata is set.

@@ -1,0 +1,1 @@
+Build a dashboard that summarizes open ticket counts, age buckets, blocked work, review queue, WIP by assignee, and cycle-time hints where history is available. This should help maintainers identify stale or overloaded areas quickly.

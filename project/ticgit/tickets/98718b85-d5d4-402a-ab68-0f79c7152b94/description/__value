@@ -1,0 +1,1 @@
+Improve filtering with a query builder that helps users compose searches across title, description, comments, tags, assignee, state, and priority. Matches should be highlighted in the list and detail panes so users can see why each ticket matched.

@@ -1,0 +1,1 @@
+Add mouse support for selecting tickets, switching panes, scrolling details, and activating board columns. Mouse interactions should remain optional and never replace the keyboard-first workflow.

@@ -1,0 +1,1 @@
+Show parent tickets and sub-issues in an indented outline that can be expanded and collapsed. This should make larger work items easier to break down and navigate from the TUI. Include quick actions for creating a sub-issue under the selected parent.

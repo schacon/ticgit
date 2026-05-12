@@ -1,0 +1,1 @@
+Introduce a keyboard-first board view that groups open tickets by state: new, assigned, in-progress, blocked, and review. Users should be able to move across columns, open details, and change state without leaving the TUI. Inspired by terminal kanban tools that make triage and progress visible at a glance.

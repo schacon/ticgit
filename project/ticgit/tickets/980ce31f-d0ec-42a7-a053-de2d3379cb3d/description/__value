@@ -1,0 +1,1 @@
+Provide a dense table view for power users who want to scan many tickets at once. Columns should be configurable for fields like priority, points, assignee, milestone, tags, created date, and state. Start with a sensible default and leave room for saved presets later.

@@ -1,0 +1,1 @@
+Support a configuration file for TUI colors and keybindings. Users should be able to choose built-in themes, override individual colors, and remap common actions while keeping defaults documented in the command palette or help screen.

@@ -1,0 +1,1 @@
+Implement a command palette that lists available TUI actions with fuzzy search. It should make less-common operations discoverable, including changing state, assigning, editing metadata, opening views, and syncing. This reduces pressure to memorize every hotkey.

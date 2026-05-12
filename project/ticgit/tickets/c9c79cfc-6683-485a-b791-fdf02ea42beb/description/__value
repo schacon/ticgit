@@ -1,0 +1,1 @@
+Render Markdown descriptions and specs more readably in the detail pane, including headings, lists, code blocks, and links where terminal capabilities allow. Preserve independent scroll state for details and comments so long tickets remain usable.

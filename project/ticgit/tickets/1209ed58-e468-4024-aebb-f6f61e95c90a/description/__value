@@ -1,0 +1,1 @@
+Expose existing saved views in the TUI so users can switch filters without dropping back to the shell. A small picker should list saved views, show their filter summary, and apply the selected view immediately. This connects the CLI saved-view workflow to interactive browsing.

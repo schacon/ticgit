@@ -1,0 +1,1 @@
+Add a timeline view that shows recently created, changed, commented, closed, and reopened tickets. It should be useful for standups and repository handoffs, with quick navigation from each activity item back to the ticket details.

@@ -1,0 +1,1 @@
+Create a roadmap-style TUI view that groups tickets by milestone and shows relative age, priority, and status. The view should help users understand what is planned for each release and what has gone stale. Include keyboard navigation between milestones and ticket details.

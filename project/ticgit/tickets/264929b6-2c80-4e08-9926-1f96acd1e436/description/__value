@@ -1,0 +1,1 @@
+Create a TUI view for sync health that shows local metadata changes, remote status, and conflicts when they occur. The view should make Git-native ticket collaboration more understandable and provide guided resolution actions.

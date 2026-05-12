@@ -1,0 +1,1 @@
+Allow users to mark multiple tickets in list-style views and apply bulk actions such as tag, untag, assign, milestone, state change, or close. The UI should show selected count clearly and require confirmation for destructive or broad changes.

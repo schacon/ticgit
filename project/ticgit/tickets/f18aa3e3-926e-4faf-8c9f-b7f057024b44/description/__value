@@ -1,0 +1,1 @@
+Build a TUI view that visualizes dependencies and blockers as an expandable tree or graph-like outline. Users should be able to jump between blocker and blocked tickets, add or remove dependencies, and quickly see why a ticket is not eligible for next-work selection.

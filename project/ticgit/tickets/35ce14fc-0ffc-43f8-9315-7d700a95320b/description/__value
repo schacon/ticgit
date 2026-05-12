@@ -1,0 +1,1 @@
+Introduce optional due-date metadata and a calendar-style TUI view that groups tickets by upcoming date and milestone. Color-code overdue, due soon, and unscheduled work while keeping due dates as regular queryable metadata.

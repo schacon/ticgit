@@ -1,0 +1,1 @@
+Enhance comment workflows in the TUI with a dedicated comment browser, jump-to-comment navigation, and an editor-backed composer for longer updates. The detail pane should preserve readable comment history without crowding core ticket metadata.
