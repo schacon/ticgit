@@ -2941,18 +2941,22 @@ impl App {
             return Ok(());
         };
         let id = writeup.id;
-        let initial = writeup.latest_body().unwrap_or("").to_string();
+        let initial = writeup_edit_body(writeup);
 
         suspend_terminal(terminal)?;
         let edited = editor::capture_with_initial(
-            "Edit the writeup body. Saving appends a new version.",
+            "Edit the title on the first line. Remaining non-comment lines become the writeup body.",
             &initial,
         );
         resume_terminal(terminal)?;
 
         match edited? {
-            Some(edited) if !edited.trim().is_empty() => {
-                self.store.append_writeup_version(&id, edited.trim())?;
+            Some(edited) => {
+                let (title, body) = editor::parse_ticket_edit(&edited)?;
+                self.store.set_writeup_title(&id, &title)?;
+                if let Some(body) = body {
+                    self.store.append_writeup_version(&id, &body)?;
+                }
                 self.status = Some("Appended writeup version.".to_string());
             }
             _ => {
@@ -4737,6 +4741,15 @@ fn ticket_edit_body(ticket: &Ticket) -> String {
     if let Some(description) = &ticket.description {
         body.push_str("\n\n");
         body.push_str(description);
+    }
+    body
+}
+
+fn writeup_edit_body(writeup: &Writeup) -> String {
+    let mut body = writeup.title.clone();
+    if let Some(latest_body) = writeup.latest_body() {
+        body.push_str("\n\n");
+        body.push_str(latest_body);
     }
     body
 }

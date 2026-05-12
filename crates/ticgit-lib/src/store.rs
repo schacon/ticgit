@@ -675,6 +675,19 @@ impl TicketStore {
         Ok(())
     }
 
+    pub fn set_writeup_title(&self, id: &Uuid, title: &str) -> Result<()> {
+        self.load_writeup(id)?;
+        let title = title.trim();
+        if title.is_empty() {
+            return Err(Error::InvalidValue(
+                "writeup title cannot be empty".to_string(),
+            ));
+        }
+        self.project_handle()
+            .set(&keys::writeup_field(id, "title"), title)?;
+        Ok(())
+    }
+
     fn push_writeup_version(
         &self,
         handle: &git_meta_lib::SessionTargetHandle<'_>,
