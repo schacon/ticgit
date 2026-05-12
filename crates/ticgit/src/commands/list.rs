@@ -43,7 +43,7 @@ pub struct Args {
     #[arg(long = "search")]
     pub search: Option<String>,
 
-    /// Sort order. e.g. `state`, `title.desc`, `created`, `assigned`.
+    /// Sort order. e.g. `priority`, `state`, `title.desc`, `created`, `assigned`.
     #[arg(short = 'o', long = "order")]
     pub order: Option<String>,
 

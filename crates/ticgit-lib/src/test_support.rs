@@ -28,7 +28,7 @@ pub fn test_store() -> (TicketStore, TempDir) {
     run_git(path, &["commit", "--allow-empty", "-m", "init", "--quiet"]);
 
     let repo = gix::open(path).expect("gix open");
-    let session = Session::open(repo).expect("session open");
+    let session = Session::open(repo.path()).expect("session open");
     let store = TicketStore::from_session(session).expect("ticket store");
     (store, td)
 }

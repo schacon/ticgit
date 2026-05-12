@@ -52,7 +52,7 @@ impl TicketStore {
     /// Open a store for an already-loaded `gix::Repository` (used in tests
     /// and by host applications that own the repo handle).
     pub fn open(repo: gix::Repository) -> Result<Self> {
-        let session = Session::open(repo)?;
+        let session = Session::open(repo.path())?;
         Self::ensure_schema(&session)?;
         Ok(Self { session })
     }

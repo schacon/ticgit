@@ -42,6 +42,7 @@ pub enum SearchScope {
 /// `desc` flag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortKey {
+    Priority,
     Title,
     State,
     Assigned,
@@ -57,6 +58,7 @@ pub struct SortOrder {
 impl SortKey {
     pub fn parse(s: &str) -> Option<Self> {
         match s {
+            "priority" | "prio" => Some(SortKey::Priority),
             "title" => Some(SortKey::Title),
             "state" => Some(SortKey::State),
             "assigned" => Some(SortKey::Assigned),
@@ -263,6 +265,10 @@ fn status_rank(s: TicketStatus) -> u8 {
 
 fn compare(a: &Ticket, b: &Ticket, key: SortKey, desc: bool) -> Ordering {
     let ord = match key {
+        SortKey::Priority => priority_rank(a.priority)
+            .cmp(&priority_rank(b.priority))
+            .then_with(|| b.created_at.cmp(&a.created_at))
+            .then_with(|| a.id.cmp(&b.id)),
         SortKey::Title => a.title.cmp(&b.title),
         SortKey::State => status_rank(a.status)
             .cmp(&status_rank(b.status))

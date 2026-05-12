@@ -21,8 +21,8 @@ use ratatui::widgets::{
 };
 use ratatui::{Frame, Terminal};
 use ticgit_lib::{
-    query, Comment, Filter, NewTicketOpts, SortOrder, Ticket, TicketLifecycle, TicketState,
-    TicketStatus, TicketStore,
+    query, Comment, Filter, NewTicketOpts, SortKey, SortOrder, Ticket, TicketLifecycle,
+    TicketState, TicketStatus, TicketStore,
 };
 use time::OffsetDateTime;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -32,6 +32,7 @@ const LIST_ID_WIDTH: usize = 3;
 const LIST_STATE_WIDTH: usize = 2;
 const LIST_AGE_WIDTH: usize = 3;
 const LIST_PRIORITY_WIDTH: usize = 3;
+const COMPACT_LIST_MIN_TITLE_WIDTH: usize = 24;
 const ANSI_TAG_COLORS: [Color; 12] = [
     Color::Blue,
     Color::Cyan,
@@ -53,6 +54,10 @@ const BOARD_STATES: [TicketState; 5] = [
     TicketState::Blocked,
     TicketState::Review,
 ];
+const DETAIL_WIDTH_PERCENT_DEFAULT: u16 = 58;
+const DETAIL_WIDTH_PERCENT_MIN: u16 = 35;
+const DETAIL_WIDTH_PERCENT_MAX: u16 = 80;
+const DETAIL_WIDTH_PERCENT_STEP: u16 = 5;
 
 use crate::commands::{open_store, SessionGitDir};
 use crate::editor;
@@ -144,10 +149,13 @@ struct App {
     tag_filter: BTreeSet<String>,
     tag_filter_match_all: bool,
     tag_picker_state: ListState,
+    manage_tag_state: ListState,
+    order_state: ListState,
     mode: Mode,
     input: String,
     new_ticket: NewTicketDraft,
     detail: Option<usize>,
+    detail_width_percent: u16,
     comments_mode: bool,
     comment_state: ListState,
     show_help: bool,
@@ -190,6 +198,8 @@ enum Mode {
     Normal,
     Filter,
     Tags,
+    ManageTags,
+    Order,
     SavedViews,
     ConfirmDeleteView,
     SaveView,
@@ -197,6 +207,27 @@ enum Mode {
     State,
     Create,
 }
+
+#[derive(Debug, Clone, Copy)]
+struct MenuHint {
+    key: &'static str,
+    desc: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OrderChoice {
+    Priority,
+    DateAsc,
+    DateDesc,
+    State,
+}
+
+const ORDER_CHOICES: [OrderChoice; 4] = [
+    OrderChoice::Priority,
+    OrderChoice::DateAsc,
+    OrderChoice::DateDesc,
+    OrderChoice::State,
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InputKind {
@@ -227,6 +258,13 @@ enum NewTicketField {
 
 impl App {
     fn new(store: TicketStore) -> Result<Self> {
+        let project_settings = State::load()
+            .unwrap_or_default()
+            .project_settings_for(&store.session().repo_git_dir());
+        let detail_width_percent = project_settings
+            .detail_width_percent
+            .unwrap_or(DETAIL_WIDTH_PERCENT_DEFAULT)
+            .clamp(DETAIL_WIDTH_PERCENT_MIN, DETAIL_WIDTH_PERCENT_MAX);
         let mut app = Self {
             store,
             tickets: Vec::new(),
@@ -248,10 +286,13 @@ impl App {
             tag_filter: BTreeSet::new(),
             tag_filter_match_all: true,
             tag_picker_state: ListState::default(),
+            manage_tag_state: ListState::default(),
+            order_state: ListState::default(),
             mode: Mode::Normal,
             input: String::new(),
             new_ticket: NewTicketDraft::default(),
             detail: None,
+            detail_width_percent,
             comments_mode: false,
             comment_state: ListState::default(),
             show_help: false,
@@ -339,9 +380,13 @@ impl App {
             .split(area);
 
         if self.detail.is_some() {
+            let list_width = 100_u16.saturating_sub(self.detail_width_percent);
             let panes = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+                .constraints([
+                    Constraint::Percentage(list_width),
+                    Constraint::Percentage(self.detail_width_percent),
+                ])
                 .split(outer[0]);
             if self.comments_mode {
                 self.draw_comments_list(frame, panes[0]);
@@ -365,6 +410,8 @@ impl App {
 
         match self.mode {
             Mode::Tags => self.draw_tags_modal(frame),
+            Mode::ManageTags => self.draw_manage_tags_modal(frame),
+            Mode::Order => self.draw_order_modal(frame),
             Mode::SavedViews => self.draw_saved_views_modal(frame),
             Mode::ConfirmDeleteView => self.draw_delete_view_confirm_modal(frame),
             Mode::SaveView => self.draw_save_view_modal(frame),
@@ -382,97 +429,424 @@ impl App {
     }
 
     fn draw_menu_bar(&self, frame: &mut Frame<'_>, area: Rect) {
-        let prompt = match self.mode {
-            Mode::Filter => Line::from(vec![
-                Span::styled(
-                    " ti tui ",
-                    Style::default().fg(Color::Black).bg(Color::Yellow),
-                ),
-                Span::raw(" "),
-                Span::styled("filter ", Style::default().fg(Color::Yellow)),
-                Span::raw("/"),
-                Span::styled(self.filter.as_str(), Style::default().fg(Color::Cyan)),
-                Span::raw("  type to filter, Enter/Esc to finish"),
-            ]),
-            Mode::Tags => Line::from(vec![
-                Span::styled(
-                    " ti tui ",
-                    Style::default().fg(Color::Black).bg(Color::Yellow),
-                ),
-                Span::raw(" "),
-                Span::styled("tags ", Style::default().fg(Color::Yellow)),
-                Span::raw("j/k move  Space toggle  a all/any  c clear  Enter/Esc finish"),
-            ]),
-            Mode::SavedViews => Line::from(vec![
-                Span::styled(
-                    " ti tui ",
-                    Style::default().fg(Color::Black).bg(Color::Yellow),
-                ),
-                Span::raw(" "),
-                Span::styled("views ", Style::default().fg(Color::Yellow)),
-                Span::raw("j/k move  Enter apply  d default  Esc cancel"),
-            ]),
-            Mode::SaveView => Line::from(vec![
-                Span::styled(
-                    " ti tui ",
-                    Style::default().fg(Color::Black).bg(Color::Yellow),
-                ),
-                Span::raw(" "),
-                Span::styled("save view ", Style::default().fg(Color::Yellow)),
-                Span::raw(self.input.as_str()),
-                Span::raw("  Enter save, Esc cancel"),
-            ]),
-            Mode::Input(kind) => Line::from(vec![
-                Span::styled(
-                    " ti tui ",
-                    Style::default().fg(Color::Black).bg(Color::Yellow),
-                ),
-                Span::raw(" "),
-                Span::styled("editing ", Style::default().fg(Color::Yellow)),
-                Span::raw(kind.label()),
-                Span::raw("  Enter apply, Esc cancel"),
-            ]),
-            Mode::State => Line::from(vec![
-                Span::styled(
-                    " ti tui ",
-                    Style::default().fg(Color::Black).bg(Color::Yellow),
-                ),
-                Span::raw(" "),
-                Span::styled("editing ", Style::default().fg(Color::Yellow)),
-                Span::raw("state  choose in modal, Esc cancel"),
-            ]),
-            Mode::Create => Line::from(vec![
-                Span::styled(
-                    " ti tui ",
-                    Style::default().fg(Color::Black).bg(Color::Yellow),
-                ),
-                Span::raw(" "),
-                Span::styled("new ", Style::default().fg(Color::Yellow)),
-                Span::raw("Tab/↑/↓ fields  Enter create  Esc cancel"),
-            ]),
-            Mode::Normal => {
-                let status = self.status.as_deref().unwrap_or_else(|| {
-                    if self.comments_mode {
-                        "j/k comments  c add comment  Esc details  ? help  q quit"
-                    } else if self.view == ViewMode::Board && self.detail.is_none() {
-                        "b list  h/l columns  j/k tickets  Enter details  e edit  i spec  s state  c comment  ? help  q quit"
-                    } else {
-                        "b board  n new  / search  g tags  v views  V save view  e edit  i spec  C claim  Enter details  S sync  ? help  q quit"
-                    }
-                });
-                Line::from(vec![
-                    Span::styled(
-                        " ti tui ",
-                        Style::default().fg(Color::Black).bg(Color::Yellow),
-                    ),
-                    Span::raw(" "),
-                    Span::styled("normal ", Style::default().fg(Color::Yellow)),
-                    Span::raw(status),
-                ])
-            }
-        };
+        let (mode, detail, hints) = self.menu_bar_content();
+        let prompt = menu_bar_line(usize::from(area.width), mode, detail.as_deref(), &hints);
         let paragraph = Paragraph::new(prompt).style(Style::default().bg(Color::DarkGray));
         frame.render_widget(paragraph, area);
+    }
+
+    fn menu_bar_content(&self) -> (&'static str, Option<String>, Vec<MenuHint>) {
+        match self.mode {
+            Mode::Filter => (
+                "filter",
+                Some(format!("/{}", self.filter)),
+                vec![
+                    MenuHint {
+                        key: "type",
+                        desc: "filter",
+                    },
+                    MenuHint {
+                        key: "Backspace",
+                        desc: "delete",
+                    },
+                    MenuHint {
+                        key: "Enter",
+                        desc: "apply",
+                    },
+                    MenuHint {
+                        key: "Esc",
+                        desc: "finish",
+                    },
+                ],
+            ),
+            Mode::Tags => (
+                "tags",
+                None,
+                vec![
+                    MenuHint {
+                        key: "j/k",
+                        desc: "move",
+                    },
+                    MenuHint {
+                        key: "Space",
+                        desc: "toggle",
+                    },
+                    MenuHint {
+                        key: "a",
+                        desc: "all/any",
+                    },
+                    MenuHint {
+                        key: "c",
+                        desc: "clear",
+                    },
+                    MenuHint {
+                        key: "Enter",
+                        desc: "apply",
+                    },
+                    MenuHint {
+                        key: "Esc",
+                        desc: "finish",
+                    },
+                ],
+            ),
+            Mode::ManageTags => (
+                "ticket tags",
+                None,
+                vec![
+                    MenuHint {
+                        key: "j/k",
+                        desc: "move",
+                    },
+                    MenuHint {
+                        key: "Space",
+                        desc: "toggle",
+                    },
+                    MenuHint {
+                        key: "n",
+                        desc: "new",
+                    },
+                    MenuHint {
+                        key: "r",
+                        desc: "remove",
+                    },
+                    MenuHint {
+                        key: "Enter",
+                        desc: "finish",
+                    },
+                    MenuHint {
+                        key: "Esc",
+                        desc: "finish",
+                    },
+                ],
+            ),
+            Mode::Order => (
+                "order",
+                None,
+                vec![
+                    MenuHint {
+                        key: "j/k",
+                        desc: "move",
+                    },
+                    MenuHint {
+                        key: "Enter",
+                        desc: "apply",
+                    },
+                    MenuHint {
+                        key: "1-4",
+                        desc: "choose",
+                    },
+                    MenuHint {
+                        key: "Esc",
+                        desc: "cancel",
+                    },
+                ],
+            ),
+            Mode::SavedViews => (
+                "views",
+                None,
+                vec![
+                    MenuHint {
+                        key: "j/k",
+                        desc: "move",
+                    },
+                    MenuHint {
+                        key: "Enter",
+                        desc: "apply",
+                    },
+                    MenuHint {
+                        key: "d",
+                        desc: "default",
+                    },
+                    MenuHint {
+                        key: "D",
+                        desc: "delete",
+                    },
+                    MenuHint {
+                        key: "Esc",
+                        desc: "cancel",
+                    },
+                ],
+            ),
+            Mode::ConfirmDeleteView => (
+                "delete view",
+                self.pending_delete_view.clone(),
+                vec![
+                    MenuHint {
+                        key: "y",
+                        desc: "delete",
+                    },
+                    MenuHint {
+                        key: "n/Esc",
+                        desc: "cancel",
+                    },
+                ],
+            ),
+            Mode::SaveView => (
+                "save view",
+                (!self.input.is_empty()).then(|| self.input.clone()),
+                vec![
+                    MenuHint {
+                        key: "type",
+                        desc: "name",
+                    },
+                    MenuHint {
+                        key: "Enter",
+                        desc: "save",
+                    },
+                    MenuHint {
+                        key: "Esc",
+                        desc: "cancel",
+                    },
+                    MenuHint {
+                        key: "Backspace",
+                        desc: "delete",
+                    },
+                ],
+            ),
+            Mode::Input(kind) => (
+                "editing",
+                Some(kind.label().to_string()),
+                vec![
+                    MenuHint {
+                        key: "Enter",
+                        desc: "apply",
+                    },
+                    MenuHint {
+                        key: "Esc",
+                        desc: "cancel",
+                    },
+                    MenuHint {
+                        key: "Backspace",
+                        desc: "delete",
+                    },
+                ],
+            ),
+            Mode::State => (
+                "state",
+                None,
+                vec![
+                    MenuHint {
+                        key: "n/a/p/b/v",
+                        desc: "open",
+                    },
+                    MenuHint {
+                        key: "r/w/u/i",
+                        desc: "closed",
+                    },
+                    MenuHint {
+                        key: "Esc",
+                        desc: "cancel",
+                    },
+                ],
+            ),
+            Mode::Create => (
+                "new",
+                None,
+                vec![
+                    MenuHint {
+                        key: "Tab",
+                        desc: "fields",
+                    },
+                    MenuHint {
+                        key: "Enter",
+                        desc: "create",
+                    },
+                    MenuHint {
+                        key: "Esc",
+                        desc: "cancel",
+                    },
+                    MenuHint {
+                        key: "Backspace",
+                        desc: "delete",
+                    },
+                ],
+            ),
+            Mode::Normal => {
+                let detail = self.status.clone();
+                let hints = if self.comments_mode {
+                    vec![
+                        MenuHint {
+                            key: "j/k",
+                            desc: "comments",
+                        },
+                        MenuHint {
+                            key: "c",
+                            desc: "comment",
+                        },
+                        MenuHint {
+                            key: "+/-",
+                            desc: "resize",
+                        },
+                        MenuHint {
+                            key: "Esc",
+                            desc: "details",
+                        },
+                        MenuHint {
+                            key: "r",
+                            desc: "refresh",
+                        },
+                        MenuHint {
+                            key: "q",
+                            desc: "quit",
+                        },
+                    ]
+                } else if self.view == ViewMode::Board && self.detail.is_none() {
+                    vec![
+                        MenuHint {
+                            key: "j/k",
+                            desc: "tickets",
+                        },
+                        MenuHint {
+                            key: "h/l",
+                            desc: "columns",
+                        },
+                        MenuHint {
+                            key: "Enter",
+                            desc: "details",
+                        },
+                        MenuHint {
+                            key: "b",
+                            desc: "list",
+                        },
+                        MenuHint {
+                            key: "s",
+                            desc: "state",
+                        },
+                        MenuHint {
+                            key: "t",
+                            desc: "tags",
+                        },
+                        MenuHint {
+                            key: "e",
+                            desc: "edit",
+                        },
+                        MenuHint {
+                            key: "c",
+                            desc: "comment",
+                        },
+                        MenuHint {
+                            key: "o",
+                            desc: "order",
+                        },
+                        MenuHint {
+                            key: "r",
+                            desc: "refresh",
+                        },
+                        MenuHint {
+                            key: "q",
+                            desc: "quit",
+                        },
+                    ]
+                } else if self.detail.is_some() {
+                    vec![
+                        MenuHint {
+                            key: "j/k",
+                            desc: "tickets",
+                        },
+                        MenuHint {
+                            key: "b",
+                            desc: "board",
+                        },
+                        MenuHint {
+                            key: "+/-",
+                            desc: "resize",
+                        },
+                        MenuHint {
+                            key: "t",
+                            desc: "tags",
+                        },
+                        MenuHint {
+                            key: "c",
+                            desc: "comment",
+                        },
+                        MenuHint {
+                            key: "m",
+                            desc: "comments",
+                        },
+                        MenuHint {
+                            key: "i",
+                            desc: "spec",
+                        },
+                        MenuHint {
+                            key: "e",
+                            desc: "edit",
+                        },
+                        MenuHint {
+                            key: "s",
+                            desc: "state",
+                        },
+                        MenuHint {
+                            key: "o",
+                            desc: "order",
+                        },
+                        MenuHint {
+                            key: "Esc",
+                            desc: "close",
+                        },
+                        MenuHint {
+                            key: "r",
+                            desc: "refresh",
+                        },
+                        MenuHint {
+                            key: "q",
+                            desc: "quit",
+                        },
+                    ]
+                } else {
+                    vec![
+                        MenuHint {
+                            key: "j/k",
+                            desc: "tickets",
+                        },
+                        MenuHint {
+                            key: "Enter",
+                            desc: "details",
+                        },
+                        MenuHint {
+                            key: "t",
+                            desc: "tags",
+                        },
+                        MenuHint {
+                            key: "/",
+                            desc: "search",
+                        },
+                        MenuHint {
+                            key: "g",
+                            desc: "filter tags",
+                        },
+                        MenuHint {
+                            key: "o",
+                            desc: "order",
+                        },
+                        MenuHint {
+                            key: "b",
+                            desc: "board",
+                        },
+                        MenuHint {
+                            key: "n",
+                            desc: "new",
+                        },
+                        MenuHint {
+                            key: "v",
+                            desc: "views",
+                        },
+                        MenuHint {
+                            key: "S",
+                            desc: "sync",
+                        },
+                        MenuHint {
+                            key: "r",
+                            desc: "refresh",
+                        },
+                        MenuHint {
+                            key: "q",
+                            desc: "quit",
+                        },
+                    ]
+                };
+                ("normal", detail, hints)
+            }
+        }
     }
 
     fn draw_sync_progress(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -586,6 +960,13 @@ impl App {
             return;
         };
         let ticket = &self.tickets[idx];
+        let detail_width = usize::from(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Details")
+                .inner(area)
+                .width,
+        );
         let mut detail_lines = vec![
             Line::from(Span::styled(
                 ticket.id.to_string(),
@@ -626,7 +1007,7 @@ impl App {
             detail_lines.push(field_line("Milestone", milestone));
         }
         if let Some(spec) = &ticket.spec {
-            detail_lines.push(field_line("Spec", first_spec_line(spec)));
+            detail_lines.push(spec_field_line(spec, detail_width));
         }
         if let Some(description) = &ticket.description {
             detail_lines.push(Line::raw(""));
@@ -648,8 +1029,9 @@ impl App {
             }
         }
 
+        let detail_block = Block::default().borders(Borders::ALL).title("Details");
         let detail = Paragraph::new(detail_lines)
-            .block(Block::default().borders(Borders::ALL).title("Details"))
+            .block(detail_block)
             .wrap(Wrap { trim: false });
         frame.render_widget(detail, area);
     }
@@ -807,6 +1189,120 @@ impl App {
             .highlight_spacing(HighlightSpacing::Always);
         frame.render_widget(Clear, area);
         frame.render_stateful_widget(list, area, &mut self.tag_picker_state);
+    }
+
+    fn draw_manage_tags_modal(&mut self, frame: &mut Frame<'_>) {
+        let area = centered_rect(64, 20, frame.area());
+        let Some(ticket) = self.selected_ticket() else {
+            return;
+        };
+        let ticket_tags = ticket.tags.clone();
+        let title = format!("Manage Tags: {}", ticket.short_id());
+        let tags = self.manageable_tags(&ticket_tags);
+        let selected = self
+            .manage_tag_state
+            .selected()
+            .unwrap_or(0)
+            .min(tags.len().saturating_sub(1));
+        if tags.is_empty() {
+            self.manage_tag_state.select(None);
+        } else {
+            self.manage_tag_state.select(Some(selected));
+        }
+
+        let items: Vec<ListItem<'_>> = if tags.is_empty() {
+            vec![ListItem::new(Line::from(Span::styled(
+                "No known tags. Press n to create one on this ticket.",
+                Style::default().fg(Color::DarkGray),
+            )))]
+        } else {
+            tags.iter()
+                .map(|tag| {
+                    let checked = if ticket_tags.contains(tag) {
+                        "[x]"
+                    } else {
+                        "[ ]"
+                    };
+                    ListItem::new(Line::from(vec![
+                        Span::styled(checked, Style::default().fg(Color::Yellow)),
+                        Span::raw(" "),
+                        Span::styled(tag.clone(), Style::default().fg(tag_color(tag))),
+                    ]))
+                })
+                .collect()
+        };
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1), Constraint::Length(1)])
+            .split(area);
+        let list = List::new(items)
+            .block(Block::default().borders(Borders::ALL).title(title))
+            .highlight_style(
+                Style::default()
+                    .bg(Color::Rgb(0, 0, 95))
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol(HIGHLIGHT_SYMBOL)
+            .highlight_spacing(HighlightSpacing::Always);
+        let help = Paragraph::new(Line::from(vec![
+            Span::styled("Space", Style::default().fg(Color::Yellow)),
+            Span::raw(" add/remove  "),
+            Span::styled("n", Style::default().fg(Color::Yellow)),
+            Span::raw(" new tags  "),
+            Span::styled("r", Style::default().fg(Color::Yellow)),
+            Span::raw(" remove by name  "),
+            Span::styled("Enter/Esc", Style::default().fg(Color::Yellow)),
+            Span::raw(" finish"),
+        ]))
+        .style(Style::default().bg(Color::DarkGray));
+        frame.render_widget(Clear, area);
+        frame.render_stateful_widget(list, chunks[0], &mut self.manage_tag_state);
+        frame.render_widget(help, chunks[1]);
+    }
+
+    fn draw_order_modal(&mut self, frame: &mut Frame<'_>) {
+        let area = centered_rect(52, 10, frame.area());
+        let current = self.current_order_choice();
+        let selected = self
+            .order_state
+            .selected()
+            .unwrap_or_else(|| order_choice_index(current))
+            .min(ORDER_CHOICES.len() - 1);
+        self.order_state.select(Some(selected));
+
+        let items: Vec<ListItem<'_>> = ORDER_CHOICES
+            .iter()
+            .enumerate()
+            .map(|(idx, choice)| {
+                let active = *choice == current;
+                let marker = if active { "*" } else { " " };
+                ListItem::new(Line::from(vec![
+                    Span::styled(marker, Style::default().fg(Color::Yellow)),
+                    Span::raw(" "),
+                    Span::styled(
+                        format!("{}", idx + 1),
+                        Style::default()
+                            .fg(Color::LightYellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(" "),
+                    Span::styled(choice.label(), Style::default().fg(Color::Cyan)),
+                ]))
+            })
+            .collect();
+        let list = List::new(items)
+            .block(Block::default().borders(Borders::ALL).title("List Order"))
+            .highlight_style(
+                Style::default()
+                    .bg(Color::Rgb(0, 0, 95))
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol(HIGHLIGHT_SYMBOL)
+            .highlight_spacing(HighlightSpacing::Always);
+        frame.render_widget(Clear, area);
+        frame.render_stateful_widget(list, area, &mut self.order_state);
     }
 
     fn draw_saved_views_modal(&mut self, frame: &mut Frame<'_>) {
@@ -1083,6 +1579,29 @@ impl App {
                 ));
                 lines.push(help_columns(("Enter", "apply"), Some(("Esc", "finish"))));
             }
+            Mode::ManageTags => {
+                help_section(&mut lines, "Ticket Tags");
+                lines.push(help_columns(
+                    ("j/k", "move tag"),
+                    Some(("Space", "add / remove")),
+                ));
+                lines.push(help_columns(
+                    ("n", "new tags"),
+                    Some(("r", "remove by name")),
+                ));
+                lines.push(help_columns(("Enter", "finish"), None));
+                lines.push(help_columns(("Esc", "finish"), None));
+            }
+            Mode::Order => {
+                help_section(&mut lines, "List Order");
+                lines.push(help_columns(
+                    ("j/k", "move order"),
+                    Some(("Enter", "apply")),
+                ));
+                lines.push(help_columns(("1", "prio"), Some(("2", "date asc"))));
+                lines.push(help_columns(("3", "date desc"), Some(("4", "state"))));
+                lines.push(help_columns(("Esc", "cancel"), None));
+            }
             Mode::SavedViews => {
                 help_section(&mut lines, "Views");
                 lines.push(help_columns(
@@ -1139,7 +1658,11 @@ impl App {
                     ("j/k", "move comment"),
                     Some(("c", "add comment")),
                 ));
-                lines.push(help_columns(("Esc", "detail view"), None));
+                lines.push(help_columns(
+                    ("+/-", "resize detail"),
+                    Some(("Esc", "detail view")),
+                ));
+                lines.push(help_columns(("r", "refresh"), None));
             }
             Mode::Normal if self.view == ViewMode::Board && self.detail.is_none() => {
                 help_section(&mut lines, "Navigation");
@@ -1152,6 +1675,7 @@ impl App {
                     Some(("Up/Down", "move tickets")),
                 ));
                 lines.push(help_columns(("Enter", "details"), Some(("b", "list view"))));
+                lines.push(help_columns(("r", "refresh"), None));
 
                 help_section(&mut lines, "Edit Ticket");
                 lines.push(help_columns(("C", "claim"), Some(("s", "state"))));
@@ -1159,9 +1683,8 @@ impl App {
                     ("e", "edit title/body"),
                     Some(("i", "edit spec")),
                 ));
-                lines.push(help_columns(("c", "comment"), None));
-                lines.push(help_columns(("p", "priority"), Some(("o", "points"))));
-                lines.push(help_columns(("+/-", "edit tags"), None));
+                lines.push(help_columns(("c", "comment"), Some(("t", "manage tags"))));
+                lines.push(help_columns(("p", "priority"), Some(("o", "order"))));
             }
             Mode::Normal => {
                 help_section(&mut lines, "Navigation");
@@ -1174,13 +1697,16 @@ impl App {
                     Some(("b", "board view")),
                 ));
                 lines.push(help_columns(("m", "comments"), Some(("n", "new ticket"))));
+                lines.push(help_columns(("+/-", "resize detail"), None));
+                lines.push(help_columns(("r", "refresh"), None));
 
                 help_section(&mut lines, "Views & Filters");
                 lines.push(help_columns(
                     ("/", "search text"),
                     Some(("g", "tag picker")),
                 ));
-                lines.push(help_columns(("v", "saved views"), Some(("V", "save view"))));
+                lines.push(help_columns(("o", "order"), Some(("v", "saved views"))));
+                lines.push(help_columns(("V", "save view"), None));
 
                 help_section(&mut lines, "Edit Ticket");
                 lines.push(help_columns(("C", "claim"), Some(("s", "state"))));
@@ -1188,9 +1714,8 @@ impl App {
                     ("e", "edit title/body"),
                     Some(("i", "edit spec")),
                 ));
-                lines.push(help_columns(("c", "comment"), None));
-                lines.push(help_columns(("p", "priority"), Some(("o", "points"))));
-                lines.push(help_columns(("+/-", "edit tags"), None));
+                lines.push(help_columns(("c", "comment"), Some(("t", "manage tags"))));
+                lines.push(help_columns(("p", "priority"), None));
             }
         }
 
@@ -1240,6 +1765,14 @@ impl App {
             }
             Mode::Tags => {
                 self.handle_tags_key(key);
+                false
+            }
+            Mode::ManageTags => {
+                self.handle_manage_tags_key(key)?;
+                false
+            }
+            Mode::Order => {
+                self.handle_order_key(key)?;
                 false
             }
             Mode::SavedViews => {
@@ -1306,6 +1839,10 @@ impl App {
                 self.begin_tag_filter();
                 false
             }
+            KeyCode::Char('t') => {
+                self.begin_manage_tags();
+                false
+            }
             KeyCode::Char('v') => {
                 self.begin_saved_views();
                 false
@@ -1315,7 +1852,11 @@ impl App {
                 false
             }
             KeyCode::Char('b') => {
-                self.toggle_view();
+                self.handle_board_key();
+                false
+            }
+            KeyCode::Char('r') => {
+                self.refresh_data()?;
                 false
             }
             KeyCode::Char('n') => {
@@ -1383,15 +1924,19 @@ impl App {
                 false
             }
             KeyCode::Char('o') => {
+                self.begin_order();
+                false
+            }
+            KeyCode::Char('O') => {
                 self.begin_input(InputKind::Points);
                 false
             }
             KeyCode::Char('+') | KeyCode::Char('=') => {
-                self.begin_input(InputKind::AddTags);
+                self.resize_detail(DETAIL_WIDTH_PERCENT_STEP as i16);
                 false
             }
             KeyCode::Char('-') => {
-                self.begin_input(InputKind::RemoveTags);
+                self.resize_detail(-(DETAIL_WIDTH_PERCENT_STEP as i16));
                 false
             }
             KeyCode::Char('s') => {
@@ -1446,6 +1991,39 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    fn handle_manage_tags_key(&mut self, key: KeyEvent) -> Result<()> {
+        match key.code {
+            KeyCode::Enter | KeyCode::Esc => {
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Down | KeyCode::Char('j') => self.next_manage_tag(),
+            KeyCode::Up | KeyCode::Char('k') => self.previous_manage_tag(),
+            KeyCode::Char(' ') => self.toggle_selected_ticket_tag()?,
+            KeyCode::Char('n') => self.begin_input(InputKind::AddTags),
+            KeyCode::Char('r') => self.begin_input(InputKind::RemoveTags),
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_order_key(&mut self, key: KeyEvent) -> Result<()> {
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                self.status = Some("Cancelled.".to_string());
+            }
+            KeyCode::Enter => self.apply_selected_order()?,
+            KeyCode::Down | KeyCode::Char('j') => self.next_order(),
+            KeyCode::Up | KeyCode::Char('k') => self.previous_order(),
+            KeyCode::Char('1') => self.apply_order_choice(OrderChoice::Priority)?,
+            KeyCode::Char('2') => self.apply_order_choice(OrderChoice::DateAsc)?,
+            KeyCode::Char('3') => self.apply_order_choice(OrderChoice::DateDesc)?,
+            KeyCode::Char('4') => self.apply_order_choice(OrderChoice::State)?,
+            _ => {}
+        }
+        Ok(())
     }
 
     fn handle_saved_views_key(&mut self, key: KeyEvent) -> Result<()> {
@@ -1618,6 +2196,31 @@ impl App {
         self.mode = Mode::Tags;
     }
 
+    fn begin_manage_tags(&mut self) {
+        let Some(ticket) = self.selected_ticket() else {
+            self.status = Some("Select a ticket first.".to_string());
+            return;
+        };
+        let tags = self.manageable_tags(&ticket.tags);
+        if tags.is_empty() {
+            self.manage_tag_state.select(None);
+        } else {
+            let selected = self
+                .manage_tag_state
+                .selected()
+                .unwrap_or(0)
+                .min(tags.len() - 1);
+            self.manage_tag_state.select(Some(selected));
+        }
+        self.mode = Mode::ManageTags;
+    }
+
+    fn begin_order(&mut self) {
+        self.order_state
+            .select(Some(order_choice_index(self.current_order_choice())));
+        self.mode = Mode::Order;
+    }
+
     fn begin_saved_views(&mut self) {
         let views = self.view_entries();
         let selected = self
@@ -1708,7 +2311,7 @@ impl App {
             assigned: self.assigned_filter.clone(),
             only_tagged: self.only_tagged,
             search: optional_trimmed(&self.filter).map(ToString::to_string),
-            order: self.sort_order.map(|_| "created.desc".to_string()),
+            order: Some(self.current_order_choice().spec().to_string()),
             all: self.base_status.is_none() && self.base_state.is_none(),
             subissues: !self.hide_subissues,
             limit: 0,
@@ -1998,6 +2601,11 @@ impl App {
         let Mode::Input(kind) = self.mode else {
             return Ok(false);
         };
+        let preferred_after_reload = if kind == InputKind::Priority {
+            self.adjacent_ticket_for_priority_triage(id)
+        } else {
+            Some(id)
+        };
 
         match kind {
             InputKind::Comment => {
@@ -2061,7 +2669,7 @@ impl App {
             }
         }
 
-        self.reload(Some(id))?;
+        self.reload(preferred_after_reload)?;
         if kind == InputKind::Comment {
             if let Some(ticket) = self.selected_ticket() {
                 if !ticket.comments.is_empty() {
@@ -2070,6 +2678,17 @@ impl App {
             }
         }
         Ok(true)
+    }
+
+    fn adjacent_ticket_for_priority_triage(&self, id: uuid::Uuid) -> Option<uuid::Uuid> {
+        let selected = self
+            .visible
+            .iter()
+            .position(|idx| self.tickets[*idx].id == id)?;
+        self.visible
+            .get(selected + 1)
+            .or_else(|| selected.checked_sub(1).and_then(|previous| self.visible.get(previous)))
+            .map(|idx| self.tickets[*idx].id)
     }
 
     fn set_lifecycle(&mut self, status: TicketStatus, state: TicketState) -> Result<()> {
@@ -2222,6 +2841,120 @@ impl App {
         self.apply_filter();
     }
 
+    fn current_order_choice(&self) -> OrderChoice {
+        match self.sort_order {
+            Some(order) if order.key == SortKey::Created && !order.desc => OrderChoice::DateAsc,
+            Some(order) if order.key == SortKey::Created && order.desc => OrderChoice::DateDesc,
+            Some(order) if order.key == SortKey::State => OrderChoice::State,
+            Some(order) if order.key == SortKey::Priority => OrderChoice::Priority,
+            _ => OrderChoice::Priority,
+        }
+    }
+
+    fn next_order(&mut self) {
+        let selected = self.order_state.selected().unwrap_or(0);
+        self.order_state
+            .select(Some((selected + 1) % ORDER_CHOICES.len()));
+    }
+
+    fn previous_order(&mut self) {
+        let selected = self.order_state.selected().unwrap_or(0);
+        let previous = selected
+            .checked_sub(1)
+            .unwrap_or_else(|| ORDER_CHOICES.len() - 1);
+        self.order_state.select(Some(previous));
+    }
+
+    fn apply_selected_order(&mut self) -> Result<()> {
+        let selected = self.order_state.selected().unwrap_or(0);
+        let choice = ORDER_CHOICES
+            .get(selected)
+            .copied()
+            .unwrap_or(OrderChoice::Priority);
+        self.apply_order_choice(choice)
+    }
+
+    fn apply_order_choice(&mut self, choice: OrderChoice) -> Result<()> {
+        let selected_id = self.selected_ticket().map(|ticket| ticket.id);
+        self.sort_order = choice.sort_order();
+        self.mode = Mode::Normal;
+        self.reload(selected_id)?;
+        self.status = Some(format!("Ordered by {}.", choice.label()));
+        Ok(())
+    }
+
+    fn manageable_tags(&self, ticket_tags: &BTreeSet<String>) -> Vec<String> {
+        let mut tags = ticket_tags.clone();
+        for ticket in &self.tickets {
+            tags.extend(ticket.tags.iter().cloned());
+        }
+        tags.into_iter().collect()
+    }
+
+    fn next_manage_tag(&mut self) {
+        let Some(ticket) = self.selected_ticket() else {
+            self.manage_tag_state.select(None);
+            return;
+        };
+        let tags = self.manageable_tags(&ticket.tags);
+        if tags.is_empty() {
+            self.manage_tag_state.select(None);
+            return;
+        }
+        let selected = self.manage_tag_state.selected().unwrap_or(0);
+        self.manage_tag_state
+            .select(Some((selected + 1) % tags.len()));
+    }
+
+    fn previous_manage_tag(&mut self) {
+        let Some(ticket) = self.selected_ticket() else {
+            self.manage_tag_state.select(None);
+            return;
+        };
+        let tags = self.manageable_tags(&ticket.tags);
+        if tags.is_empty() {
+            self.manage_tag_state.select(None);
+            return;
+        }
+        let selected = self.manage_tag_state.selected().unwrap_or(0);
+        let previous = selected
+            .checked_sub(1)
+            .unwrap_or_else(|| tags.len().saturating_sub(1));
+        self.manage_tag_state.select(Some(previous));
+    }
+
+    fn toggle_selected_ticket_tag(&mut self) -> Result<()> {
+        let Some(ticket) = self.selected_ticket() else {
+            self.status = Some("Select a ticket first.".to_string());
+            return Ok(());
+        };
+        let id = ticket.id;
+        let ticket_tags = ticket.tags.clone();
+        let tags = self.manageable_tags(&ticket_tags);
+        let Some(tag) = self
+            .manage_tag_state
+            .selected()
+            .and_then(|selected| tags.get(selected))
+            .cloned()
+        else {
+            self.status = Some("No tag selected.".to_string());
+            return Ok(());
+        };
+
+        if ticket_tags.contains(&tag) {
+            self.store.remove_tag(&id, &tag)?;
+            self.status = Some(format!("Removed tag `{tag}`."));
+        } else {
+            self.store.add_tag(&id, &tag)?;
+            self.status = Some(format!("Added tag `{tag}`."));
+        }
+        self.reload(Some(id))?;
+        if !self.visible.iter().any(|idx| self.tickets[*idx].id == id) {
+            self.mode = Mode::Normal;
+        }
+        Ok(())
+    }
+
     fn apply_filter(&mut self) {
         let needle = self.filter.to_ascii_lowercase();
         self.visible = self
@@ -2279,11 +3012,109 @@ impl App {
         self.sync_open_detail();
     }
 
+    fn resize_detail(&mut self, delta: i16) {
+        if self.detail.is_none() {
+            self.status = Some("Open ticket details first.".to_string());
+            return;
+        }
+        let next = if delta.is_negative() {
+            self.detail_width_percent
+                .saturating_sub(delta.unsigned_abs())
+        } else {
+            self.detail_width_percent.saturating_add(delta as u16)
+        };
+        let next = next.clamp(DETAIL_WIDTH_PERCENT_MIN, DETAIL_WIDTH_PERCENT_MAX);
+        if next != self.detail_width_percent {
+            self.detail_width_percent = next;
+            if let Err(err) = self.save_project_settings() {
+                self.status = Some(format!("Detail pane: {next}%. Settings not saved: {err}"));
+                return;
+            }
+        }
+        self.status = Some(format!("Detail pane: {}%.", self.detail_width_percent));
+    }
+
+    fn save_project_settings(&self) -> Result<()> {
+        let git_dir = self.store.session().repo_git_dir();
+        let mut state = State::load().unwrap_or_default();
+        let mut settings = state.project_settings_for(&git_dir);
+        settings.detail_width_percent = Some(self.detail_width_percent);
+        state.set_project_settings(&git_dir, settings);
+        state.save()
+    }
+
+    fn refresh_data(&mut self) -> Result<()> {
+        let selected_id = self.selected_ticket().map(|ticket| ticket.id);
+        let was_board = self.view == ViewMode::Board && self.detail.is_none();
+        self.reload(selected_id)?;
+        if was_board {
+            if let Some(id) = selected_id {
+                self.select_board_ticket_by_id(id);
+            }
+        }
+        self.status = Some("Refreshed.".to_string());
+        Ok(())
+    }
+
     fn toggle_view(&mut self) {
         self.view = match self.view {
             ViewMode::List => ViewMode::Board,
             ViewMode::Board => ViewMode::List,
         };
+        self.sync_board_to_list_selection();
+    }
+
+    fn select_board_ticket_by_id(&mut self, id: uuid::Uuid) {
+        let Some(ticket_idx) = self.tickets.iter().position(|ticket| ticket.id == id) else {
+            return;
+        };
+        let ticket_state = self.tickets[ticket_idx].state;
+        let Some(column) = BOARD_STATES.iter().position(|state| *state == ticket_state) else {
+            return;
+        };
+        let Some(row) = self
+            .board_column_tickets(column)
+            .iter()
+            .position(|idx| **idx == ticket_idx)
+        else {
+            return;
+        };
+        self.board_column = column;
+        self.board_rows[column] = row;
+    }
+
+    fn handle_board_key(&mut self) {
+        if self.detail.is_some() {
+            self.open_board_for_detail_ticket();
+        } else {
+            self.toggle_view();
+        }
+    }
+
+    fn open_board_for_detail_ticket(&mut self) {
+        let Some(idx) = self.detail else {
+            return;
+        };
+        let ticket_state = self.tickets[idx].state;
+        let Some(column) = BOARD_STATES.iter().position(|state| *state == ticket_state) else {
+            self.status = Some("Selected ticket is not on the board.".to_string());
+            return;
+        };
+        let Some(row) = self
+            .board_column_tickets(column)
+            .iter()
+            .position(|ticket_idx| **ticket_idx == idx)
+        else {
+            self.status =
+                Some("Selected ticket is hidden by the current board filters.".to_string());
+            return;
+        };
+
+        self.view = ViewMode::Board;
+        self.detail = None;
+        self.comments_mode = false;
+        self.board_column = column;
+        self.board_rows[column] = row;
         self.sync_board_to_list_selection();
     }
 
@@ -2483,6 +3314,54 @@ impl NewTicketDraft {
     }
 }
 
+impl OrderChoice {
+    fn label(self) -> &'static str {
+        match self {
+            OrderChoice::Priority => "priority",
+            OrderChoice::DateAsc => "date asc",
+            OrderChoice::DateDesc => "date desc",
+            OrderChoice::State => "state",
+        }
+    }
+
+    fn spec(self) -> &'static str {
+        match self {
+            OrderChoice::Priority => "priority",
+            OrderChoice::DateAsc => "created",
+            OrderChoice::DateDesc => "created.desc",
+            OrderChoice::State => "state",
+        }
+    }
+
+    fn sort_order(self) -> Option<SortOrder> {
+        Some(match self {
+            OrderChoice::Priority => SortOrder {
+                key: SortKey::Priority,
+                desc: false,
+            },
+            OrderChoice::DateAsc => SortOrder {
+                key: SortKey::Created,
+                desc: false,
+            },
+            OrderChoice::DateDesc => SortOrder {
+                key: SortKey::Created,
+                desc: true,
+            },
+            OrderChoice::State => SortOrder {
+                key: SortKey::State,
+                desc: false,
+            },
+        })
+    }
+}
+
+fn order_choice_index(choice: OrderChoice) -> usize {
+    ORDER_CHOICES
+        .iter()
+        .position(|candidate| *candidate == choice)
+        .unwrap_or(0)
+}
+
 impl InputKind {
     fn label(self) -> &'static str {
         match self {
@@ -2503,6 +3382,95 @@ impl InputKind {
             | InputKind::RemoveTags => 9,
         }
     }
+}
+
+fn menu_bar_line(
+    width: usize,
+    mode: &str,
+    detail: Option<&str>,
+    hints: &[MenuHint],
+) -> Line<'static> {
+    let mut spans = vec![
+        Span::styled(
+            " ti tui ",
+            Style::default().fg(Color::Black).bg(Color::Yellow),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            format!("{mode} "),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ];
+    let help = MenuHint {
+        key: "?",
+        desc: "help",
+    };
+    let help_width = menu_hint_width(help);
+    let separator_width = 2;
+
+    if width <= help_width {
+        return Line::from(menu_hint_spans(help));
+    }
+
+    let mut used = spans_width(&spans);
+    let reserve_for_help = separator_width + help_width;
+
+    if let Some(detail) = detail.filter(|detail| !detail.is_empty()) {
+        if let Some(available) = width
+            .checked_sub(used)
+            .and_then(|available| available.checked_sub(separator_width + reserve_for_help))
+        {
+            let detail_width = available.min(36);
+            if detail_width >= 4 {
+                append_menu_separator(&mut spans);
+                let value = truncate_display(detail, detail_width);
+                used += separator_width + UnicodeWidthStr::width(value.as_str());
+                spans.push(Span::styled(value, Style::default().fg(Color::Cyan)));
+            }
+        }
+    }
+
+    for hint in hints {
+        let hint_width = menu_hint_width(*hint);
+        if used + separator_width + hint_width + reserve_for_help > width {
+            continue;
+        }
+        append_menu_separator(&mut spans);
+        spans.extend(menu_hint_spans(*hint));
+        used += separator_width + hint_width;
+    }
+
+    if used + reserve_for_help <= width {
+        append_menu_separator(&mut spans);
+        spans.extend(menu_hint_spans(help));
+    } else {
+        spans = menu_hint_spans(help);
+    }
+
+    Line::from(spans)
+}
+
+fn menu_hint_width(hint: MenuHint) -> usize {
+    UnicodeWidthStr::width(hint.key) + 1 + UnicodeWidthStr::width(hint.desc)
+}
+
+fn menu_hint_spans(hint: MenuHint) -> Vec<Span<'static>> {
+    vec![
+        Span::styled(
+            hint.key,
+            Style::default()
+                .fg(Color::LightYellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        Span::styled(hint.desc, Style::default().fg(Color::Gray)),
+    ]
+}
+
+fn append_menu_separator(spans: &mut Vec<Span<'static>>) {
+    spans.push(Span::raw("  "));
 }
 
 fn parse_optional_i64(raw: &str, label: &str) -> Result<Option<i64>> {
@@ -2577,13 +3545,22 @@ fn ticket_list_line(
         .chars()
         .take(LIST_ID_WIDTH)
         .collect::<String>();
-    let meta = list_meta_display(ticket);
+    let title = flatten_display(&ticket.title);
+    if compact {
+        return compact_ticket_list_line(
+            &short_id,
+            &title,
+            &list_meta_display(ticket),
+            ticket.assigned.as_deref() == Some(current_user),
+            width,
+        );
+    }
 
     ticket_list_line_from_parts(
-        &short_id,
-        &flatten_display(&ticket.title),
-        &meta,
-        if compact { None } else { Some(&ticket.tags) },
+        Some(&short_id),
+        &title,
+        &list_meta_display(ticket),
+        Some(&ticket.tags),
         ticket.assigned.as_deref() == Some(current_user),
         width,
     )
@@ -2621,46 +3598,44 @@ fn priority_points_display(ticket: &Ticket) -> Option<String> {
 }
 
 fn ticket_list_line_from_parts(
-    short_id: &str,
+    short_id: Option<&str>,
     title: &str,
     meta: &[(String, Style)],
     tags: Option<&BTreeSet<String>>,
     assigned_to_current_user: bool,
     width: usize,
 ) -> Line<'static> {
-    let id = truncate_display(short_id, width);
-    let id_width = UnicodeWidthStr::width(id.as_str());
-    let star = if assigned_to_current_user { "*" } else { " " };
-    let star_width = width
-        .saturating_sub(id_width)
-        .min(UnicodeWidthStr::width(star));
-    let gap_width = width.saturating_sub(id_width + star_width).min(1);
-    let gap = " ".repeat(gap_width);
-    let mut leading = vec![
-        Span::styled(id, Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            truncate_display(star, star_width),
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(gap),
-    ];
-    let meta_width = push_meta_spans(
-        &mut leading,
-        meta,
-        width.saturating_sub(id_width + star_width + gap_width),
-    );
+    let mut leading = Vec::new();
+    let mut used_width = 0;
+    if let Some(short_id) = short_id {
+        let id = truncate_display(short_id, width);
+        let id_width = UnicodeWidthStr::width(id.as_str());
+        let star = if assigned_to_current_user { "*" } else { " " };
+        let star_width = width
+            .saturating_sub(id_width)
+            .min(UnicodeWidthStr::width(star));
+        let gap_width = width.saturating_sub(id_width + star_width).min(1);
+        let gap = " ".repeat(gap_width);
+        used_width = id_width + star_width + gap_width;
+        leading.extend([
+            Span::styled(id, Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                truncate_display(star, star_width),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(gap),
+        ]);
+    }
+    let meta_width = push_meta_spans(&mut leading, meta, width.saturating_sub(used_width));
     let meta_gap_width = if meta_width > 0 {
-        width
-            .saturating_sub(id_width + star_width + gap_width + meta_width)
-            .min(1)
+        width.saturating_sub(used_width + meta_width).min(1)
     } else {
         0
     };
     let meta_gap = " ".repeat(meta_gap_width);
-    let content_width =
-        width.saturating_sub(id_width + star_width + gap_width + meta_width + meta_gap_width);
+    let content_width = width.saturating_sub(used_width + meta_width + meta_gap_width);
 
     if meta_width > 0 {
         leading.push(Span::raw(meta_gap));
@@ -2695,12 +3670,76 @@ fn ticket_list_line_from_parts(
     Line::from(leading)
 }
 
+fn compact_ticket_list_line(
+    short_id: &str,
+    title: &str,
+    meta: &[(String, Style)],
+    assigned_to_current_user: bool,
+    width: usize,
+) -> Line<'static> {
+    let title_target_width = COMPACT_LIST_MIN_TITLE_WIDTH.min(width).max(1);
+    let mut short_id = Some(short_id);
+    let mut meta = meta.to_vec();
+
+    while compact_title_width(short_id, &meta, width) < title_target_width {
+        if !remove_first_meta_width(&mut meta, LIST_STATE_WIDTH) {
+            if !remove_first_meta_width(&mut meta, LIST_AGE_WIDTH) {
+                if short_id.take().is_none()
+                    && !remove_first_meta_width(&mut meta, LIST_PRIORITY_WIDTH)
+                {
+                    break;
+                }
+            }
+        }
+    }
+
+    ticket_list_line_from_parts(
+        short_id,
+        title,
+        &meta,
+        None,
+        assigned_to_current_user,
+        width,
+    )
+}
+
+fn compact_title_width(
+    short_id: Option<&str>,
+    meta: &[(String, Style)],
+    width: usize,
+) -> usize {
+    let id_width = short_id
+        .map(|id| UnicodeWidthStr::width(id).min(width))
+        .unwrap_or_default();
+    let star_width = short_id
+        .map(|_| width.saturating_sub(id_width).min(1))
+        .unwrap_or_default();
+    let id_gap_width = short_id
+        .map(|_| width.saturating_sub(id_width + star_width).min(1))
+        .unwrap_or_default();
+    let meta_width = meta
+        .iter()
+        .map(|(value, _)| UnicodeWidthStr::width(value.as_str()))
+        .sum::<usize>()
+        .min(width.saturating_sub(id_width + star_width + id_gap_width));
+    let meta_gap_width = usize::from(meta_width > 0)
+        .min(width.saturating_sub(id_width + star_width + id_gap_width + meta_width));
+    width.saturating_sub(id_width + star_width + id_gap_width + meta_width + meta_gap_width)
+}
+
+fn remove_first_meta_width(meta: &mut Vec<(String, Style)>, width: usize) -> bool {
+    let Some(idx) = meta
+        .iter()
+        .position(|(value, _)| UnicodeWidthStr::width(value.as_str()) == width)
+    else {
+        return false;
+    };
+    meta.remove(idx);
+    true
+}
+
 fn list_meta_display(ticket: &Ticket) -> Vec<(String, Style)> {
     vec![
-        (
-            fit_display(state_abbrev(ticket.state), LIST_STATE_WIDTH),
-            state_abbrev_style(ticket.state),
-        ),
         (
             fit_display(
                 &relative_date(ticket.created_at, OffsetDateTime::now_utc()),
@@ -2709,6 +3748,10 @@ fn list_meta_display(ticket: &Ticket) -> Vec<(String, Style)> {
             Style::default()
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::DIM),
+        ),
+        (
+            fit_display(state_abbrev(ticket.state), LIST_STATE_WIDTH),
+            state_abbrev_style(ticket.state),
         ),
         (
             fit_display(
@@ -2725,15 +3768,15 @@ fn list_meta_display(ticket: &Ticket) -> Vec<(String, Style)> {
 
 fn state_abbrev(state: TicketState) -> &'static str {
     match state {
-        TicketState::New => "NW",
-        TicketState::Assigned => "AS",
-        TicketState::InProgress => "IP",
-        TicketState::Blocked => "BL",
-        TicketState::Review => "RV",
-        TicketState::Resolved => "RS",
-        TicketState::Wontfix => "WF",
-        TicketState::Duplicate => "DP",
-        TicketState::Invalid => "IV",
+        TicketState::New => "nw",
+        TicketState::Assigned => "as",
+        TicketState::InProgress => "ip",
+        TicketState::Blocked => "bl",
+        TicketState::Review => "rv",
+        TicketState::Resolved => "rs",
+        TicketState::Wontfix => "wf",
+        TicketState::Duplicate => "dp",
+        TicketState::Invalid => "iv",
     }
 }
 
@@ -3017,6 +4060,41 @@ fn field_line(label: &str, value: &str) -> Line<'static> {
     ])
 }
 
+fn spec_field_line(spec: &str, width: usize) -> Line<'static> {
+    let label_width = 10;
+    let separator_width = 3;
+    let hint_key = "i";
+    let hint_desc = "view/edit";
+    let hint_width = UnicodeWidthStr::width(hint_key) + 1 + UnicodeWidthStr::width(hint_desc);
+    let first_line = first_spec_line(spec);
+    let value_budget = width.saturating_sub(label_width + separator_width + hint_width + 2);
+    let value = truncate_display(first_line, value_budget);
+    let value_width = UnicodeWidthStr::width(value.as_str());
+    let padding_width = width
+        .saturating_sub(label_width + separator_width + value_width + hint_width)
+        .max(2);
+
+    Line::from(vec![
+        Span::styled(
+            format!("{:<10}", "Spec"),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" : ", Style::default().fg(Color::DarkGray)),
+        Span::styled(value, Style::default().fg(Color::Cyan)),
+        Span::raw(" ".repeat(padding_width)),
+        Span::styled(
+            hint_key,
+            Style::default()
+                .fg(Color::LightYellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        Span::styled(hint_desc, Style::default().fg(Color::DarkGray)),
+    ])
+}
+
 fn tags_field_line(tags: &BTreeSet<String>) -> Line<'static> {
     let mut spans = vec![
         Span::styled(
@@ -3168,19 +4246,7 @@ fn status_state_line(ticket: &Ticket) -> Line<'static> {
         ),
         Span::styled(" : ", Style::default().fg(Color::DarkGray)),
         Span::styled(
-            ticket.status.as_str().to_string(),
-            Style::default().fg(Color::Green),
-        ),
-        Span::raw("  "),
-        Span::styled(
-            "State",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" : ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            ticket.state.as_str().to_string(),
+            format!("{}:{}", ticket.status.as_str(), ticket.state.as_str()),
             Style::default().fg(Color::Green),
         ),
     ])

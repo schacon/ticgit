@@ -161,7 +161,7 @@ fn fetch_remote_tickets(url: &str) -> Result<Vec<Ticket>> {
 
     // Open a store on the temp repo and pull from the remote.
     let repo = gix::open(path).context("opening temp repo")?;
-    let session = ticgit_lib::Session::open(repo).context("opening session on temp repo")?;
+    let session = ticgit_lib::Session::open(repo.path()).context("opening session on temp repo")?;
     let remote_store =
         TicketStore::from_session(session).context("opening ticket store on temp repo")?;
 

@@ -26,6 +26,15 @@ pub struct State {
     /// Map of canonicalised git-dir path → named saved views.
     #[serde(default)]
     pub views: HashMap<String, HashMap<String, SavedView>>,
+    /// Map of canonicalised git-dir path → per-user project UI settings.
+    #[serde(default)]
+    pub project_settings: HashMap<String, ProjectSettings>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProjectSettings {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail_width_percent: Option<u16>,
 }
 
 /// A saved set of list filter parameters.
@@ -157,6 +166,17 @@ impl State {
                 v
             })
             .unwrap_or_default()
+    }
+
+    pub fn project_settings_for(&self, git_dir: &Path) -> ProjectSettings {
+        self.project_settings
+            .get(&key_for(git_dir))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn set_project_settings(&mut self, git_dir: &Path, settings: ProjectSettings) {
+        self.project_settings.insert(key_for(git_dir), settings);
     }
 }
 
