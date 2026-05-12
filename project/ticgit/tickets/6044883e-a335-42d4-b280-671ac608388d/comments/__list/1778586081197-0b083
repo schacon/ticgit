@@ -1,0 +1,1 @@
+{"author":"schacon@gmail.com","body":"Add links key: ticgit:writeups:<uuid>:tickets = [<ticket-uuid>, ...]. Associates a writeup with one or more tickets. Could also store the reverse on the ticket side: ticgit:tickets:<uuid>:writeups = [<writeup-uuid>, ...]. ti writeup link <writeup-id> <ticket-id> to create the association."}

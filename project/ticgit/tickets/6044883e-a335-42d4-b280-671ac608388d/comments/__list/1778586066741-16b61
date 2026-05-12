@@ -1,0 +1,1 @@
+{"author":"schacon@gmail.com","body":"Add status key: ticgit:writeups:<uuid>:status = open|closed. Defaults to open on creation, set to closed via ti writeup close <id>."}
