@@ -301,10 +301,9 @@ fn run_linear(args: LinearArgs) -> Result<()> {
             continue;
         }
 
-        let created_at = issue
-            .created_at
-            .as_deref()
-            .and_then(|s| time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339).ok());
+        let created_at = issue.created_at.as_deref().and_then(|s| {
+            time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339).ok()
+        });
         let opts = NewTicketOpts {
             comment: None,
             tags: linear_issue_tags(&issue),
@@ -429,7 +428,7 @@ query($teamKey: String!, $first: Int!, $after: String) {
       priority
       createdAt
       state { name }
-      assignee { email }
+      assignee { name email }
       labels { nodes { name } }
       project { name }
     }
@@ -556,8 +555,10 @@ fn linear_description(issue: &LinearIssue) -> String {
         }
     }
     if let Some(assignee) = &issue.assignee {
-        if let Some(name) = non_empty(&assignee.name) {
+        if let Some(name) = assignee.name.as_deref().and_then(non_empty) {
             desc.push_str(&format!("\nLinear assignee: {name}"));
+        } else if let Some(email) = non_empty(&assignee.email) {
+            desc.push_str(&format!("\nLinear assignee: {email}"));
         }
     }
 
@@ -591,6 +592,7 @@ struct LinearState {
 
 #[derive(Debug, Deserialize)]
 struct LinearAssignee {
+    name: Option<String>,
     email: String,
 }
 
@@ -712,6 +714,7 @@ mod tests {
                 name: "In Progress".to_string(),
             }),
             assignee: Some(LinearAssignee {
+                name: Some("Alice".to_string()),
                 email: "alice@example.com".to_string(),
             }),
             labels: Some(LinearLabels {
@@ -757,6 +760,7 @@ mod tests {
     fn linear_assignee_skips_non_email() {
         let mut issue = linear_issue();
         issue.assignee = Some(LinearAssignee {
+            name: None,
             email: String::new(),
         });
         assert_eq!(linear_assignee(&issue), None);
