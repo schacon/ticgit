@@ -145,6 +145,7 @@ pub fn run(args: Args) -> Result<()> {
     // Save last-used filters so `ti views save` can recall them.
     if args.view.is_none() {
         let saved = SavedView {
+            created_at: None,
             status: args.status.clone(),
             state: args.state.clone(),
             tag: args.tag.first().cloned(),

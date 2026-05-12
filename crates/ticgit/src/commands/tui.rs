@@ -1087,7 +1087,10 @@ impl App {
                             .add_modifier(Modifier::DIM),
                     ),
                     Span::raw("  "),
-                    Span::styled(comment.author.clone(), Style::default().fg(Color::Cyan)),
+                    Span::styled(
+                        comment_author_display(&comment.author),
+                        Style::default().fg(Color::Cyan),
+                    ),
                 ]),
                 Line::raw(""),
             ];
@@ -3980,7 +3983,7 @@ fn github_author(description: &str) -> Option<&str> {
 
 fn comment_summary_line(comment: &Comment, width: usize) -> Line<'static> {
     let date = relative_date(comment.at, OffsetDateTime::now_utc());
-    let author = truncate_display(&comment.author, 14);
+    let author = comment_author_display(&comment.author);
     let prefix_width =
         UnicodeWidthStr::width(date.as_str()) + 2 + UnicodeWidthStr::width(author.as_str()) + 2;
     let body_width = width.saturating_sub(prefix_width);
@@ -3998,6 +4001,15 @@ fn comment_summary_line(comment: &Comment, width: usize) -> Line<'static> {
         Span::raw("  "),
         Span::raw(body),
     ])
+}
+
+fn comment_author_display(author: &str) -> String {
+    let display = author
+        .split_once('@')
+        .map(|(local, _)| local)
+        .filter(|local| !local.is_empty())
+        .unwrap_or(author);
+    truncate_display(display, 15)
 }
 
 fn help_heading(label: &str) -> Line<'static> {
