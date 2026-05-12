@@ -117,9 +117,9 @@ fn init_is_idempotent() {
 }
 
 #[test]
-fn help_agent_prints_markdown_guide() {
+fn agent_prints_markdown_guide() {
     let mut cmd = assert_cmd::Command::cargo_bin("ti").expect("ti binary");
-    cmd.args(["help", "--agent"])
+    cmd.arg("agent")
         .assert()
         .success()
         .stdout(predicate::str::contains("---"))
@@ -128,7 +128,8 @@ fn help_agent_prints_markdown_guide() {
         .stdout(predicate::str::contains("ti new -F /tmp/ticket.md"))
         .stdout(predicate::str::contains("ti list --markdown"))
         .stdout(predicate::str::contains("Prefer `--markdown`"))
-        .stdout(predicate::str::contains("ti state closed"));
+        .stdout(predicate::str::contains("ti close -t <id>"))
+        .stdout(predicate::str::contains("--json").not());
 }
 
 #[test]
@@ -153,6 +154,7 @@ fn machine_output_schema_is_published_and_matches_cli_contract() {
             "status".to_string(),
             "state".to_string(),
             "assigned".to_string(),
+            "closed_by".to_string(),
             "priority".to_string(),
             "points".to_string(),
             "milestone".to_string(),
@@ -620,6 +622,7 @@ fn mutating_commands_update_ticket() {
     assert_eq!(json["status"], "closed");
     assert_eq!(json["state"], "resolved");
     assert_eq!(json["assigned"], "tester@example.com");
+    assert_eq!(json["closed_by"], "tester@example.com");
     assert_eq!(json["points"], 5);
     assert_eq!(json["milestone"], "v1");
     assert_eq!(json["tags"].as_array().unwrap().len(), 2);
@@ -709,6 +712,20 @@ fn ticket_mutations_support_json_output() {
     let json: Value = serde_json::from_slice(&output).unwrap();
     assert_eq!(json["status"], "open");
     assert_eq!(json["state"], "blocked");
+    assert_eq!(json["closed_by"], Value::Null);
+
+    let output = repo
+        .ti()
+        .args(["claim", "-t", &id, "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(json["assigned"], "tester@example.com");
+    assert_eq!(json["status"], "open");
+    assert_eq!(json["state"], "assigned");
 
     let output = repo
         .ti()
@@ -917,10 +934,7 @@ fn list_filters_and_saved_views_work() {
         .stdout(predicate::str::contains("docs ticket").not());
 
     // Save the last list filters as a view.
-    repo.ti()
-        .args(["views", "save", "bugs"])
-        .assert()
-        .success();
+    repo.ti().args(["views", "save", "bugs"]).assert().success();
 
     repo.ti()
         .args(["views"])

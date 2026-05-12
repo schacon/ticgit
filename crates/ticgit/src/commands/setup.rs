@@ -93,7 +93,12 @@ fn has_meta_remote() -> Result<bool> {
 
     for remote in remotes {
         let output = Command::new("git")
-            .args(["config", "--bool", "--get", &format!("remote.{remote}.meta")])
+            .args([
+                "config",
+                "--bool",
+                "--get",
+                &format!("remote.{remote}.meta"),
+            ])
             .output()
             .context("checking remote.*.meta config")?;
 

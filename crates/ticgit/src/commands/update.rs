@@ -30,9 +30,7 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     let target = detect_target()?;
-    let url = format!(
-        "https://github.com/{REPO}/releases/latest/download/ticgit-{target}.tar.gz"
-    );
+    let url = format!("https://github.com/{REPO}/releases/latest/download/ticgit-{target}.tar.gz");
 
     println!("Downloading from: {url}");
 

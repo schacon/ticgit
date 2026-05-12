@@ -29,6 +29,7 @@
         "status",
         "state",
         "assigned",
+        "closed_by",
         "priority",
         "points",
         "milestone",
@@ -89,6 +90,13 @@
             "string",
             "null"
           ]
+        },
+        "closed_by": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "User email that last closed the ticket."
         },
         "priority": {
           "type": [

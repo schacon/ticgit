@@ -25,7 +25,11 @@ pub struct Args {
 
     /// Show only tickets with this tag.
     #[arg(short = 'g', long = "tag")]
-    pub tag: Option<String>,
+    pub tag: Vec<String>,
+
+    /// How multiple --tag filters combine: all or any.
+    #[arg(long = "tag-mode", default_value = "all")]
+    pub tag_mode: String,
 
     /// Show only tickets assigned to this user.
     #[arg(short = 'a', long = "assigned")]
@@ -77,7 +81,8 @@ pub fn run(args: Args) -> Result<()> {
             state: saved.state.clone(),
             status: saved.status.clone(),
             all: saved.all,
-            tag: saved.tag.clone(),
+            tag: saved_tags(&saved),
+            tag_mode: if saved.tag_match_all { "all" } else { "any" }.to_string(),
             assigned: saved.assigned.clone(),
             only_tagged: saved.only_tagged,
             search: saved.search.clone(),
@@ -114,11 +119,18 @@ pub fn run(args: Args) -> Result<()> {
         Some(spec) => Some(SearchFilter::parse(spec).map_err(|e| anyhow::anyhow!(e))?),
         None => None,
     };
+    let tag_match_all = match args.tag_mode.as_str() {
+        "all" => true,
+        "any" | "either" => false,
+        other => anyhow::bail!("unknown tag mode `{other}` (expected `all` or `any`)"),
+    };
 
     let filter = Filter {
         status,
         state,
-        tag: args.tag.clone(),
+        tag: args.tag.first().cloned(),
+        tags: args.tag.clone(),
+        tag_match_all,
         assigned: args.assigned.clone(),
         only_tagged: args.only_tagged,
         search,
@@ -135,7 +147,9 @@ pub fn run(args: Args) -> Result<()> {
         let saved = SavedView {
             status: args.status.clone(),
             state: args.state.clone(),
-            tag: args.tag.clone(),
+            tag: args.tag.first().cloned(),
+            tags: args.tag.clone(),
+            tag_match_all,
             assigned: args.assigned.clone(),
             only_tagged: args.only_tagged,
             search: args.search.clone(),
@@ -171,7 +185,19 @@ pub fn run(args: Args) -> Result<()> {
     let nicks = render::build_nick_map(&users);
     println!(
         "{}",
-        render::tickets_table_with_refs(&tickets, current.as_ref(), &open_ref_lengths, Some(&nicks))
+        render::tickets_table_with_refs(
+            &tickets,
+            current.as_ref(),
+            &open_ref_lengths,
+            Some(&nicks)
+        )
     );
     Ok(())
+}
+
+fn saved_tags(saved: &SavedView) -> Vec<String> {
+    if !saved.tags.is_empty() {
+        return saved.tags.clone();
+    }
+    saved.tag.iter().cloned().collect()
 }

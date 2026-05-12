@@ -205,18 +205,15 @@ fn issue_tags(issue: &GhIssue) -> Vec<String> {
 }
 
 fn primary_assignee(issue: &GhIssue) -> Option<String> {
-    issue
-        .assignees
-        .iter()
-        .find_map(|assignee| {
-            non_empty(&assignee.login).map(|login| {
-                if login.contains('@') {
-                    login.to_string()
-                } else {
-                    format!("{login}@users.noreply.github.com")
-                }
-            })
+    issue.assignees.iter().find_map(|assignee| {
+        non_empty(&assignee.login).map(|login| {
+            if login.contains('@') {
+                login.to_string()
+            } else {
+                format!("{login}@users.noreply.github.com")
+            }
         })
+    })
 }
 
 fn issue_description(issue: &GhIssue) -> String {
@@ -558,6 +555,11 @@ fn linear_description(issue: &LinearIssue) -> String {
             desc.push_str(&format!("\nLinear state: {name}"));
         }
     }
+    if let Some(assignee) = &issue.assignee {
+        if let Some(name) = non_empty(&assignee.name) {
+            desc.push_str(&format!("\nLinear assignee: {name}"));
+        }
+    }
 
     if let Some(body) = issue.description.as_deref().and_then(non_empty) {
         desc.push_str("\n\n");
@@ -739,7 +741,7 @@ mod tests {
     fn linear_issue_description_includes_url_state_and_body() {
         assert_eq!(
             linear_description(&linear_issue()),
-            "Linear issue: https://linear.app/team/issue/ENG-123\nLinear state: In Progress\n\nUsers can't log in after token expiry"
+            "Linear issue: https://linear.app/team/issue/ENG-123\nLinear state: In Progress\nLinear assignee: Alice\n\nUsers can't log in after token expiry"
         );
     }
 

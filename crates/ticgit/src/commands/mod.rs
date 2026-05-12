@@ -3,10 +3,11 @@
 
 pub mod assign;
 pub mod checkout;
+pub mod claim;
 pub mod close;
 pub mod code;
-pub mod depends;
 pub mod comment;
+pub mod depends;
 pub mod edit;
 pub mod history;
 pub mod import;
@@ -16,20 +17,20 @@ pub mod meta;
 pub mod milestone;
 pub mod new;
 pub mod next;
-pub mod pull;
-pub mod subissue;
 pub mod points;
 pub mod priority;
+pub mod pull;
 pub mod recent;
 pub mod setup;
 pub mod show;
 pub mod spec;
-pub mod stats;
 pub mod state;
+pub mod stats;
+pub mod subissue;
 pub mod sync;
 pub mod tag;
-pub mod update;
 pub mod tui;
+pub mod update;
 pub mod users;
 pub mod view;
 

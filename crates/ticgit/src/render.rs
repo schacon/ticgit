@@ -477,6 +477,12 @@ fn ticket_details_markdown(t: &Ticket) -> String {
     .unwrap();
     writeln!(
         out,
+        "- Closed by: {}",
+        optional_inline(t.closed_by.as_deref())
+    )
+    .unwrap();
+    writeln!(
+        out,
         "- Priority: {}",
         t.priority
             .map(|p| p.to_string())
@@ -497,12 +503,7 @@ fn ticket_details_markdown(t: &Ticket) -> String {
         optional_inline(t.milestone.as_deref())
     )
     .unwrap();
-    writeln!(
-        out,
-        "- Code: {}",
-        optional_inline(t.code.as_deref())
-    )
-    .unwrap();
+    writeln!(out, "- Code: {}", optional_inline(t.code.as_deref())).unwrap();
     writeln!(out, "- Tags: {}", tags_inline(t)).unwrap();
     out.trim_end().to_string()
 }
@@ -889,6 +890,7 @@ mod tests {
             status: state.status(),
             state,
             assigned: None,
+            closed_by: None,
             priority: None,
             points: None,
             milestone: None,

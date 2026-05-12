@@ -55,10 +55,13 @@ pub fn run(args: Args) -> Result<()> {
             store.add_user_email(&add.nick, &add.email)?;
             if args.json {
                 let emails = store.get_user(&add.nick)?;
-                println!("{}", serde_json::json!({
-                    "nick": add.nick,
-                    "emails": emails,
-                }));
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "nick": add.nick,
+                        "emails": emails,
+                    })
+                );
             } else {
                 println!("Added {} to user {}", add.email, add.nick);
             }
@@ -68,20 +71,26 @@ pub fn run(args: Args) -> Result<()> {
                 store.remove_user_email(&rm.nick, email)?;
                 if args.json {
                     let emails = store.get_user(&rm.nick)?;
-                    println!("{}", serde_json::json!({
-                        "nick": rm.nick,
-                        "emails": emails,
-                    }));
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "nick": rm.nick,
+                            "emails": emails,
+                        })
+                    );
                 } else {
                     println!("Removed {} from user {}", email, rm.nick);
                 }
             } else {
                 store.remove_user(&rm.nick)?;
                 if args.json {
-                    println!("{}", serde_json::json!({
-                        "nick": rm.nick,
-                        "removed": true,
-                    }));
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "nick": rm.nick,
+                            "removed": true,
+                        })
+                    );
                 } else {
                     println!("Removed user {}", rm.nick);
                 }
@@ -93,9 +102,7 @@ pub fn run(args: Args) -> Result<()> {
             if args.json {
                 let json: serde_json::Value = users
                     .iter()
-                    .map(|(nick, emails)| {
-                        (nick.clone(), serde_json::json!(emails))
-                    })
+                    .map(|(nick, emails)| (nick.clone(), serde_json::json!(emails)))
                     .collect();
                 println!("{}", serde_json::to_string_pretty(&json)?);
                 return Ok(());

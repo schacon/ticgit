@@ -152,17 +152,10 @@ fn fetch_remote_tickets(url: &str) -> Result<Vec<Ticket>> {
     // Configure a remote with git-meta refspecs so session.pull() works.
     git_at(path, &["remote", "add", "origin", url])?;
     let namespace = meta_namespace()?;
-    let fetch_refspec = format!(
-        "+refs/{namespace}/main:refs/{namespace}/remotes/main"
-    );
+    let fetch_refspec = format!("+refs/{namespace}/main:refs/{namespace}/remotes/main");
     git_at(
         path,
-        &[
-            "config",
-            "--add",
-            "remote.origin.fetch",
-            &fetch_refspec,
-        ],
+        &["config", "--add", "remote.origin.fetch", &fetch_refspec],
     )?;
     git_at(path, &["config", "remote.origin.meta", "true"])?;
 
@@ -177,9 +170,7 @@ fn fetch_remote_tickets(url: &str) -> Result<Vec<Ticket>> {
         .pull(Some("origin"))
         .context("pulling metadata from remote")?;
 
-    remote_store
-        .list()
-        .context("listing tickets from remote")
+    remote_store.list().context("listing tickets from remote")
 }
 
 fn meta_namespace() -> Result<String> {
@@ -218,20 +209,29 @@ fn import_ticket(store: &TicketStore, remote: &Ticket) -> Result<()> {
     )?;
 
     if let Some(ref desc) = remote.description {
-        p.set(&ticgit_lib::keys::ticket_field(id, "description"), desc.as_str())?;
+        p.set(
+            &ticgit_lib::keys::ticket_field(id, "description"),
+            desc.as_str(),
+        )?;
     }
     if let Some(ref spec) = remote.spec {
         p.set(&ticgit_lib::keys::ticket_field(id, "spec"), spec.as_str())?;
     }
     if let Some(ref assigned) = remote.assigned {
-        p.set(&ticgit_lib::keys::ticket_field(id, "assigned"), assigned.as_str())?;
+        p.set(
+            &ticgit_lib::keys::ticket_field(id, "assigned"),
+            assigned.as_str(),
+        )?;
+    }
+    if let Some(ref closed_by) = remote.closed_by {
+        p.set(
+            &ticgit_lib::keys::ticket_field(id, "closed-by"),
+            closed_by.as_str(),
+        )?;
     }
     if let Some(points) = remote.points {
         let pts = points.to_string();
-        p.set(
-            &ticgit_lib::keys::ticket_field(id, "points"),
-            pts.as_str(),
-        )?;
+        p.set(&ticgit_lib::keys::ticket_field(id, "points"), pts.as_str())?;
     }
     if let Some(ref milestone) = remote.milestone {
         p.set(
@@ -244,10 +244,7 @@ fn import_ticket(store: &TicketStore, remote: &Ticket) -> Result<()> {
     }
     if let Some(ref parent_id) = remote.parent {
         let pid = parent_id.to_string();
-        p.set(
-            &ticgit_lib::keys::ticket_field(id, "parent"),
-            pid.as_str(),
-        )?;
+        p.set(&ticgit_lib::keys::ticket_field(id, "parent"), pid.as_str())?;
     }
 
     for tag in &remote.tags {
@@ -263,7 +260,10 @@ fn import_ticket(store: &TicketStore, remote: &Ticket) -> Result<()> {
     }
 
     for (key, value) in &remote.meta {
-        p.set(&ticgit_lib::keys::ticket_meta_field(id, key), value.as_str())?;
+        p.set(
+            &ticgit_lib::keys::ticket_meta_field(id, key),
+            value.as_str(),
+        )?;
     }
 
     // Comments: push each one as raw JSON to preserve authorship and timestamp.
@@ -309,6 +309,12 @@ fn merge_ticket(store: &TicketStore, local: &Ticket, remote: &Ticket) -> Result<
         store.set_assigned(id, remote.assigned.as_deref())?;
         changed = true;
     }
+    if remote.closed_by != local.closed_by
+        || (remote.status == ticgit_lib::TicketStatus::Closed && remote.closed_by.is_none())
+    {
+        store.set_closed_by(id, remote.closed_by.as_deref())?;
+        changed = true;
+    }
     if remote.points != local.points {
         store.set_points(id, remote.points)?;
         changed = true;
@@ -343,10 +349,7 @@ fn merge_ticket(store: &TicketStore, local: &Ticket, remote: &Ticket) -> Result<
         let parent_id = remote.parent.unwrap();
         let p = store.session().target(&ticgit_lib::Target::project());
         let pid = parent_id.to_string();
-        p.set(
-            &ticgit_lib::keys::ticket_field(id, "parent"),
-            pid.as_str(),
-        )?;
+        p.set(&ticgit_lib::keys::ticket_field(id, "parent"), pid.as_str())?;
         changed = true;
     }
 

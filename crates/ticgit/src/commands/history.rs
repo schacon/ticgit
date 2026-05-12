@@ -63,12 +63,14 @@ fn db_path_for(git_dir: &std::path::Path) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn query_history(db_path: &std::path::Path, ticket_id: &str, limit: Option<usize>) -> Result<Vec<HistoryEntry>> {
-    let conn = rusqlite::Connection::open_with_flags(
-        db_path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    )
-    .context("opening git-meta database")?;
+fn query_history(
+    db_path: &std::path::Path,
+    ticket_id: &str,
+    limit: Option<usize>,
+) -> Result<Vec<HistoryEntry>> {
+    let conn =
+        rusqlite::Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .context("opening git-meta database")?;
 
     let prefix = format!("ticgit:tickets:{ticket_id}:");
     let limit_val = limit.unwrap_or(100) as i64;
@@ -78,20 +80,17 @@ fn query_history(db_path: &std::path::Path, ticket_id: &str, limit: Option<usize
          FROM metadata_log \
          WHERE target_type = 'project' AND key LIKE ?1 \
          ORDER BY timestamp DESC \
-         LIMIT ?2"
+         LIMIT ?2",
     )?;
 
-    let rows = stmt.query_map(
-        rusqlite::params![format!("{prefix}%"), limit_val],
-        |row| {
-            let key: String = row.get(0)?;
-            let value: String = row.get(1)?;
-            let operation: String = row.get(2)?;
-            let email: String = row.get(3)?;
-            let timestamp_ms: i64 = row.get(4)?;
-            Ok((key, value, operation, email, timestamp_ms))
-        },
-    )?;
+    let rows = stmt.query_map(rusqlite::params![format!("{prefix}%"), limit_val], |row| {
+        let key: String = row.get(0)?;
+        let value: String = row.get(1)?;
+        let operation: String = row.get(2)?;
+        let email: String = row.get(3)?;
+        let timestamp_ms: i64 = row.get(4)?;
+        Ok((key, value, operation, email, timestamp_ms))
+    })?;
 
     let mut entries = Vec::new();
     for row in rows {
@@ -153,17 +152,10 @@ fn print_terminal(entries: &[HistoryEntry]) {
             u8::from(e.at.month()),
             e.at.day()
         );
-        let time = format!(
-            "{:02}:{:02}",
-            e.at.hour(),
-            e.at.minute()
-        );
+        let time = format!("{:02}:{:02}", e.at.hour(), e.at.minute());
 
         if date != last_date {
-            println!(
-                "\n{}{}{}",
-                ANSI_DIM, date, ANSI_RESET
-            );
+            println!("\n{}{}{}", ANSI_DIM, date, ANSI_RESET);
             last_date = date;
         }
 
@@ -186,11 +178,19 @@ fn print_terminal(entries: &[HistoryEntry]) {
 
         println!(
             "  {}{}{} {} {}{}{} → {}{}{}  {}{}{}",
-            ANSI_DIM, time, ANSI_RESET,
+            ANSI_DIM,
+            time,
+            ANSI_RESET,
             verb,
-            ANSI_CYAN, e.field, ANSI_RESET,
-            ANSI_YELLOW, value_display, ANSI_RESET,
-            ANSI_DIM, short_email, ANSI_RESET,
+            ANSI_CYAN,
+            e.field,
+            ANSI_RESET,
+            ANSI_YELLOW,
+            value_display,
+            ANSI_RESET,
+            ANSI_DIM,
+            short_email,
+            ANSI_RESET,
         );
     }
     println!();

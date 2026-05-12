@@ -81,10 +81,7 @@ pub fn run(args: Args) -> Result<()> {
 
     let tags = parse_tags(args.tags.as_deref());
 
-    let parent = args
-        .subissue
-        .map(|p| store.resolve_id(&p))
-        .transpose()?;
+    let parent = args.subissue.map(|p| store.resolve_id(&p)).transpose()?;
 
     let opts = NewTicketOpts {
         comment,

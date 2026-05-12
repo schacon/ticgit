@@ -98,10 +98,17 @@ pub fn run(args: Args) -> Result<()> {
     }
 
     println!("Next: {} - {}", ticket.short_id(), ticket.title);
-    println!("  State: {}  Priority: {}  Points: {}",
+    println!(
+        "  State: {}  Priority: {}  Points: {}",
         ticket.state.as_str(),
-        ticket.priority.map(|p| p.to_string()).unwrap_or_else(|| "-".into()),
-        ticket.points.map(|p| p.to_string()).unwrap_or_else(|| "-".into()),
+        ticket
+            .priority
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| "-".into()),
+        ticket
+            .points
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| "-".into()),
     );
     if let Some(a) = &ticket.assigned {
         println!("  Assigned: {a}");
@@ -125,7 +132,7 @@ fn score(t: &Ticket, max_priority: i64) -> i64 {
         TicketState::InProgress => s += 100,
         TicketState::Assigned => s += 80,
         TicketState::Review => s += 60,
-        TicketState::Blocked => s -= 200,  // skip blocked tickets
+        TicketState::Blocked => s -= 200, // skip blocked tickets
         TicketState::New => s += 40,
         _ => {}
     }

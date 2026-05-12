@@ -1,7 +1,11 @@
+use std::collections::BTreeSet;
 use std::io::{self, Stdout};
-use std::time::Duration;
+use std::process::Command;
+use std::sync::mpsc::{self, Receiver};
+use std::thread;
+use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use crossterm::execute;
@@ -12,12 +16,47 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{
+    Block, Borders, Clear, Gauge, HighlightSpacing, List, ListItem, ListState, Paragraph, Wrap,
+};
 use ratatui::{Frame, Terminal};
-use ticgit_lib::{query, Filter, NewTicketOpts, Ticket, TicketState, TicketStatus, TicketStore};
-use time::format_description::well_known::Rfc3339;
+use ticgit_lib::{
+    query, Comment, Filter, NewTicketOpts, SortOrder, Ticket, TicketLifecycle, TicketState,
+    TicketStatus, TicketStore,
+};
+use time::OffsetDateTime;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::commands::open_store;
+const HIGHLIGHT_SYMBOL: &str = "> ";
+const LIST_ID_WIDTH: usize = 3;
+const LIST_STATE_WIDTH: usize = 2;
+const LIST_AGE_WIDTH: usize = 3;
+const LIST_PRIORITY_WIDTH: usize = 3;
+const ANSI_TAG_COLORS: [Color; 12] = [
+    Color::Blue,
+    Color::Cyan,
+    Color::Green,
+    Color::Yellow,
+    Color::Magenta,
+    Color::LightBlue,
+    Color::LightCyan,
+    Color::LightGreen,
+    Color::LightYellow,
+    Color::LightMagenta,
+    Color::LightRed,
+    Color::Gray,
+];
+const BOARD_STATES: [TicketState; 5] = [
+    TicketState::New,
+    TicketState::Assigned,
+    TicketState::InProgress,
+    TicketState::Blocked,
+    TicketState::Review,
+];
+
+use crate::commands::{open_store, SessionGitDir};
+use crate::editor;
+use crate::session_state::{SavedView, State};
 
 #[derive(Debug, Parser)]
 pub struct Args {}
@@ -69,23 +108,91 @@ fn init_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
     Ok(terminal)
 }
 
+fn suspend_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+    Ok(())
+}
+
+fn resume_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
+    enable_raw_mode()?;
+    execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+    terminal.hide_cursor()?;
+    terminal.clear()?;
+    Ok(())
+}
+
 struct App {
     store: TicketStore,
     tickets: Vec<Ticket>,
     visible: Vec<usize>,
     list_state: ListState,
+    board_column: usize,
+    board_rows: [usize; BOARD_STATES.len()],
+    view: ViewMode,
+    active_view_name: Option<String>,
+    saved_view_state: ListState,
+    pending_delete_view: Option<String>,
+    base_status: Option<TicketStatus>,
+    base_state: Option<TicketState>,
+    assigned_filter: Option<String>,
+    only_tagged: bool,
+    hide_subissues: bool,
+    sort_order: Option<SortOrder>,
     filter: String,
+    tag_filter: BTreeSet<String>,
+    tag_filter_match_all: bool,
+    tag_picker_state: ListState,
     mode: Mode,
     input: String,
     new_ticket: NewTicketDraft,
     detail: Option<usize>,
+    comments_mode: bool,
+    comment_state: ListState,
+    show_help: bool,
+    show_quit_hint: bool,
     status: Option<String>,
+    sync: Option<SyncState>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ViewMode {
+    List,
+    Board,
+}
+
+struct SyncState {
+    receiver: Receiver<Result<SyncResult>>,
+    selected_id: Option<uuid::Uuid>,
+    started_at: Instant,
+}
+
+struct SyncResult {
+    summary: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ViewKind {
+    BuiltIn,
+    Saved,
+}
+
+#[derive(Debug, Clone)]
+struct ViewEntry {
+    name: String,
+    view: SavedView,
+    kind: ViewKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
     Normal,
     Filter,
+    Tags,
+    SavedViews,
+    ConfirmDeleteView,
+    SaveView,
     Input(InputKind),
     State,
     Create,
@@ -93,9 +200,9 @@ enum Mode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InputKind {
-    Title,
-    Description,
     Comment,
+    Priority,
+    Points,
     AddTags,
     RemoveTags,
 }
@@ -125,12 +232,32 @@ impl App {
             tickets: Vec::new(),
             visible: Vec::new(),
             list_state: ListState::default(),
+            board_column: 0,
+            board_rows: [0; BOARD_STATES.len()],
+            view: ViewMode::List,
+            active_view_name: None,
+            saved_view_state: ListState::default(),
+            pending_delete_view: None,
+            base_status: Some(TicketStatus::Open),
+            base_state: None,
+            assigned_filter: None,
+            only_tagged: false,
+            hide_subissues: false,
+            sort_order: None,
             filter: String::new(),
+            tag_filter: BTreeSet::new(),
+            tag_filter_match_all: true,
+            tag_picker_state: ListState::default(),
             mode: Mode::Normal,
             input: String::new(),
             new_ticket: NewTicketDraft::default(),
             detail: None,
+            comments_mode: false,
+            comment_state: ListState::default(),
+            show_help: false,
+            show_quit_hint: false,
             status: None,
+            sync: None,
         };
         app.reload(None)?;
         Ok(app)
@@ -140,10 +267,18 @@ impl App {
         self.tickets = query::apply(
             self.store.list()?,
             &Filter {
-                status: Some(TicketStatus::Open),
+                status: self.base_status,
+                state: self.base_state,
+                assigned: self.assigned_filter.clone(),
+                only_tagged: self.only_tagged,
+                hide_subissues: self.hide_subissues,
+                order: self.sort_order,
                 ..Default::default()
             },
         );
+        if self.sort_order.is_none() {
+            self.tickets.sort_by(compare_tui_tickets);
+        }
         self.apply_filter();
 
         if let Some(id) = preferred_id {
@@ -158,14 +293,17 @@ impl App {
                 }
             } else if self.detail.is_some() {
                 self.detail = None;
+                self.comments_mode = false;
             }
         }
+        self.sync_comment_selection();
 
         Ok(())
     }
 
     fn run(&mut self, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
         loop {
+            self.poll_sync()?;
             terminal.draw(|frame| self.draw(frame))?;
 
             if !event::poll(Duration::from_millis(250))? {
@@ -178,7 +316,7 @@ impl App {
             if key.kind != KeyEventKind::Press {
                 continue;
             }
-            if self.handle_key(key)? {
+            if self.handle_key(key, terminal)? {
                 return Ok(());
             }
         }
@@ -186,107 +324,261 @@ impl App {
 
     fn draw(&mut self, frame: &mut Frame<'_>) {
         let area = frame.area();
+        let constraints = if self.sync.is_some() {
+            vec![
+                Constraint::Min(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+            ]
+        } else {
+            vec![Constraint::Min(1), Constraint::Length(1)]
+        };
         let outer = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Min(1)])
+            .constraints(constraints)
             .split(area);
 
-        self.draw_filter(frame, outer[0]);
         if self.detail.is_some() {
             let panes = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
-                .split(outer[1]);
-            self.draw_list(frame, panes[0]);
-            self.draw_detail(frame, panes[1]);
+                .split(outer[0]);
+            if self.comments_mode {
+                self.draw_comments_list(frame, panes[0]);
+                self.draw_comment_detail(frame, panes[1]);
+            } else {
+                self.draw_list(frame, panes[0]);
+                self.draw_detail(frame, panes[1]);
+            }
         } else {
-            self.draw_list(frame, outer[1]);
+            match self.view {
+                ViewMode::List => self.draw_list(frame, outer[0]),
+                ViewMode::Board => self.draw_board(frame, outer[0]),
+            }
+        }
+        if self.sync.is_some() {
+            self.draw_sync_progress(frame, outer[1]);
+            self.draw_menu_bar(frame, outer[2]);
+        } else {
+            self.draw_menu_bar(frame, outer[1]);
         }
 
         match self.mode {
+            Mode::Tags => self.draw_tags_modal(frame),
+            Mode::SavedViews => self.draw_saved_views_modal(frame),
+            Mode::ConfirmDeleteView => self.draw_delete_view_confirm_modal(frame),
+            Mode::SaveView => self.draw_save_view_modal(frame),
             Mode::Input(kind) => self.draw_input_modal(frame, kind),
             Mode::State => self.draw_state_modal(frame),
             Mode::Create => self.draw_create_modal(frame),
             _ => {}
         }
+        if self.show_help {
+            self.draw_help_modal(frame);
+        }
+        if self.show_quit_hint {
+            self.draw_quit_hint_modal(frame);
+        }
     }
 
-    fn draw_filter(&self, frame: &mut Frame<'_>, area: Rect) {
+    fn draw_menu_bar(&self, frame: &mut Frame<'_>, area: Rect) {
         let prompt = match self.mode {
             Mode::Filter => Line::from(vec![
+                Span::styled(
+                    " ti tui ",
+                    Style::default().fg(Color::Black).bg(Color::Yellow),
+                ),
+                Span::raw(" "),
                 Span::styled("filter ", Style::default().fg(Color::Yellow)),
                 Span::raw("/"),
                 Span::styled(self.filter.as_str(), Style::default().fg(Color::Cyan)),
                 Span::raw("  type to filter, Enter/Esc to finish"),
             ]),
+            Mode::Tags => Line::from(vec![
+                Span::styled(
+                    " ti tui ",
+                    Style::default().fg(Color::Black).bg(Color::Yellow),
+                ),
+                Span::raw(" "),
+                Span::styled("tags ", Style::default().fg(Color::Yellow)),
+                Span::raw("j/k move  Space toggle  a all/any  c clear  Enter/Esc finish"),
+            ]),
+            Mode::SavedViews => Line::from(vec![
+                Span::styled(
+                    " ti tui ",
+                    Style::default().fg(Color::Black).bg(Color::Yellow),
+                ),
+                Span::raw(" "),
+                Span::styled("views ", Style::default().fg(Color::Yellow)),
+                Span::raw("j/k move  Enter apply  d default  Esc cancel"),
+            ]),
+            Mode::SaveView => Line::from(vec![
+                Span::styled(
+                    " ti tui ",
+                    Style::default().fg(Color::Black).bg(Color::Yellow),
+                ),
+                Span::raw(" "),
+                Span::styled("save view ", Style::default().fg(Color::Yellow)),
+                Span::raw(self.input.as_str()),
+                Span::raw("  Enter save, Esc cancel"),
+            ]),
             Mode::Input(kind) => Line::from(vec![
+                Span::styled(
+                    " ti tui ",
+                    Style::default().fg(Color::Black).bg(Color::Yellow),
+                ),
+                Span::raw(" "),
                 Span::styled("editing ", Style::default().fg(Color::Yellow)),
                 Span::raw(kind.label()),
                 Span::raw("  Enter apply, Esc cancel"),
             ]),
             Mode::State => Line::from(vec![
+                Span::styled(
+                    " ti tui ",
+                    Style::default().fg(Color::Black).bg(Color::Yellow),
+                ),
+                Span::raw(" "),
                 Span::styled("editing ", Style::default().fg(Color::Yellow)),
                 Span::raw("state  choose in modal, Esc cancel"),
             ]),
             Mode::Create => Line::from(vec![
+                Span::styled(
+                    " ti tui ",
+                    Style::default().fg(Color::Black).bg(Color::Yellow),
+                ),
+                Span::raw(" "),
                 Span::styled("new ", Style::default().fg(Color::Yellow)),
                 Span::raw("Tab/↑/↓ fields  Enter create  Esc cancel"),
             ]),
             Mode::Normal => {
-                let status = self.status.as_deref().unwrap_or(
-                    "n new  / filter  Enter details  t title  d desc  c comment  s state  +/- tags  q quit",
-                );
+                let status = self.status.as_deref().unwrap_or_else(|| {
+                    if self.comments_mode {
+                        "j/k comments  c add comment  Esc details  ? help  q quit"
+                    } else if self.view == ViewMode::Board && self.detail.is_none() {
+                        "b list  h/l columns  j/k tickets  Enter details  e edit  i spec  s state  c comment  ? help  q quit"
+                    } else {
+                        "b board  n new  / search  g tags  v views  V save view  e edit  i spec  C claim  Enter details  S sync  ? help  q quit"
+                    }
+                });
                 Line::from(vec![
+                    Span::styled(
+                        " ti tui ",
+                        Style::default().fg(Color::Black).bg(Color::Yellow),
+                    ),
+                    Span::raw(" "),
                     Span::styled("normal ", Style::default().fg(Color::Yellow)),
                     Span::raw(status),
                 ])
             }
         };
-        let paragraph =
-            Paragraph::new(prompt).block(Block::default().borders(Borders::ALL).title("ti tui"));
+        let paragraph = Paragraph::new(prompt).style(Style::default().bg(Color::DarkGray));
         frame.render_widget(paragraph, area);
+    }
+
+    fn draw_sync_progress(&self, frame: &mut Frame<'_>, area: Rect) {
+        let Some(sync) = &self.sync else {
+            return;
+        };
+        let elapsed = sync.started_at.elapsed().as_millis() as u64;
+        let ratio = ((elapsed / 80) % 100) as f64 / 100.0;
+        let gauge = Gauge::default()
+            .gauge_style(Style::default().fg(Color::Cyan).bg(Color::DarkGray))
+            .label("syncing tickets")
+            .ratio(ratio);
+        frame.render_widget(gauge, area);
     }
 
     fn draw_list(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let count = self.visible.len();
-        let title = if self.filter.is_empty() {
-            format!("Open tickets ({count})")
+        let filter = self.active_filter_display();
+        let scope = if self.base_status == Some(TicketStatus::Open) && self.base_state.is_none() {
+            "Open tickets"
         } else {
-            format!("Open tickets matching \"{}\" ({count})", self.filter)
+            "Tickets"
         };
+        let title = if filter.is_empty() {
+            format!("{scope} ({count})")
+        } else {
+            format!("{scope} matching {filter} ({count})")
+        };
+
+        let block = Block::default().borders(Borders::ALL).title(title);
+        let row_width = usize::from(block.inner(area).width)
+            .saturating_sub(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL));
+        let compact = self.detail.is_some();
 
         let items: Vec<ListItem<'_>> = self
             .visible
             .iter()
             .map(|&idx| {
                 let ticket = &self.tickets[idx];
-                let tags = if ticket.tags.is_empty() {
-                    String::new()
-                } else {
-                    format!(
-                        " [{}]",
-                        ticket.tags.iter().cloned().collect::<Vec<_>>().join(",")
-                    )
-                };
-                ListItem::new(Line::from(vec![
-                    Span::styled(ticket.short_id(), Style::default().fg(Color::DarkGray)),
-                    Span::raw("  "),
-                    Span::raw(ticket.title.as_str()),
-                    Span::styled(tags, Style::default().fg(Color::Blue)),
-                ]))
+                ListItem::new(ticket_list_line(
+                    ticket,
+                    row_width,
+                    compact,
+                    self.store.email(),
+                ))
             })
             .collect();
 
         let list = List::new(items)
-            .block(Block::default().borders(Borders::ALL).title(title))
+            .block(block)
             .highlight_style(
                 Style::default()
-                    .bg(Color::Blue)
+                    .bg(Color::Rgb(0, 0, 95))
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD),
             )
-            .highlight_symbol("> ");
+            .highlight_symbol(HIGHLIGHT_SYMBOL)
+            .highlight_spacing(HighlightSpacing::Always);
         frame.render_stateful_widget(list, area, &mut self.list_state);
+    }
+
+    fn draw_board(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        let constraints = vec![Constraint::Percentage(20); BOARD_STATES.len()];
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints(constraints)
+            .split(area);
+
+        for (column_idx, state) in BOARD_STATES.iter().enumerate() {
+            let tickets = self.board_column_tickets(column_idx);
+            let title = format!("{} ({})", state.as_str(), tickets.len());
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .border_style(if column_idx == self.board_column {
+                    Style::default().fg(Color::Cyan)
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                });
+            let row_width = usize::from(block.inner(columns[column_idx]).width)
+                .saturating_sub(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL));
+            let items: Vec<ListItem<'_>> = tickets
+                .iter()
+                .map(|&&idx| {
+                    let ticket = &self.tickets[idx];
+                    ListItem::new(board_ticket_line(ticket, row_width))
+                })
+                .collect();
+            let mut state = ListState::default();
+            if column_idx == self.board_column && !tickets.is_empty() {
+                let selected = self.board_rows[column_idx].min(tickets.len() - 1);
+                self.board_rows[column_idx] = selected;
+                state.select(Some(selected));
+            }
+            let list = List::new(items)
+                .block(block)
+                .highlight_style(
+                    Style::default()
+                        .bg(Color::Rgb(0, 0, 95))
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                )
+                .highlight_symbol(HIGHLIGHT_SYMBOL)
+                .highlight_spacing(HighlightSpacing::Always);
+            frame.render_stateful_widget(list, columns[column_idx], &mut state);
+        }
     }
 
     fn draw_detail(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -294,27 +586,38 @@ impl App {
             return;
         };
         let ticket = &self.tickets[idx];
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(area);
-
         let mut detail_lines = vec![
-            field_line("Title", ticket.title.as_str()),
-            field_line("Id", &ticket.id.to_string()),
+            Line::from(Span::styled(
+                ticket.id.to_string(),
+                Style::default().fg(Color::DarkGray),
+            )),
+            Line::from(Span::styled(
+                ticket.title.clone(),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )),
             field_line(
                 "Created",
                 &format!(
-                    "{} by {}",
-                    ticket.created_at.format(&Rfc3339).unwrap_or_default(),
+                    "{} ago by {}",
+                    relative_date(ticket.created_at, OffsetDateTime::now_utc()),
                     created_by_display(ticket)
                 ),
             ),
-            field_line("Status", ticket.status.as_str()),
-            field_line("State", ticket.state.as_str()),
+            status_state_line(ticket),
         ];
+        if !ticket.tags.is_empty() {
+            detail_lines.push(tags_field_line(&ticket.tags));
+        }
         if let Some(assigned) = &ticket.assigned {
             detail_lines.push(field_line("Assigned", assigned));
+        }
+        if let Some(closed_by) = &ticket.closed_by {
+            detail_lines.push(field_line("Closed by", closed_by));
+        }
+        if let Some(priority) = ticket.priority {
+            detail_lines.push(field_line("Priority", &priority.to_string()));
         }
         if let Some(points) = ticket.points {
             detail_lines.push(field_line("Points", &points.to_string()));
@@ -322,75 +625,116 @@ impl App {
         if let Some(milestone) = &ticket.milestone {
             detail_lines.push(field_line("Milestone", milestone));
         }
-        if !ticket.tags.is_empty() {
-            detail_lines.push(field_line(
-                "Tags",
-                &ticket.tags.iter().cloned().collect::<Vec<_>>().join(", "),
-            ));
+        if let Some(spec) = &ticket.spec {
+            detail_lines.push(field_line("Spec", first_spec_line(spec)));
         }
-        detail_lines.push(Line::raw(""));
-        detail_lines.push(Line::from(Span::styled(
-            "Description",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        )));
         if let Some(description) = &ticket.description {
+            detail_lines.push(Line::raw(""));
             for line in description.lines() {
                 detail_lines.push(Line::from(Span::raw(line.to_string())));
             }
-        } else {
+        }
+        if !ticket.comments.is_empty() {
+            detail_lines.push(Line::raw(""));
             detail_lines.push(Line::from(Span::styled(
-                "(none)",
-                Style::default().fg(Color::DarkGray),
+                "Comments",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
             )));
+            let width = usize::from(area.width).saturating_sub(2);
+            for comment in &ticket.comments {
+                detail_lines.push(comment_summary_line(comment, width));
+            }
         }
 
         let detail = Paragraph::new(detail_lines)
             .block(Block::default().borders(Borders::ALL).title("Details"))
             .wrap(Wrap { trim: false });
-        frame.render_widget(detail, chunks[0]);
+        frame.render_widget(detail, area);
+    }
 
-        let comment_lines = if ticket.comments.is_empty() {
-            vec![Line::from(Span::styled(
-                "(no comments)",
+    fn draw_comments_list(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        let Some(idx) = self.detail else {
+            return;
+        };
+        let ticket = &self.tickets[idx];
+        let title = truncate_display(&ticket.title, usize::from(area.width).saturating_sub(14));
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!("Comments: {title}"));
+        let width = usize::from(block.inner(area).width)
+            .saturating_sub(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL));
+        let items: Vec<ListItem<'_>> = if ticket.comments.is_empty() {
+            vec![ListItem::new(Line::from(Span::styled(
+                "No comments. Press c to add one.",
                 Style::default().fg(Color::DarkGray),
-            ))]
+            )))]
         } else {
             ticket
                 .comments
                 .iter()
-                .flat_map(|comment| {
-                    let header = Line::from(vec![
-                        Span::styled(comment.author.clone(), Style::default().fg(Color::Cyan)),
-                        Span::raw("  "),
-                        Span::styled(
-                            comment.at.format(&Rfc3339).unwrap_or_default(),
-                            Style::default().fg(Color::DarkGray),
-                        ),
-                    ]);
-                    let mut lines = vec![header];
-                    lines.extend(comment.body.lines().map(|line| Line::raw(line.to_string())));
-                    lines.push(Line::raw(""));
-                    lines
-                })
+                .map(|comment| ListItem::new(comment_summary_line(comment, width)))
                 .collect()
         };
-        let comments = Paragraph::new(comment_lines)
-            .block(Block::default().borders(Borders::ALL).title("Comments"))
+
+        let list = List::new(items)
+            .block(block)
+            .highlight_style(
+                Style::default()
+                    .bg(Color::Rgb(0, 0, 95))
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol(HIGHLIGHT_SYMBOL)
+            .highlight_spacing(HighlightSpacing::Always);
+        frame.render_stateful_widget(list, area, &mut self.comment_state);
+    }
+
+    fn draw_comment_detail(&self, frame: &mut Frame<'_>, area: Rect) {
+        let Some(ticket) = self.detail.map(|idx| &self.tickets[idx]) else {
+            return;
+        };
+        let lines = if let Some(comment) = self.selected_comment(ticket) {
+            let mut lines = vec![
+                Line::from(vec![
+                    Span::styled(
+                        relative_date(comment.at, OffsetDateTime::now_utc()),
+                        Style::default()
+                            .fg(Color::DarkGray)
+                            .add_modifier(Modifier::DIM),
+                    ),
+                    Span::raw("  "),
+                    Span::styled(comment.author.clone(), Style::default().fg(Color::Cyan)),
+                ]),
+                Line::raw(""),
+            ];
+            lines.extend(comment.body.lines().map(|line| Line::raw(line.to_string())));
+            lines
+        } else {
+            vec![Line::from(Span::styled(
+                "No comments yet. Press c to add one.",
+                Style::default().fg(Color::DarkGray),
+            ))]
+        };
+        let comments = Paragraph::new(lines)
+            .block(Block::default().borders(Borders::ALL).title("Comment"))
             .wrap(Wrap { trim: false });
-        frame.render_widget(comments, chunks[1]);
+        frame.render_widget(comments, area);
     }
 
     fn draw_input_modal(&self, frame: &mut Frame<'_>, kind: InputKind) {
         let area = centered_rect(70, kind.modal_height(), frame.area());
         let title = format!("Edit {}", kind.label());
         let help = match kind {
-            InputKind::Title => "Enter a new ticket title.",
-            InputKind::Description => "Enter a new description. Empty clears it.",
-            InputKind::Comment => "Enter a comment to append.",
-            InputKind::AddTags => "Enter comma- or space-separated tags to add.",
-            InputKind::RemoveTags => "Enter comma- or space-separated tags to remove.",
+            InputKind::Comment => "Enter a comment to append.".to_string(),
+            InputKind::Priority => format!(
+                "Enter priority. Lower is more important. Empty clears it. {}",
+                self.priority_range_display()
+            ),
+            InputKind::Points => "Enter points estimate. Empty clears it.".to_string(),
+            InputKind::AddTags => "Enter comma- or space-separated tags to add.".to_string(),
+            InputKind::RemoveTags => "Enter comma- or space-separated tags to remove.".to_string(),
         };
         let lines = vec![
             Line::from(Span::styled(help, Style::default().fg(Color::DarkGray))),
@@ -404,6 +748,208 @@ impl App {
         ];
         let modal = Paragraph::new(lines)
             .block(Block::default().borders(Borders::ALL).title(title))
+            .wrap(Wrap { trim: false });
+        frame.render_widget(Clear, area);
+        frame.render_widget(modal, area);
+    }
+
+    fn draw_tags_modal(&mut self, frame: &mut Frame<'_>) {
+        let area = centered_rect(64, 20, frame.area());
+        let tags = self.available_tags();
+        let selected = self
+            .tag_picker_state
+            .selected()
+            .unwrap_or(0)
+            .min(tags.len().saturating_sub(1));
+        if tags.is_empty() {
+            self.tag_picker_state.select(None);
+        } else {
+            self.tag_picker_state.select(Some(selected));
+        }
+
+        let items: Vec<ListItem<'_>> = if tags.is_empty() {
+            vec![ListItem::new(Line::from(Span::styled(
+                "No tags on open tickets.",
+                Style::default().fg(Color::DarkGray),
+            )))]
+        } else {
+            tags.iter()
+                .map(|(tag, count)| {
+                    let checked = if self.tag_filter.contains(tag) {
+                        "[x]"
+                    } else {
+                        "[ ]"
+                    };
+                    ListItem::new(Line::from(vec![
+                        Span::styled(checked, Style::default().fg(Color::Yellow)),
+                        Span::raw(" "),
+                        Span::styled(tag.clone(), Style::default().fg(tag_color(tag))),
+                        Span::styled(format!(" ({count})"), Style::default().fg(Color::DarkGray)),
+                    ]))
+                })
+                .collect()
+        };
+        let mode = if self.tag_filter_match_all {
+            "all selected tags"
+        } else {
+            "any selected tag"
+        };
+        let title = format!("Tag Filter: {mode}");
+        let list = List::new(items)
+            .block(Block::default().borders(Borders::ALL).title(title))
+            .highlight_style(
+                Style::default()
+                    .bg(Color::Rgb(0, 0, 95))
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol(HIGHLIGHT_SYMBOL)
+            .highlight_spacing(HighlightSpacing::Always);
+        frame.render_widget(Clear, area);
+        frame.render_stateful_widget(list, area, &mut self.tag_picker_state);
+    }
+
+    fn draw_saved_views_modal(&mut self, frame: &mut Frame<'_>) {
+        let area = centered_rect(78, 20, frame.area());
+        let views = self.view_entries();
+        let selected = self
+            .saved_view_state
+            .selected()
+            .unwrap_or(0)
+            .min(views.len().saturating_sub(1));
+        if views.is_empty() {
+            self.saved_view_state.select(None);
+        } else {
+            self.saved_view_state.select(Some(selected));
+        }
+
+        let width = usize::from(area.width).saturating_sub(6);
+        let items: Vec<ListItem<'_>> = if views.is_empty() {
+            Vec::new()
+        } else {
+            views
+                .iter()
+                .map(|entry| {
+                    let active = self.active_view_name.as_deref() == Some(entry.name.as_str());
+                    let marker = if active { "*" } else { " " };
+                    let desc = crate::commands::view::describe_view(&entry.view);
+                    let kind = match entry.kind {
+                        ViewKind::BuiltIn => "built-in",
+                        ViewKind::Saved => "saved",
+                    };
+                    let name_width = 18;
+                    let kind_width = 8;
+                    let desc_width = width.saturating_sub(name_width + kind_width + 5);
+                    ListItem::new(Line::from(vec![
+                        Span::styled(marker, Style::default().fg(Color::Yellow)),
+                        Span::raw(" "),
+                        Span::styled(
+                            fit_display(&entry.name, name_width),
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw(" "),
+                        Span::styled(
+                            fit_display(kind, kind_width),
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                        Span::raw(" "),
+                        Span::styled(
+                            truncate_display(&desc, desc_width),
+                            Style::default().fg(Color::Cyan),
+                        ),
+                    ]))
+                })
+                .collect()
+        };
+        let list = List::new(items)
+            .block(Block::default().borders(Borders::ALL).title("Views"))
+            .highlight_style(
+                Style::default()
+                    .bg(Color::Rgb(0, 0, 95))
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol(HIGHLIGHT_SYMBOL)
+            .highlight_spacing(HighlightSpacing::Always);
+        frame.render_widget(Clear, area);
+        frame.render_stateful_widget(list, area, &mut self.saved_view_state);
+    }
+
+    fn draw_delete_view_confirm_modal(&self, frame: &mut Frame<'_>) {
+        let area = centered_rect(56, 7, frame.area());
+        let name = self
+            .pending_delete_view
+            .as_deref()
+            .unwrap_or("<unknown view>");
+        let name = truncate_display(name, usize::from(area.width).saturating_sub(24));
+        let lines = vec![
+            Line::from(Span::styled(
+                format!("Delete saved view `{name}`?"),
+                Style::default().fg(Color::LightRed),
+            )),
+            Line::raw(""),
+            Line::from(Span::styled(
+                "y delete   n/Esc cancel",
+                Style::default().fg(Color::Yellow),
+            )),
+        ];
+        let modal = Paragraph::new(lines)
+            .block(Block::default().borders(Borders::ALL).title("Delete View"))
+            .wrap(Wrap { trim: false });
+        frame.render_widget(Clear, area);
+        frame.render_widget(modal, area);
+    }
+
+    fn draw_save_view_modal(&self, frame: &mut Frame<'_>) {
+        let area = centered_rect(64, 9, frame.area());
+        let filter = self.active_filter_display();
+        let lines = vec![
+            Line::from(Span::styled(
+                if filter.is_empty() {
+                    "Saving current open-ticket view with no extra filters.".to_string()
+                } else {
+                    format!("Saving current view: {filter}")
+                },
+                Style::default().fg(Color::DarkGray),
+            )),
+            Line::raw(""),
+            Line::from(self.input.as_str()),
+            Line::raw(""),
+            Line::from(Span::styled(
+                "Enter save  Esc cancel",
+                Style::default().fg(Color::Yellow),
+            )),
+        ];
+        let modal = Paragraph::new(lines)
+            .block(Block::default().borders(Borders::ALL).title("Save View"))
+            .wrap(Wrap { trim: false });
+        frame.render_widget(Clear, area);
+        frame.render_widget(modal, area);
+    }
+
+    fn draw_quit_hint_modal(&self, frame: &mut Frame<'_>) {
+        let area = centered_rect(42, 7, frame.area());
+        let lines = vec![
+            Line::from(Span::styled(
+                "Esc backs out of views and filters.",
+                Style::default().fg(Color::Cyan),
+            )),
+            Line::raw(""),
+            Line::from(vec![
+                Span::raw("Hit "),
+                Span::styled(
+                    "q",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" to quit."),
+            ]),
+        ];
+        let modal = Paragraph::new(lines)
+            .block(Block::default().borders(Borders::ALL).title("Quit"))
             .wrap(Wrap { trim: false });
         frame.render_widget(Clear, area);
         frame.render_widget(modal, area);
@@ -505,10 +1051,207 @@ impl App {
         frame.render_widget(modal, area);
     }
 
-    fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
+    fn draw_help_modal(&self, frame: &mut Frame<'_>) {
+        let area = centered_rect(88, 22, frame.area());
+        let mut lines = Vec::new();
+
+        help_section(&mut lines, "General");
+        lines.push(help_columns(
+            ("?", "toggle help"),
+            Some(("Esc", "back / cancel")),
+        ));
+        lines.push(help_columns(("q", "quit"), Some(("S", "sync tickets"))));
+
+        match self.mode {
+            Mode::Filter => {
+                help_section(&mut lines, "Search Filter");
+                lines.push(help_columns(
+                    ("type", "search text"),
+                    Some(("Backspace", "delete char")),
+                ));
+                lines.push(help_columns(("Enter", "apply"), Some(("Esc", "finish"))));
+            }
+            Mode::Tags => {
+                help_section(&mut lines, "Tag Filter");
+                lines.push(help_columns(
+                    ("j/k", "move tag"),
+                    Some(("Space", "check tag")),
+                ));
+                lines.push(help_columns(
+                    ("a", "all / any mode"),
+                    Some(("c", "clear tags")),
+                ));
+                lines.push(help_columns(("Enter", "apply"), Some(("Esc", "finish"))));
+            }
+            Mode::SavedViews => {
+                help_section(&mut lines, "Views");
+                lines.push(help_columns(
+                    ("j/k", "move view"),
+                    Some(("Enter", "apply view")),
+                ));
+                lines.push(help_columns(
+                    ("d", "default view"),
+                    Some(("D", "delete saved view")),
+                ));
+                lines.push(help_columns(("Esc", "cancel"), None));
+            }
+            Mode::ConfirmDeleteView => {
+                help_section(&mut lines, "Delete View");
+                lines.push(help_columns(("y", "delete"), Some(("n/Esc", "cancel"))));
+            }
+            Mode::SaveView => {
+                help_section(&mut lines, "Save View");
+                lines.push(help_columns(
+                    ("type", "view name"),
+                    Some(("Backspace", "delete char")),
+                ));
+                lines.push(help_columns(("Enter", "save"), Some(("Esc", "cancel"))));
+            }
+            Mode::Input(kind) => {
+                help_section(&mut lines, &format!("Editing {}", kind.label()));
+                lines.push(help_columns(
+                    ("type", "new value"),
+                    Some(("Backspace", "delete char")),
+                ));
+                lines.push(help_columns(("Enter", "apply"), Some(("Esc", "cancel"))));
+            }
+            Mode::State => {
+                help_section(&mut lines, "Open States");
+                lines.push(help_columns(("n", "new"), Some(("a", "assigned"))));
+                lines.push(help_columns(("p", "in progress"), Some(("b", "blocked"))));
+                lines.push(help_columns(("v", "review"), None));
+
+                help_section(&mut lines, "Closed States");
+                lines.push(help_columns(("r", "resolved"), Some(("w", "wontfix"))));
+                lines.push(help_columns(("u", "duplicate"), Some(("i", "invalid"))));
+            }
+            Mode::Create => {
+                help_section(&mut lines, "New Ticket");
+                lines.push(help_columns(
+                    ("Tab/Down", "next field"),
+                    Some(("Shift-Tab/Up", "previous field")),
+                ));
+                lines.push(help_columns(("Enter", "create"), Some(("Esc", "cancel"))));
+            }
+            Mode::Normal if self.comments_mode => {
+                help_section(&mut lines, "Comments");
+                lines.push(help_columns(
+                    ("j/k", "move comment"),
+                    Some(("c", "add comment")),
+                ));
+                lines.push(help_columns(("Esc", "detail view"), None));
+            }
+            Mode::Normal if self.view == ViewMode::Board && self.detail.is_none() => {
+                help_section(&mut lines, "Navigation");
+                lines.push(help_columns(
+                    ("h/l", "move columns"),
+                    Some(("j/k", "move tickets")),
+                ));
+                lines.push(help_columns(
+                    ("Left/Right", "move columns"),
+                    Some(("Up/Down", "move tickets")),
+                ));
+                lines.push(help_columns(("Enter", "details"), Some(("b", "list view"))));
+
+                help_section(&mut lines, "Edit Ticket");
+                lines.push(help_columns(("C", "claim"), Some(("s", "state"))));
+                lines.push(help_columns(
+                    ("e", "edit title/body"),
+                    Some(("i", "edit spec")),
+                ));
+                lines.push(help_columns(("c", "comment"), None));
+                lines.push(help_columns(("p", "priority"), Some(("o", "points"))));
+                lines.push(help_columns(("+/-", "edit tags"), None));
+            }
+            Mode::Normal => {
+                help_section(&mut lines, "Navigation");
+                lines.push(help_columns(
+                    ("j/k", "move tickets"),
+                    Some(("Up/Down", "move tickets")),
+                ));
+                lines.push(help_columns(
+                    ("Enter", "details"),
+                    Some(("b", "board view")),
+                ));
+                lines.push(help_columns(("m", "comments"), Some(("n", "new ticket"))));
+
+                help_section(&mut lines, "Views & Filters");
+                lines.push(help_columns(
+                    ("/", "search text"),
+                    Some(("g", "tag picker")),
+                ));
+                lines.push(help_columns(("v", "saved views"), Some(("V", "save view"))));
+
+                help_section(&mut lines, "Edit Ticket");
+                lines.push(help_columns(("C", "claim"), Some(("s", "state"))));
+                lines.push(help_columns(
+                    ("e", "edit title/body"),
+                    Some(("i", "edit spec")),
+                ));
+                lines.push(help_columns(("c", "comment"), None));
+                lines.push(help_columns(("p", "priority"), Some(("o", "points"))));
+                lines.push(help_columns(("+/-", "edit tags"), None));
+            }
+        }
+
+        lines.push(Line::raw(""));
+        lines.push(help_note("Close help with Esc, ?, Enter, or q."));
+
+        let modal = Paragraph::new(lines)
+            .block(Block::default().borders(Borders::ALL).title("Help"))
+            .wrap(Wrap { trim: false });
+        frame.render_widget(Clear, area);
+        frame.render_widget(modal, area);
+    }
+
+    fn handle_key(
+        &mut self,
+        key: KeyEvent,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) -> Result<bool> {
+        if self.show_quit_hint {
+            return match key.code {
+                KeyCode::Char('q') => Ok(true),
+                KeyCode::Esc | KeyCode::Enter | KeyCode::Char('?') => {
+                    self.show_quit_hint = false;
+                    Ok(false)
+                }
+                _ => Ok(false),
+            };
+        }
+        if self.show_help {
+            match key.code {
+                KeyCode::Esc | KeyCode::Enter | KeyCode::Char('?') | KeyCode::Char('q') => {
+                    self.show_help = false;
+                }
+                _ => {}
+            }
+            return Ok(false);
+        }
+        if key.code == KeyCode::Char('?') {
+            self.show_help = true;
+            return Ok(false);
+        }
+
         let quit = match self.mode {
             Mode::Filter => {
                 self.handle_filter_key(key);
+                false
+            }
+            Mode::Tags => {
+                self.handle_tags_key(key);
+                false
+            }
+            Mode::SavedViews => {
+                self.handle_saved_views_key(key)?;
+                false
+            }
+            Mode::ConfirmDeleteView => {
+                self.handle_delete_view_confirm_key(key)?;
+                false
+            }
+            Mode::SaveView => {
+                self.handle_save_view_key(key)?;
                 false
             }
             Mode::Input(_) => {
@@ -523,17 +1266,56 @@ impl App {
                 self.handle_create_key(key)?;
                 false
             }
-            Mode::Normal => self.handle_normal_key(key),
+            Mode::Normal => self.handle_normal_key(key, terminal)?,
         };
         Ok(quit)
     }
 
-    fn handle_normal_key(&mut self, key: KeyEvent) -> bool {
+    fn handle_normal_key(
+        &mut self,
+        key: KeyEvent,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) -> Result<bool> {
         self.status = None;
-        match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => true,
+        let quit = match key.code {
+            KeyCode::Char('q') => true,
+            KeyCode::Esc => {
+                if self.comments_mode {
+                    self.comments_mode = false;
+                    false
+                } else if self.detail.is_some() {
+                    self.detail = None;
+                    self.comments_mode = false;
+                    false
+                } else if self.view == ViewMode::Board {
+                    self.view = ViewMode::List;
+                    false
+                } else if self.has_active_view_filters() {
+                    self.clear_view_filters()?;
+                    false
+                } else {
+                    self.show_quit_hint = true;
+                    false
+                }
+            }
             KeyCode::Char('/') => {
                 self.mode = Mode::Filter;
+                false
+            }
+            KeyCode::Char('g') => {
+                self.begin_tag_filter();
+                false
+            }
+            KeyCode::Char('v') => {
+                self.begin_saved_views();
+                false
+            }
+            KeyCode::Char('V') => {
+                self.begin_save_view();
+                false
+            }
+            KeyCode::Char('b') => {
+                self.toggle_view();
                 false
             }
             KeyCode::Char('n') => {
@@ -541,27 +1323,67 @@ impl App {
                 false
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.next();
+                if self.comments_mode {
+                    self.next_comment();
+                } else if self.view == ViewMode::Board && self.detail.is_none() {
+                    self.next_board_ticket();
+                } else {
+                    self.next();
+                }
                 false
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                self.previous();
+                if self.comments_mode {
+                    self.previous_comment();
+                } else if self.view == ViewMode::Board && self.detail.is_none() {
+                    self.previous_board_ticket();
+                } else {
+                    self.previous();
+                }
+                false
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                if self.view == ViewMode::Board && self.detail.is_none() {
+                    self.next_board_column();
+                }
+                false
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                if self.view == ViewMode::Board && self.detail.is_none() {
+                    self.previous_board_column();
+                }
                 false
             }
             KeyCode::Enter => {
                 self.open_selected();
                 false
             }
-            KeyCode::Char('t') => {
-                self.begin_input(InputKind::Title);
+            KeyCode::Char('e') => {
+                self.edit_ticket_in_editor(terminal)?;
                 false
             }
-            KeyCode::Char('d') => {
-                self.begin_input(InputKind::Description);
+            KeyCode::Char('i') => {
+                self.edit_spec_in_editor(terminal)?;
                 false
             }
             KeyCode::Char('c') => {
                 self.begin_input(InputKind::Comment);
+                false
+            }
+            KeyCode::Char('C') => {
+                self.claim_selected()?;
+                false
+            }
+            KeyCode::Char('m') => {
+                self.enter_comments_mode();
+                false
+            }
+            KeyCode::Char('p') => {
+                self.begin_input(InputKind::Priority);
+                false
+            }
+            KeyCode::Char('o') => {
+                self.begin_input(InputKind::Points);
                 false
             }
             KeyCode::Char('+') | KeyCode::Char('=') => {
@@ -580,8 +1402,13 @@ impl App {
                 }
                 false
             }
+            KeyCode::Char('S') => {
+                self.start_sync();
+                false
+            }
             _ => false,
-        }
+        };
+        Ok(quit)
     }
 
     fn handle_filter_key(&mut self, key: KeyEvent) {
@@ -599,6 +1426,88 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    fn handle_tags_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Enter | KeyCode::Esc => {
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Down | KeyCode::Char('j') => self.next_tag_filter(),
+            KeyCode::Up | KeyCode::Char('k') => self.previous_tag_filter(),
+            KeyCode::Char(' ') => self.toggle_selected_tag_filter(),
+            KeyCode::Char('a') => {
+                self.tag_filter_match_all = !self.tag_filter_match_all;
+                self.apply_filter();
+            }
+            KeyCode::Char('c') => {
+                self.tag_filter.clear();
+                self.apply_filter();
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_saved_views_key(&mut self, key: KeyEvent) -> Result<()> {
+        match key.code {
+            KeyCode::Enter => {
+                self.apply_selected_saved_view()?;
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Down | KeyCode::Char('j') => self.next_saved_view(),
+            KeyCode::Up | KeyCode::Char('k') => self.previous_saved_view(),
+            KeyCode::Char('d') => {
+                self.clear_view_filters()?;
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Char('D') => self.begin_delete_saved_view(),
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_delete_view_confirm_key(&mut self, key: KeyEvent) -> Result<()> {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => self.delete_pending_saved_view()?,
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                self.pending_delete_view = None;
+                self.mode = Mode::SavedViews;
+                self.status = Some("Cancelled.".to_string());
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_save_view_key(&mut self, key: KeyEvent) -> Result<()> {
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                self.input.clear();
+                self.status = Some("Cancelled.".to_string());
+            }
+            KeyCode::Enter => {
+                let name = self.input.trim().to_string();
+                if name.is_empty() {
+                    self.status = Some("View name cannot be empty.".to_string());
+                    return Ok(());
+                }
+                self.save_current_view(&name)?;
+                self.mode = Mode::Normal;
+                self.input.clear();
+            }
+            KeyCode::Backspace => {
+                self.input.pop();
+            }
+            KeyCode::Char(c) => {
+                self.input.push(c);
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
     fn handle_input_key(&mut self, key: KeyEvent) -> Result<()> {
@@ -694,6 +1603,357 @@ impl App {
         self.mode = Mode::Create;
     }
 
+    fn begin_tag_filter(&mut self) {
+        let tags = self.available_tags();
+        if tags.is_empty() {
+            self.tag_picker_state.select(None);
+        } else {
+            let selected = self
+                .tag_picker_state
+                .selected()
+                .unwrap_or(0)
+                .min(tags.len() - 1);
+            self.tag_picker_state.select(Some(selected));
+        }
+        self.mode = Mode::Tags;
+    }
+
+    fn begin_saved_views(&mut self) {
+        let views = self.view_entries();
+        let selected = self
+            .saved_view_state
+            .selected()
+            .unwrap_or(0)
+            .min(views.len().saturating_sub(1));
+        self.saved_view_state.select(Some(selected));
+        self.mode = Mode::SavedViews;
+    }
+
+    fn begin_delete_saved_view(&mut self) {
+        let views = self.view_entries();
+        let Some(entry) = self
+            .saved_view_state
+            .selected()
+            .and_then(|selected| views.get(selected))
+        else {
+            self.status = Some("No view selected.".to_string());
+            return;
+        };
+        if entry.kind != ViewKind::Saved {
+            self.status = Some("Built-in views cannot be deleted.".to_string());
+            return;
+        }
+        self.pending_delete_view = Some(entry.name.clone());
+        self.mode = Mode::ConfirmDeleteView;
+    }
+
+    fn begin_save_view(&mut self) {
+        self.input.clear();
+        self.mode = Mode::SaveView;
+    }
+
+    fn save_current_view(&mut self, name: &str) -> Result<()> {
+        let git_dir = self.store.session().repo_git_dir();
+        let mut state = State::load().unwrap_or_default();
+        let view = self.current_saved_view();
+        let desc = crate::commands::view::describe_view(&view);
+        state.set_last_filters(&git_dir, view.clone());
+        state.save_view(&git_dir, name, view);
+        state.save()?;
+        self.status = Some(format!("Saved view `{name}`: {desc}"));
+        Ok(())
+    }
+
+    fn delete_pending_saved_view(&mut self) -> Result<()> {
+        let Some(name) = self.pending_delete_view.take() else {
+            self.status = Some("No view selected.".to_string());
+            self.mode = Mode::SavedViews;
+            return Ok(());
+        };
+        let git_dir = self.store.session().repo_git_dir();
+        let mut state = State::load().unwrap_or_default();
+        if state.delete_view(&git_dir, &name) {
+            state.save()?;
+            if self.active_view_name.as_deref() == Some(name.as_str()) {
+                self.active_view_name = None;
+            }
+            let views = self.view_entries();
+            if views.is_empty() {
+                self.saved_view_state.select(None);
+            } else {
+                let selected = self
+                    .saved_view_state
+                    .selected()
+                    .unwrap_or(0)
+                    .min(views.len().saturating_sub(1));
+                self.saved_view_state.select(Some(selected));
+            }
+            self.status = Some(format!("Deleted view `{name}`."));
+        } else {
+            self.status = Some(format!("No view named `{name}`."));
+        }
+        self.mode = Mode::SavedViews;
+        Ok(())
+    }
+
+    fn current_saved_view(&self) -> SavedView {
+        let tags = self.tag_filter.iter().cloned().collect::<Vec<_>>();
+        SavedView {
+            created_at: None,
+            status: self.base_status.map(|status| status.as_str().to_string()),
+            state: self.base_state.map(|state| state.as_str().to_string()),
+            tag: (tags.len() == 1).then(|| tags[0].clone()),
+            tags,
+            tag_match_all: self.tag_filter_match_all,
+            assigned: self.assigned_filter.clone(),
+            only_tagged: self.only_tagged,
+            search: optional_trimmed(&self.filter).map(ToString::to_string),
+            order: self.sort_order.map(|_| "created.desc".to_string()),
+            all: self.base_status.is_none() && self.base_state.is_none(),
+            subissues: !self.hide_subissues,
+            limit: 0,
+        }
+    }
+
+    fn view_entries(&self) -> Vec<ViewEntry> {
+        let builtins = builtin_views(self.store.email());
+        let git_dir = self.store.session().repo_git_dir();
+        let mut saved: Vec<_> = State::load()
+            .map(|state| state.list_views(&git_dir))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(name, view)| ViewEntry {
+                name,
+                view,
+                kind: ViewKind::Saved,
+            })
+            .collect();
+        if saved.is_empty() {
+            builtins
+        } else {
+            saved.extend(builtins);
+            saved
+        }
+    }
+
+    fn next_saved_view(&mut self) {
+        let views = self.view_entries();
+        let selected = self.saved_view_state.selected().unwrap_or(0);
+        self.saved_view_state
+            .select(Some((selected + 1) % views.len()));
+    }
+
+    fn previous_saved_view(&mut self) {
+        let views = self.view_entries();
+        let selected = self.saved_view_state.selected().unwrap_or(0);
+        let previous = selected
+            .checked_sub(1)
+            .unwrap_or_else(|| views.len().saturating_sub(1));
+        self.saved_view_state.select(Some(previous));
+    }
+
+    fn apply_selected_saved_view(&mut self) -> Result<()> {
+        let views = self.view_entries();
+        let Some(entry) = self
+            .saved_view_state
+            .selected()
+            .and_then(|selected| views.get(selected))
+        else {
+            self.status = Some("No view selected.".to_string());
+            return Ok(());
+        };
+        self.apply_saved_view(&entry.name, &entry.view)
+    }
+
+    fn apply_saved_view(&mut self, name: &str, view: &SavedView) -> Result<()> {
+        self.active_view_name = Some(name.to_string());
+        self.base_status = if view.all || view.state.is_some() {
+            None
+        } else if let Some(status) = view.status.as_deref() {
+            Some(TicketStatus::parse(status)?)
+        } else {
+            Some(TicketStatus::Open)
+        };
+        self.base_state = None;
+        if let Some(state) = view.state.as_deref() {
+            let lifecycle = TicketLifecycle::parse(state)?;
+            self.base_status = Some(lifecycle.status);
+            if TicketStatus::parse(state).is_err() {
+                self.base_state = Some(lifecycle.state);
+            }
+        }
+        self.assigned_filter = view.assigned.clone();
+        self.only_tagged = view.only_tagged;
+        self.hide_subissues = !view.subissues;
+        self.filter = view.search.clone().unwrap_or_default();
+        self.tag_filter = saved_view_tags(view).into_iter().collect();
+        self.tag_filter_match_all = view.tag_match_all;
+        self.sort_order = match view.order.as_deref() {
+            Some(spec) => Some(
+                SortOrder::parse(spec)
+                    .ok_or_else(|| anyhow::anyhow!("unknown sort order `{spec}`"))?,
+            ),
+            None => None,
+        };
+        self.detail = None;
+        self.comments_mode = false;
+        self.view = ViewMode::List;
+        self.reload(None)?;
+        self.status = Some(format!("Loaded view `{name}`."));
+        Ok(())
+    }
+
+    fn clear_view_filters(&mut self) -> Result<()> {
+        self.active_view_name = None;
+        self.base_status = Some(TicketStatus::Open);
+        self.base_state = None;
+        self.assigned_filter = None;
+        self.only_tagged = false;
+        self.hide_subissues = false;
+        self.sort_order = None;
+        self.filter.clear();
+        self.tag_filter.clear();
+        self.tag_filter_match_all = true;
+        self.detail = None;
+        self.comments_mode = false;
+        self.reload(None)?;
+        self.status = Some("Cleared to default view.".to_string());
+        Ok(())
+    }
+
+    fn has_active_view_filters(&self) -> bool {
+        self.active_view_name.is_some()
+            || self.base_status != Some(TicketStatus::Open)
+            || self.base_state.is_some()
+            || self.assigned_filter.is_some()
+            || self.only_tagged
+            || self.hide_subissues
+            || self.sort_order.is_some()
+            || !self.filter.is_empty()
+            || !self.tag_filter.is_empty()
+            || !self.tag_filter_match_all
+    }
+
+    fn edit_ticket_in_editor(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) -> Result<()> {
+        let Some(ticket) = self.selected_ticket() else {
+            self.status = Some("Select a ticket first.".to_string());
+            return Ok(());
+        };
+        let id = ticket.id;
+        let initial = ticket_edit_body(ticket);
+
+        suspend_terminal(terminal)?;
+        let edited = editor::capture_with_initial(
+            "Edit the title on the first line. Remaining non-comment lines become the description.",
+            &initial,
+        );
+        resume_terminal(terminal)?;
+
+        match edited? {
+            Some(edited) => {
+                let (title, description) = editor::parse_ticket_edit(&edited)?;
+                self.store.set_title(&id, &title)?;
+                self.store.set_description(&id, description.as_deref())?;
+                self.status = Some("Updated ticket.".to_string());
+            }
+            _ => {
+                self.status = Some("Cancelled.".to_string());
+            }
+        }
+
+        self.reload(Some(id))?;
+        Ok(())
+    }
+
+    fn edit_spec_in_editor(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) -> Result<()> {
+        let Some(ticket) = self.selected_ticket() else {
+            self.status = Some("Select a ticket first.".to_string());
+            return Ok(());
+        };
+        let id = ticket.id;
+        let initial = ticket.spec.clone().unwrap_or_default();
+
+        suspend_terminal(terminal)?;
+        let edited = editor::capture_with_initial(
+            "Write the implementation spec below. Lines starting with # are ignored.",
+            &initial,
+        );
+        resume_terminal(terminal)?;
+
+        match edited? {
+            Some(spec) if !spec.trim().is_empty() => {
+                self.store.set_spec(&id, Some(spec.trim()))?;
+                self.status = Some("Updated spec.".to_string());
+            }
+            _ => {
+                self.store.set_spec(&id, None)?;
+                self.status = Some("Cleared spec.".to_string());
+            }
+        }
+
+        self.reload(Some(id))?;
+        Ok(())
+    }
+
+    fn start_sync(&mut self) {
+        if self.sync.is_some() {
+            self.status = Some("Sync already running.".to_string());
+            return;
+        }
+
+        let selected_id = self.selected_ticket().map(|ticket| ticket.id);
+        let (sender, receiver) = mpsc::channel();
+        thread::spawn(move || {
+            let result = run_ti_sync_command();
+            let _ = sender.send(result);
+        });
+
+        self.sync = Some(SyncState {
+            receiver,
+            selected_id,
+            started_at: Instant::now(),
+        });
+        self.status = Some("Syncing tickets...".to_string());
+    }
+
+    fn poll_sync(&mut self) -> Result<()> {
+        let completed = match &self.sync {
+            Some(sync) => match sync.receiver.try_recv() {
+                Ok(result) => Some((result, sync.selected_id)),
+                Err(mpsc::TryRecvError::Empty) => None,
+                Err(mpsc::TryRecvError::Disconnected) => Some((
+                    Err(anyhow::anyhow!(
+                        "sync worker stopped before reporting a result"
+                    )),
+                    sync.selected_id,
+                )),
+            },
+            None => None,
+        };
+
+        let Some((result, selected_id)) = completed else {
+            return Ok(());
+        };
+
+        self.sync = None;
+        match result {
+            Ok(result) => {
+                self.reload(selected_id)?;
+                self.status = Some(result.summary);
+            }
+            Err(err) => {
+                self.status = Some(format!("Sync failed: {err}"));
+            }
+        }
+        Ok(())
+    }
+
     fn begin_input(&mut self, kind: InputKind) {
         let Some(ticket) = self.selected_ticket() else {
             self.status = Some("Select a ticket first.".to_string());
@@ -701,11 +1961,32 @@ impl App {
         };
 
         self.input = match kind {
-            InputKind::Title => ticket.title.clone(),
-            InputKind::Description => ticket.description.clone().unwrap_or_default(),
+            InputKind::Priority => String::new(),
+            InputKind::Points => ticket
+                .points
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
             InputKind::Comment | InputKind::AddTags | InputKind::RemoveTags => String::new(),
         };
         self.mode = Mode::Input(kind);
+    }
+
+    fn priority_range_display(&self) -> String {
+        let mut priorities = self
+            .visible
+            .iter()
+            .filter_map(|idx| self.tickets[*idx].priority);
+        let Some(first) = priorities.next() else {
+            return "No priorities set.".to_string();
+        };
+        let (min, max) = priorities.fold((first, first), |(min, max), priority| {
+            (min.min(priority), max.max(priority))
+        });
+        if min == max {
+            format!("Current priority: {min}.")
+        } else {
+            format!("Current priority range: {min}-{max}.")
+        }
     }
 
     fn submit_input(&mut self) -> Result<bool> {
@@ -719,27 +2000,6 @@ impl App {
         };
 
         match kind {
-            InputKind::Title => {
-                let title = self.input.trim();
-                if title.is_empty() {
-                    self.status = Some("Title cannot be empty.".to_string());
-                    return Ok(false);
-                }
-                self.store.set_title(&id, title)?;
-                self.status = Some("Updated title.".to_string());
-            }
-            InputKind::Description => {
-                let description = self.input.trim();
-                self.store.set_description(
-                    &id,
-                    if description.is_empty() {
-                        None
-                    } else {
-                        Some(description)
-                    },
-                )?;
-                self.status = Some("Updated description.".to_string());
-            }
             InputKind::Comment => {
                 let body = self.input.trim();
                 if body.is_empty() {
@@ -748,6 +2008,34 @@ impl App {
                 }
                 self.store.add_comment(&id, body)?;
                 self.status = Some("Added comment.".to_string());
+            }
+            InputKind::Priority => {
+                let priority = match parse_optional_i64(&self.input, "priority") {
+                    Ok(priority) => priority,
+                    Err(err) => {
+                        self.status = Some(err.to_string());
+                        return Ok(false);
+                    }
+                };
+                self.store.set_priority(&id, priority)?;
+                self.status = Some(match priority {
+                    Some(value) => format!("Set priority to {value}."),
+                    None => "Cleared priority.".to_string(),
+                });
+            }
+            InputKind::Points => {
+                let points = match parse_optional_i64(&self.input, "points") {
+                    Ok(points) => points,
+                    Err(err) => {
+                        self.status = Some(err.to_string());
+                        return Ok(false);
+                    }
+                };
+                self.store.set_points(&id, points)?;
+                self.status = Some(match points {
+                    Some(value) => format!("Set points to {value}."),
+                    None => "Cleared points.".to_string(),
+                });
             }
             InputKind::AddTags => {
                 let tags = split_tags(&self.input);
@@ -774,6 +2062,13 @@ impl App {
         }
 
         self.reload(Some(id))?;
+        if kind == InputKind::Comment {
+            if let Some(ticket) = self.selected_ticket() {
+                if !ticket.comments.is_empty() {
+                    self.comment_state.select(Some(ticket.comments.len() - 1));
+                }
+            }
+        }
         Ok(true)
     }
 
@@ -787,6 +2082,21 @@ impl App {
         self.store.set_lifecycle(&id, status, state)?;
         self.status = Some(format!("Changed lifecycle to {status}:{state}."));
         self.mode = Mode::Normal;
+        self.reload(Some(id))?;
+        Ok(())
+    }
+
+    fn claim_selected(&mut self) -> Result<()> {
+        let Some(ticket) = self.selected_ticket() else {
+            self.status = Some("Select a ticket first.".to_string());
+            return Ok(());
+        };
+        let id = ticket.id;
+        let email = self.store.email().to_string();
+        self.store.set_assigned(&id, Some(&email))?;
+        self.store
+            .set_lifecycle(&id, TicketStatus::Open, TicketState::Assigned)?;
+        self.status = Some(format!("Claimed ticket as {email}."));
         self.reload(Some(id))?;
         Ok(())
     }
@@ -820,6 +2130,98 @@ impl App {
         Ok(true)
     }
 
+    fn active_filter_display(&self) -> String {
+        let mut parts = Vec::new();
+        if let Some(name) = &self.active_view_name {
+            parts.push(format!("view: {name}"));
+        }
+        if let Some(state) = self.base_state {
+            parts.push(format!("state: {}", state.as_str()));
+        } else if let Some(status) = self.base_status {
+            if status != TicketStatus::Open {
+                parts.push(format!("status: {}", status.as_str()));
+            }
+        } else {
+            parts.push("all".to_string());
+        }
+        if let Some(assigned) = &self.assigned_filter {
+            parts.push(format!("assigned: {assigned}"));
+        }
+        if self.only_tagged {
+            parts.push("tagged only".to_string());
+        }
+        if self.hide_subissues {
+            parts.push("no subissues".to_string());
+        }
+        if !self.filter.is_empty() {
+            parts.push(format!("\"{}\"", self.filter));
+        }
+        if !self.tag_filter.is_empty() {
+            let mode = if self.tag_filter_match_all {
+                "all"
+            } else {
+                "any"
+            };
+            let tags = self
+                .tag_filter
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
+            parts.push(format!("{mode} tags: {tags}"));
+        }
+        parts.join("; ")
+    }
+
+    fn available_tags(&self) -> Vec<(String, usize)> {
+        let mut counts = std::collections::BTreeMap::<String, usize>::new();
+        for ticket in &self.tickets {
+            for tag in &ticket.tags {
+                *counts.entry(tag.clone()).or_default() += 1;
+            }
+        }
+        counts.into_iter().collect()
+    }
+
+    fn next_tag_filter(&mut self) {
+        let tags = self.available_tags();
+        if tags.is_empty() {
+            self.tag_picker_state.select(None);
+            return;
+        }
+        let selected = self.tag_picker_state.selected().unwrap_or(0);
+        self.tag_picker_state
+            .select(Some((selected + 1) % tags.len()));
+    }
+
+    fn previous_tag_filter(&mut self) {
+        let tags = self.available_tags();
+        if tags.is_empty() {
+            self.tag_picker_state.select(None);
+            return;
+        }
+        let selected = self.tag_picker_state.selected().unwrap_or(0);
+        let previous = selected
+            .checked_sub(1)
+            .unwrap_or_else(|| tags.len().saturating_sub(1));
+        self.tag_picker_state.select(Some(previous));
+    }
+
+    fn toggle_selected_tag_filter(&mut self) {
+        let tags = self.available_tags();
+        let Some((tag, _)) = self
+            .tag_picker_state
+            .selected()
+            .and_then(|selected| tags.get(selected))
+        else {
+            return;
+        };
+        if !self.tag_filter.remove(tag) {
+            self.tag_filter.insert(tag.clone());
+        }
+        self.apply_filter();
+    }
+
     fn apply_filter(&mut self) {
         let needle = self.filter.to_ascii_lowercase();
         self.visible = self
@@ -827,7 +2229,13 @@ impl App {
             .iter()
             .enumerate()
             .filter_map(|(idx, ticket)| {
-                if needle.is_empty() || ticket_matches(ticket, &needle) {
+                if (needle.is_empty() || ticket_matches(ticket, &needle))
+                    && ticket_matches_tag_filter(
+                        ticket,
+                        &self.tag_filter,
+                        self.tag_filter_match_all,
+                    )
+                {
                     Some(idx)
                 } else {
                     None
@@ -836,6 +2244,7 @@ impl App {
             .collect();
 
         self.detail = self.detail.filter(|idx| self.visible.contains(idx));
+        self.sync_board_selection();
         if self.visible.is_empty() {
             self.list_state.select(None);
         } else {
@@ -855,6 +2264,7 @@ impl App {
         let selected = self.list_state.selected().unwrap_or(0);
         let next = (selected + 1) % self.visible.len();
         self.list_state.select(Some(next));
+        self.sync_open_detail();
     }
 
     fn previous(&mut self) {
@@ -866,11 +2276,25 @@ impl App {
             .checked_sub(1)
             .unwrap_or_else(|| self.visible.len().saturating_sub(1));
         self.list_state.select(Some(previous));
+        self.sync_open_detail();
+    }
+
+    fn toggle_view(&mut self) {
+        self.view = match self.view {
+            ViewMode::List => ViewMode::Board,
+            ViewMode::Board => ViewMode::List,
+        };
+        self.sync_board_to_list_selection();
     }
 
     fn open_selected(&mut self) {
-        if let Some(selected) = self.list_state.selected() {
-            self.detail = self.visible.get(selected).copied();
+        if let Some(idx) = self.selected_ticket_index() {
+            self.detail = Some(idx);
+            if let Some(visible_pos) = self.visible.iter().position(|visible| *visible == idx) {
+                self.list_state.select(Some(visible_pos));
+            }
+            self.comments_mode = false;
+            self.sync_comment_selection();
         }
     }
 
@@ -882,14 +2306,151 @@ impl App {
         {
             self.list_state.select(Some(visible_pos));
             self.detail = self.visible.get(visible_pos).copied();
+            self.comments_mode = false;
+            self.sync_comment_selection();
         }
     }
 
+    fn sync_open_detail(&mut self) {
+        if self.detail.is_some() {
+            self.open_selected();
+        }
+    }
+
+    fn board_column_tickets(&self, column: usize) -> Vec<&usize> {
+        let state = BOARD_STATES[column];
+        self.visible
+            .iter()
+            .filter(|idx| self.tickets[**idx].state == state)
+            .collect()
+    }
+
+    fn next_board_column(&mut self) {
+        self.board_column = (self.board_column + 1) % BOARD_STATES.len();
+        self.sync_board_to_list_selection();
+    }
+
+    fn previous_board_column(&mut self) {
+        self.board_column = self
+            .board_column
+            .checked_sub(1)
+            .unwrap_or_else(|| BOARD_STATES.len() - 1);
+        self.sync_board_to_list_selection();
+    }
+
+    fn next_board_ticket(&mut self) {
+        let len = self.board_column_tickets(self.board_column).len();
+        if len == 0 {
+            return;
+        }
+        self.board_rows[self.board_column] = (self.board_rows[self.board_column] + 1) % len;
+        self.sync_board_to_list_selection();
+    }
+
+    fn previous_board_ticket(&mut self) {
+        let len = self.board_column_tickets(self.board_column).len();
+        if len == 0 {
+            return;
+        }
+        self.board_rows[self.board_column] = self.board_rows[self.board_column]
+            .checked_sub(1)
+            .unwrap_or_else(|| len.saturating_sub(1));
+        self.sync_board_to_list_selection();
+    }
+
+    fn sync_board_selection(&mut self) {
+        for column in 0..BOARD_STATES.len() {
+            let len = self.board_column_tickets(column).len();
+            if len == 0 {
+                self.board_rows[column] = 0;
+            } else {
+                self.board_rows[column] = self.board_rows[column].min(len - 1);
+            }
+        }
+    }
+
+    fn sync_board_to_list_selection(&mut self) {
+        if let Some(idx) = self.selected_ticket_index() {
+            if let Some(visible_pos) = self.visible.iter().position(|visible| *visible == idx) {
+                self.list_state.select(Some(visible_pos));
+            }
+        }
+    }
+
+    fn enter_comments_mode(&mut self) {
+        if self.detail.is_none() {
+            self.status = Some("Open ticket details first.".to_string());
+            return;
+        }
+        self.comments_mode = true;
+        self.sync_comment_selection();
+    }
+
+    fn next_comment(&mut self) {
+        let Some(ticket) = self.detail.map(|idx| &self.tickets[idx]) else {
+            return;
+        };
+        if ticket.comments.is_empty() {
+            return;
+        }
+        let selected = self.comment_state.selected().unwrap_or(0);
+        self.comment_state
+            .select(Some((selected + 1) % ticket.comments.len()));
+    }
+
+    fn previous_comment(&mut self) {
+        let Some(ticket) = self.detail.map(|idx| &self.tickets[idx]) else {
+            return;
+        };
+        if ticket.comments.is_empty() {
+            return;
+        }
+        let selected = self.comment_state.selected().unwrap_or(0);
+        let previous = selected
+            .checked_sub(1)
+            .unwrap_or_else(|| ticket.comments.len().saturating_sub(1));
+        self.comment_state.select(Some(previous));
+    }
+
+    fn sync_comment_selection(&mut self) {
+        let Some(ticket) = self.detail.map(|idx| &self.tickets[idx]) else {
+            self.comments_mode = false;
+            self.comment_state.select(None);
+            return;
+        };
+        if ticket.comments.is_empty() {
+            self.comment_state.select(None);
+            return;
+        }
+        let selected = self
+            .comment_state
+            .selected()
+            .unwrap_or(0)
+            .min(ticket.comments.len() - 1);
+        self.comment_state.select(Some(selected));
+    }
+
+    fn selected_comment<'a>(&self, ticket: &'a Ticket) -> Option<&'a Comment> {
+        self.comment_state
+            .selected()
+            .and_then(|idx| ticket.comments.get(idx))
+    }
+
     fn selected_ticket(&self) -> Option<&Ticket> {
+        self.selected_ticket_index().map(|idx| &self.tickets[idx])
+    }
+
+    fn selected_ticket_index(&self) -> Option<usize> {
+        if self.view == ViewMode::Board && self.detail.is_none() {
+            let tickets = self.board_column_tickets(self.board_column);
+            return tickets
+                .get(self.board_rows[self.board_column])
+                .map(|idx| **idx);
+        }
         self.list_state
             .selected()
             .and_then(|selected| self.visible.get(selected))
-            .map(|idx| &self.tickets[*idx])
+            .copied()
     }
 }
 
@@ -925,9 +2486,9 @@ impl NewTicketDraft {
 impl InputKind {
     fn label(self) -> &'static str {
         match self {
-            InputKind::Title => "title",
-            InputKind::Description => "description",
             InputKind::Comment => "comment",
+            InputKind::Priority => "priority",
+            InputKind::Points => "points",
             InputKind::AddTags => "add tags",
             InputKind::RemoveTags => "remove tags",
         }
@@ -935,10 +2496,316 @@ impl InputKind {
 
     fn modal_height(self) -> u16 {
         match self {
-            InputKind::Description | InputKind::Comment => 14,
-            InputKind::Title | InputKind::AddTags | InputKind::RemoveTags => 9,
+            InputKind::Comment => 14,
+            InputKind::Priority
+            | InputKind::Points
+            | InputKind::AddTags
+            | InputKind::RemoveTags => 9,
         }
     }
+}
+
+fn parse_optional_i64(raw: &str, label: &str) -> Result<Option<i64>> {
+    let Some(value) = optional_trimmed(raw) else {
+        return Ok(None);
+    };
+    value
+        .parse::<i64>()
+        .map(Some)
+        .map_err(|_| anyhow::anyhow!("{label} must be an integer"))
+}
+
+fn compare_tui_tickets(a: &Ticket, b: &Ticket) -> std::cmp::Ordering {
+    priority_sort_key(a.priority)
+        .cmp(&priority_sort_key(b.priority))
+        .then_with(|| b.created_at.cmp(&a.created_at))
+        .then_with(|| a.id.cmp(&b.id))
+}
+
+fn priority_sort_key(priority: Option<i64>) -> (u8, i64) {
+    match priority {
+        Some(value) => (0, value),
+        None => (1, 0),
+    }
+}
+
+fn run_ti_sync_command() -> Result<SyncResult> {
+    let exe = std::env::current_exe().context("locating current ti executable")?;
+    let output = Command::new(exe)
+        .arg("sync")
+        .output()
+        .context("running ti sync")?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    if !output.status.success() {
+        let message = first_non_empty_line(&stderr)
+            .or_else(|| first_non_empty_line(&stdout))
+            .unwrap_or("ti sync failed");
+        anyhow::bail!("{message}");
+    }
+
+    Ok(SyncResult {
+        summary: sync_summary(&stdout),
+    })
+}
+
+fn sync_summary(stdout: &str) -> String {
+    let pull = stdout
+        .lines()
+        .find(|line| line.starts_with("Pull:"))
+        .unwrap_or("Pull complete.");
+    let push = stdout
+        .lines()
+        .find(|line| line.starts_with("Push:"))
+        .unwrap_or("Push complete.");
+    format!("{pull} {push}")
+}
+
+fn first_non_empty_line(value: &str) -> Option<&str> {
+    value.lines().map(str::trim).find(|line| !line.is_empty())
+}
+
+fn ticket_list_line(
+    ticket: &Ticket,
+    width: usize,
+    compact: bool,
+    current_user: &str,
+) -> Line<'static> {
+    let short_id = ticket
+        .short_id()
+        .chars()
+        .take(LIST_ID_WIDTH)
+        .collect::<String>();
+    let meta = list_meta_display(ticket);
+
+    ticket_list_line_from_parts(
+        &short_id,
+        &flatten_display(&ticket.title),
+        &meta,
+        if compact { None } else { Some(&ticket.tags) },
+        ticket.assigned.as_deref() == Some(current_user),
+        width,
+    )
+}
+
+fn board_ticket_line(ticket: &Ticket, width: usize) -> Line<'static> {
+    let meta = priority_points_display(ticket);
+    let meta_width = meta
+        .as_deref()
+        .map(UnicodeWidthStr::width)
+        .unwrap_or_default();
+    let gap_width = usize::from(meta_width > 0);
+    let title_width = width.saturating_sub(meta_width + gap_width);
+    let mut spans = Vec::new();
+    if let Some(meta) = meta {
+        spans.push(Span::styled(meta, Style::default().fg(Color::Magenta)));
+        spans.push(Span::raw(" ".repeat(gap_width)));
+    }
+    spans.push(Span::raw(truncate_display(
+        &flatten_display(&ticket.title),
+        title_width,
+    )));
+    Line::from(spans)
+}
+
+fn priority_points_display(ticket: &Ticket) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(priority) = ticket.priority {
+        parts.push(format!("p{priority}"));
+    }
+    if let Some(points) = ticket.points {
+        parts.push(points.to_string());
+    }
+    (!parts.is_empty()).then(|| parts.join("/"))
+}
+
+fn ticket_list_line_from_parts(
+    short_id: &str,
+    title: &str,
+    meta: &[(String, Style)],
+    tags: Option<&BTreeSet<String>>,
+    assigned_to_current_user: bool,
+    width: usize,
+) -> Line<'static> {
+    let id = truncate_display(short_id, width);
+    let id_width = UnicodeWidthStr::width(id.as_str());
+    let star = if assigned_to_current_user { "*" } else { " " };
+    let star_width = width
+        .saturating_sub(id_width)
+        .min(UnicodeWidthStr::width(star));
+    let gap_width = width.saturating_sub(id_width + star_width).min(1);
+    let gap = " ".repeat(gap_width);
+    let mut leading = vec![
+        Span::styled(id, Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            truncate_display(star, star_width),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(gap),
+    ];
+    let meta_width = push_meta_spans(
+        &mut leading,
+        meta,
+        width.saturating_sub(id_width + star_width + gap_width),
+    );
+    let meta_gap_width = if meta_width > 0 {
+        width
+            .saturating_sub(id_width + star_width + gap_width + meta_width)
+            .min(1)
+    } else {
+        0
+    };
+    let meta_gap = " ".repeat(meta_gap_width);
+    let content_width =
+        width.saturating_sub(id_width + star_width + gap_width + meta_width + meta_gap_width);
+
+    if meta_width > 0 {
+        leading.push(Span::raw(meta_gap));
+    }
+
+    let Some(tags) = tags.filter(|tags| !tags.is_empty()) else {
+        leading.push(Span::raw(truncate_display(title, content_width)));
+        return Line::from(leading);
+    };
+
+    let title_full_width = UnicodeWidthStr::width(title);
+    let tag_count_width = tag_count_width(tags.len());
+    let (title_budget, tag_budget) = if title_full_width + tag_count_width <= content_width {
+        (
+            title_full_width,
+            content_width.saturating_sub(title_full_width),
+        )
+    } else if tag_count_width < content_width {
+        (content_width - tag_count_width, tag_count_width)
+    } else {
+        (content_width, 0)
+    };
+    let tag_spans = tag_spans(tags, tag_budget);
+    let tags_width = spans_width(&tag_spans);
+    let title = truncate_display(title, title_budget);
+    let title_width = UnicodeWidthStr::width(title.as_str());
+    let padding_width = content_width.saturating_sub(title_width + tags_width);
+
+    leading.push(Span::raw(title));
+    leading.push(Span::raw(" ".repeat(padding_width)));
+    leading.extend(tag_spans);
+    Line::from(leading)
+}
+
+fn list_meta_display(ticket: &Ticket) -> Vec<(String, Style)> {
+    vec![
+        (
+            fit_display(state_abbrev(ticket.state), LIST_STATE_WIDTH),
+            state_abbrev_style(ticket.state),
+        ),
+        (
+            fit_display(
+                &relative_date(ticket.created_at, OffsetDateTime::now_utc()),
+                LIST_AGE_WIDTH,
+            ),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM),
+        ),
+        (
+            fit_display(
+                &ticket
+                    .priority
+                    .map(|priority| format!("p{priority}"))
+                    .unwrap_or_default(),
+                LIST_PRIORITY_WIDTH,
+            ),
+            Style::default().fg(Color::Magenta),
+        ),
+    ]
+}
+
+fn state_abbrev(state: TicketState) -> &'static str {
+    match state {
+        TicketState::New => "NW",
+        TicketState::Assigned => "AS",
+        TicketState::InProgress => "IP",
+        TicketState::Blocked => "BL",
+        TicketState::Review => "RV",
+        TicketState::Resolved => "RS",
+        TicketState::Wontfix => "WF",
+        TicketState::Duplicate => "DP",
+        TicketState::Invalid => "IV",
+    }
+}
+
+fn state_abbrev_style(state: TicketState) -> Style {
+    let color = match state {
+        TicketState::InProgress => Color::LightYellow,
+        TicketState::Blocked => Color::LightRed,
+        TicketState::Review => Color::LightBlue,
+        TicketState::Resolved => Color::LightGreen,
+        TicketState::Wontfix | TicketState::Duplicate | TicketState::Invalid => Color::DarkGray,
+        TicketState::New | TicketState::Assigned => Color::Gray,
+    };
+    Style::default().fg(color).add_modifier(Modifier::BOLD)
+}
+
+fn push_meta_spans(
+    spans: &mut Vec<Span<'static>>,
+    meta: &[(String, Style)],
+    max_width: usize,
+) -> usize {
+    let mut used = 0;
+    for (value, style) in meta {
+        if used > 0 {
+            if used >= max_width {
+                break;
+            }
+            spans.push(Span::raw(" "));
+            used += 1;
+        }
+
+        let value = truncate_display(value, max_width.saturating_sub(used));
+        let value_width = UnicodeWidthStr::width(value.as_str());
+        spans.push(Span::styled(value, *style));
+        used += value_width;
+    }
+    used
+}
+
+fn fit_display(value: &str, width: usize) -> String {
+    let truncated = truncate_display(value, width);
+    let padding = width.saturating_sub(UnicodeWidthStr::width(truncated.as_str()));
+    format!("{truncated}{}", " ".repeat(padding))
+}
+
+fn truncate_display(value: &str, max_width: usize) -> String {
+    if max_width == 0 {
+        return String::new();
+    }
+    if UnicodeWidthStr::width(value) <= max_width {
+        return value.to_string();
+    }
+
+    let ellipsis = if max_width > 3 { "..." } else { "." };
+    let ellipsis_width = UnicodeWidthStr::width(ellipsis);
+    let content_width = max_width.saturating_sub(ellipsis_width);
+    let mut out = String::new();
+    let mut width = 0;
+
+    for ch in value.chars() {
+        let char_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width + char_width > content_width {
+            break;
+        }
+        out.push(ch);
+        width += char_width;
+    }
+    out.push_str(ellipsis);
+    out
+}
+
+fn flatten_display(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn ticket_matches(ticket: &Ticket, needle: &str) -> bool {
@@ -951,11 +2818,96 @@ fn ticket_matches(ticket: &Ticket, needle: &str) -> bool {
             .contains(needle)
 }
 
+fn ticket_edit_body(ticket: &Ticket) -> String {
+    let mut body = ticket.title.clone();
+    if let Some(description) = &ticket.description {
+        body.push_str("\n\n");
+        body.push_str(description);
+    }
+    body
+}
+
+fn first_spec_line(spec: &str) -> &str {
+    spec.lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("")
+}
+
+fn ticket_matches_tag_filter(
+    ticket: &Ticket,
+    tags: &BTreeSet<String>,
+    tag_filter_match_all: bool,
+) -> bool {
+    if tags.is_empty() {
+        return true;
+    }
+    if tag_filter_match_all {
+        tags.iter().all(|tag| ticket.tags.contains(tag))
+    } else {
+        tags.iter().any(|tag| ticket.tags.contains(tag))
+    }
+}
+
 fn split_tags(raw: &str) -> Vec<String> {
     raw.split(|c: char| c == ',' || c.is_whitespace())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect()
+}
+
+fn saved_view_tags(view: &SavedView) -> Vec<String> {
+    if !view.tags.is_empty() {
+        return view.tags.clone();
+    }
+    view.tag.iter().cloned().collect()
+}
+
+fn builtin_views(current_user: &str) -> Vec<ViewEntry> {
+    vec![
+        ViewEntry {
+            name: "Default".to_string(),
+            view: SavedView {
+                status: Some("open".to_string()),
+                subissues: true,
+                tag_match_all: true,
+                ..Default::default()
+            },
+            kind: ViewKind::BuiltIn,
+        },
+        ViewEntry {
+            name: "Mine".to_string(),
+            view: SavedView {
+                status: Some("open".to_string()),
+                assigned: Some(current_user.to_string()),
+                subissues: true,
+                tag_match_all: true,
+                ..Default::default()
+            },
+            kind: ViewKind::BuiltIn,
+        },
+        ViewEntry {
+            name: "Recently Closed".to_string(),
+            view: SavedView {
+                status: Some("closed".to_string()),
+                order: Some("created.desc".to_string()),
+                subissues: true,
+                tag_match_all: true,
+                ..Default::default()
+            },
+            kind: ViewKind::BuiltIn,
+        },
+        ViewEntry {
+            name: "All Tickets".to_string(),
+            view: SavedView {
+                all: true,
+                subissues: true,
+                tag_match_all: true,
+                ..Default::default()
+            },
+            kind: ViewKind::BuiltIn,
+        },
+    ]
 }
 
 fn optional_trimmed(raw: &str) -> Option<&str> {
@@ -983,6 +2935,75 @@ fn github_author(description: &str) -> Option<&str> {
     })
 }
 
+fn comment_summary_line(comment: &Comment, width: usize) -> Line<'static> {
+    let date = relative_date(comment.at, OffsetDateTime::now_utc());
+    let author = truncate_display(&comment.author, 14);
+    let prefix_width =
+        UnicodeWidthStr::width(date.as_str()) + 2 + UnicodeWidthStr::width(author.as_str()) + 2;
+    let body_width = width.saturating_sub(prefix_width);
+    let body = truncate_display(&flatten_display(&comment.body), body_width);
+
+    Line::from(vec![
+        Span::styled(
+            date,
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM),
+        ),
+        Span::raw("  "),
+        Span::styled(author, Style::default().fg(Color::Cyan)),
+        Span::raw("  "),
+        Span::raw(body),
+    ])
+}
+
+fn help_heading(label: &str) -> Line<'static> {
+    Line::from(Span::styled(
+        label.to_string(),
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    ))
+}
+
+fn help_section(lines: &mut Vec<Line<'static>>, label: &str) {
+    if !lines.is_empty() {
+        lines.push(Line::raw(""));
+    }
+    lines.push(help_heading(label));
+}
+
+fn help_columns(left: (&str, &str), right: Option<(&str, &str)>) -> Line<'static> {
+    let mut spans = Vec::new();
+    help_cell(&mut spans, left.0, left.1);
+    if let Some(right) = right {
+        spans.push(Span::styled("  │  ", Style::default().fg(Color::DarkGray)));
+        help_cell(&mut spans, right.0, right.1);
+    }
+    Line::from(spans)
+}
+
+fn help_cell(spans: &mut Vec<Span<'static>>, keys: &str, description: &str) {
+    spans.push(Span::styled(
+        fit_display(keys, 12),
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    ));
+    spans.push(Span::raw(" "));
+    spans.push(Span::styled(
+        fit_display(description, 20),
+        Style::default().fg(Color::Cyan),
+    ));
+}
+
+fn help_note(text: &str) -> Line<'static> {
+    Line::from(Span::styled(
+        text.to_string(),
+        Style::default().fg(Color::DarkGray),
+    ))
+}
+
 fn field_line(label: &str, value: &str) -> Line<'static> {
     Line::from(vec![
         Span::styled(
@@ -994,6 +3015,192 @@ fn field_line(label: &str, value: &str) -> Line<'static> {
         Span::styled(" : ", Style::default().fg(Color::DarkGray)),
         Span::styled(value.to_string(), Style::default().fg(Color::Cyan)),
     ])
+}
+
+fn tags_field_line(tags: &BTreeSet<String>) -> Line<'static> {
+    let mut spans = vec![
+        Span::styled(
+            format!("{:<10}", "Tags"),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" : ", Style::default().fg(Color::DarkGray)),
+    ];
+    let mut first = true;
+    for tag in tags {
+        if !first {
+            spans.push(Span::raw(", "));
+        }
+        first = false;
+        spans.push(Span::styled(
+            tag.clone(),
+            Style::default().fg(tag_color(tag)),
+        ));
+    }
+    Line::from(spans)
+}
+
+fn tag_spans(tags: &BTreeSet<String>, max_width: usize) -> Vec<Span<'static>> {
+    if max_width == 0 || tags.is_empty() {
+        return Vec::new();
+    }
+
+    let tag_values = tags.iter().collect::<Vec<_>>();
+    for keep in (1..=tag_values.len()).rev() {
+        let hidden = tag_values.len() - keep;
+        let spans = tag_list_spans(&tag_values[..keep], hidden);
+        if spans_width(&spans) <= max_width {
+            return spans;
+        }
+    }
+
+    let spans = tag_count_spans(tags.len());
+    if spans_width(&spans) <= max_width {
+        spans
+    } else {
+        Vec::new()
+    }
+}
+
+fn tag_list_spans(tags: &[&String], hidden: usize) -> Vec<Span<'static>> {
+    let mut spans = vec![Span::raw("[")];
+    for (idx, tag) in tags.iter().enumerate() {
+        if idx > 0 {
+            spans.push(Span::raw(","));
+        }
+        spans.push(Span::styled(
+            (*tag).clone(),
+            Style::default().fg(tag_color(tag)),
+        ));
+    }
+    if hidden > 0 {
+        if !tags.is_empty() {
+            spans.push(Span::raw(","));
+        }
+        spans.push(Span::styled(
+            format!("+{hidden}"),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    spans.push(Span::raw("]"));
+    spans
+}
+
+fn tag_count_spans(count: usize) -> Vec<Span<'static>> {
+    vec![
+        Span::raw("["),
+        Span::styled(count.to_string(), Style::default().fg(Color::DarkGray)),
+        Span::raw("]"),
+    ]
+}
+
+fn tag_count_width(count: usize) -> usize {
+    spans_width(&tag_count_spans(count))
+}
+
+fn spans_width(spans: &[Span<'_>]) -> usize {
+    spans
+        .iter()
+        .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
+        .sum()
+}
+
+fn tag_color(tag: &str) -> Color {
+    let hash = stable_hash(tag);
+    if supports_truecolor() {
+        let hue = (hash % 360) as f32;
+        let (r, g, b) = hsl_to_rgb(hue, 0.68, 0.62);
+        Color::Rgb(r, g, b)
+    } else {
+        ANSI_TAG_COLORS[(hash as usize) % ANSI_TAG_COLORS.len()]
+    }
+}
+
+fn supports_truecolor() -> bool {
+    std::env::var("COLORTERM")
+        .map(|value| {
+            let value = value.to_ascii_lowercase();
+            value.contains("truecolor") || value.contains("24bit")
+        })
+        .unwrap_or(false)
+        || std::env::var("TERM")
+            .map(|value| value.to_ascii_lowercase().contains("direct"))
+            .unwrap_or(false)
+}
+
+fn stable_hash(value: &str) -> u64 {
+    let mut hash = 14_695_981_039_346_656_037u64;
+    for byte in value.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(1_099_511_628_211);
+    }
+    hash
+}
+
+fn hsl_to_rgb(hue: f32, saturation: f32, lightness: f32) -> (u8, u8, u8) {
+    let chroma = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation;
+    let hue_prime = hue / 60.0;
+    let x = chroma * (1.0 - (hue_prime % 2.0 - 1.0).abs());
+    let (r1, g1, b1) = match hue_prime as u8 {
+        0 => (chroma, x, 0.0),
+        1 => (x, chroma, 0.0),
+        2 => (0.0, chroma, x),
+        3 => (0.0, x, chroma),
+        4 => (x, 0.0, chroma),
+        _ => (chroma, 0.0, x),
+    };
+    let m = lightness - chroma / 2.0;
+    (
+        ((r1 + m) * 255.0).round() as u8,
+        ((g1 + m) * 255.0).round() as u8,
+        ((b1 + m) * 255.0).round() as u8,
+    )
+}
+
+fn status_state_line(ticket: &Ticket) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            format!("{:<10}", "Status"),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" : ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            ticket.status.as_str().to_string(),
+            Style::default().fg(Color::Green),
+        ),
+        Span::raw("  "),
+        Span::styled(
+            "State",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" : ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            ticket.state.as_str().to_string(),
+            Style::default().fg(Color::Green),
+        ),
+    ])
+}
+
+fn relative_date(then: OffsetDateTime, now: OffsetDateTime) -> String {
+    let seconds = (now - then).whole_seconds().max(0);
+    if seconds < 60 * 60 {
+        return "0d".to_string();
+    }
+    if seconds < 60 * 60 * 24 {
+        return format!("{}h", seconds / (60 * 60));
+    }
+    if seconds < 60 * 60 * 24 * 30 {
+        return format!("{}d", seconds / (60 * 60 * 24));
+    }
+    if seconds < 60 * 60 * 24 * 365 {
+        return format!("{}mo", seconds / (60 * 60 * 24 * 30));
+    }
+    format!("{}y", seconds / (60 * 60 * 24 * 365))
 }
 
 fn new_ticket_field_line(

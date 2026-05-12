@@ -25,7 +25,7 @@ pub fn run_sync(args: Args) -> Result<()> {
         .transpose()?
         .unwrap_or_else(|| "(none)".to_string());
 
-    if let Some(remote) = remote {
+    if let Some(remote) = &remote {
         println!("Remote: {remote}");
     }
     println!("Ref: refs/{namespace}/main");
@@ -72,7 +72,6 @@ pub fn run_sync(args: Args) -> Result<()> {
 
     let total = after.len();
     println!("Push: {total} ticket(s) synced.");
-
     println!("Done.");
     Ok(())
 }

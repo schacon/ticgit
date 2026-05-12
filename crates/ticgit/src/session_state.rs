@@ -37,6 +37,10 @@ pub struct SavedView {
     pub state: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tag: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub tag_match_all: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub assigned: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -55,6 +59,14 @@ pub struct SavedView {
 
 fn is_false(v: &bool) -> bool {
     !v
+}
+
+fn is_true(v: &bool) -> bool {
+    *v
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn is_zero(v: &usize) -> bool {

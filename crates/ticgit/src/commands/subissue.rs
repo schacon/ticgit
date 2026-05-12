@@ -54,7 +54,12 @@ pub fn run(args: Args) -> Result<()> {
         Some(pid) => {
             let parent = store.load(&pid)?;
             let short: String = pid.to_string().chars().take(6).collect();
-            println!("{} sub-issue of: {} {}", ticket.short_id(), short, parent.title);
+            println!(
+                "{} sub-issue of: {} {}",
+                ticket.short_id(),
+                short,
+                parent.title
+            );
         }
         None => println!("{} sub-issue: (none)", ticket.short_id()),
     }

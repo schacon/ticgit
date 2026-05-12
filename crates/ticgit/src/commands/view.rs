@@ -58,10 +58,9 @@ fn run_save(args: SaveArgs) -> Result<()> {
     let store = open_store()?;
     let git_dir = store.session().repo_git_dir();
     let mut state = State::load().unwrap_or_default();
-    let last = state
-        .last_filters_for(&git_dir)
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("no recent `ti list` filters to save — run `ti list` with filters first"))?;
+    let last = state.last_filters_for(&git_dir).cloned().ok_or_else(|| {
+        anyhow::anyhow!("no recent `ti list` filters to save — run `ti list` with filters first")
+    })?;
     let desc = describe_view(&last);
     state.save_view(&git_dir, &args.name, last);
     state.save()?;
@@ -95,8 +94,15 @@ pub fn describe_view(v: &SavedView) -> String {
     if let Some(s) = &v.state {
         parts.push(format!("--state {s}"));
     }
-    if let Some(t) = &v.tag {
-        parts.push(format!("--tag {t}"));
+    let tags = saved_tags(v);
+    for tag in &tags {
+        parts.push(format!("--tag {tag}"));
+    }
+    if tags.len() > 1 {
+        parts.push(format!(
+            "--tag-mode {}",
+            if v.tag_match_all { "all" } else { "any" }
+        ));
     }
     if let Some(a) = &v.assigned {
         parts.push(format!("--assigned {a}"));
@@ -121,4 +127,11 @@ pub fn describe_view(v: &SavedView) -> String {
     } else {
         parts.join(" ")
     }
+}
+
+fn saved_tags(v: &SavedView) -> Vec<String> {
+    if !v.tags.is_empty() {
+        return v.tags.clone();
+    }
+    v.tag.iter().cloned().collect()
 }

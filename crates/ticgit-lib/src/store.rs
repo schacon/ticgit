@@ -21,7 +21,12 @@ use crate::ticket::{Comment, CommentBody, NewTicketOpts, Ticket, TicketState, Ti
 fn validate_email(email: &str) -> Result<()> {
     let email = email.trim();
     let parts: Vec<&str> = email.split('@').collect();
-    if parts.len() == 2 && !parts[0].is_empty() && parts[1].contains('.') && !parts[1].starts_with('.') && !parts[1].ends_with('.') {
+    if parts.len() == 2
+        && !parts[0].is_empty()
+        && parts[1].contains('.')
+        && !parts[1].starts_with('.')
+        && !parts[1].ends_with('.')
+    {
         Ok(())
     } else {
         Err(Error::InvalidValue(format!(
@@ -119,10 +124,7 @@ impl TicketStore {
                 parent_id.to_string().as_str(),
             )?;
             // Denormalize: add child to parent's children set
-            p.set_add(
-                &keys::ticket_field(&parent_id, "children"),
-                &id.to_string(),
-            )?;
+            p.set_add(&keys::ticket_field(&parent_id, "children"), &id.to_string())?;
         }
 
         if let Some(body) = opts.comment {
@@ -263,6 +265,27 @@ impl TicketStore {
         let p = self.project_handle();
         p.set(&keys::ticket_field(id, "status"), status.as_str())?;
         p.set(&keys::ticket_field(id, "state"), state.as_str())?;
+        if status == TicketStatus::Closed {
+            p.set(&keys::ticket_field(id, "closed-by"), self.session.email())?;
+        } else {
+            p.remove(&keys::ticket_field(id, "closed-by"))?;
+        }
+        Ok(())
+    }
+
+    pub fn set_closed_by(&self, id: &Uuid, who: Option<&str>) -> Result<()> {
+        let p = self.project_handle();
+        let key = keys::ticket_field(id, "closed-by");
+        match who {
+            Some(w) if !w.is_empty() => {
+                let resolved = self.resolve_user(w)?;
+                validate_email(&resolved)?;
+                p.set(&key, resolved.as_str())?;
+            }
+            _ => {
+                p.remove(&key)?;
+            }
+        }
         Ok(())
     }
 
@@ -727,6 +750,7 @@ fn build_ticket(id: Uuid, fields: Vec<(String, MetaValue)>) -> Option<Ticket> {
     let mut legacy_status: Option<TicketStatus> = None;
     let mut legacy_state: Option<TicketState> = None;
     let mut assigned: Option<String> = None;
+    let mut closed_by: Option<String> = None;
     let mut priority: Option<i64> = None;
     let mut points: Option<i64> = None;
     let mut milestone: Option<String> = None;
@@ -771,19 +795,29 @@ fn build_ticket(id: Uuid, fields: Vec<(String, MetaValue)>) -> Option<Ticket> {
                 }
             },
             ("assigned", MetaValue::String(s)) => assigned = Some(s),
+            ("closed-by", MetaValue::String(s)) => closed_by = Some(s),
             ("priority", MetaValue::String(s)) => priority = s.parse().ok(),
             ("points", MetaValue::String(s)) => points = s.parse().ok(),
             ("milestone", MetaValue::String(s)) => milestone = Some(s),
             ("code", MetaValue::String(s)) => code = Some(s),
             ("parent", MetaValue::String(s)) => parent = Uuid::parse_str(&s).ok(),
             ("children", MetaValue::Set(members)) => {
-                children = members.iter().filter_map(|s| Uuid::parse_str(s).ok()).collect();
+                children = members
+                    .iter()
+                    .filter_map(|s| Uuid::parse_str(s).ok())
+                    .collect();
             }
             ("depends_on", MetaValue::Set(members)) => {
-                depends_on = members.iter().filter_map(|s| Uuid::parse_str(s).ok()).collect();
+                depends_on = members
+                    .iter()
+                    .filter_map(|s| Uuid::parse_str(s).ok())
+                    .collect();
             }
             ("blocks", MetaValue::Set(members)) => {
-                blocks = members.iter().filter_map(|s| Uuid::parse_str(s).ok()).collect();
+                blocks = members
+                    .iter()
+                    .filter_map(|s| Uuid::parse_str(s).ok())
+                    .collect();
             }
             ("tags", MetaValue::Set(members)) => tags = members,
             ("comments", MetaValue::List(entries)) => comments = decode_comments(entries),
@@ -817,6 +851,7 @@ fn build_ticket(id: Uuid, fields: Vec<(String, MetaValue)>) -> Option<Ticket> {
         status,
         state,
         assigned,
+        closed_by,
         priority,
         points,
         milestone,
@@ -908,6 +943,9 @@ mod tests {
         let loaded = store.load(&t.id).unwrap();
         assert_eq!(loaded.status, TicketStatus::Closed);
         assert_eq!(loaded.state, TicketState::Resolved);
+        assert_eq!(loaded.closed_by.as_deref(), Some(store.email()));
+        store.set_state(&t.id, TicketState::New).unwrap();
+        assert_eq!(store.load(&t.id).unwrap().closed_by, None);
     }
 
     #[test]
