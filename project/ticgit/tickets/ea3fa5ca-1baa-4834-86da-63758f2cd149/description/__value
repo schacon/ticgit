@@ -1,0 +1,1 @@
+Beads supports richer graph links such as relates_to, duplicates, supersedes, and replies_to in addition to blocking dependencies. TicGit should add typed links so users can mark duplicates, superseded work, related context, and follow-up relationships without overloading dependency edges. These links should show in `ti show`, JSON output, and TUI detail view.

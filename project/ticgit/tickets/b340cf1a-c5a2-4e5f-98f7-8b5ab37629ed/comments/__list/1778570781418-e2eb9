@@ -1,0 +1,1 @@
+{"author":"schacon@gmail.com","body":"Beads inspiration: `bd remember` and `bd prime` treat durable project memory as first-class agent context. This ticket should probably store queryable memories and expose them through a compact `ti prime` or agent context command rather than only writing a MEMORY.md-style file."}

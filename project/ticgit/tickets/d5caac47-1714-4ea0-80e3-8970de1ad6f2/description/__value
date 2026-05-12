@@ -1,0 +1,1 @@
+Beads uses doctor-style checks to find workflow problems and guide repairs. TicGit should add `ti doctor` to detect broken metadata, orphaned checkout state, missing schema data, unresolved sync problems, invalid dependency edges, ambiguous references, and other repository health issues. A later `--fix` mode can safely repair known cases after a dry-run summary.

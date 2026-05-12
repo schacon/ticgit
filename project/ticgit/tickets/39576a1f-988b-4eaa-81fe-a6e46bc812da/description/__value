@@ -1,0 +1,1 @@
+Beads has a compaction concept that semantically summarizes old closed work to reduce context burden for agents. TicGit should support a lightweight archive/compact workflow that preserves key metadata and final outcome while optionally summarizing long descriptions and comments on resolved tickets. The goal is better agent context and faster browsing without deleting history.

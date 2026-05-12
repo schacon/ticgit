@@ -1,0 +1,1 @@
+Beads uses `bd prime` as a single source of truth for agent workflow context, ready work, and durable project memory. TicGit should add `ti prime` to emit a compact agent-oriented context bundle: current ticket, ready tickets, project memories, common commands, sync status, and important workflow rules. This should be available as Markdown and JSON for hooks or SDK integrations.

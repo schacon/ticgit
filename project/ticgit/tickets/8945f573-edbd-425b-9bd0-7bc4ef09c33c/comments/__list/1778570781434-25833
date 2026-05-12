@@ -1,0 +1,1 @@
+{"author":"schacon@gmail.com","body":"Beads inspiration: contributor/stealth modes separate personal planning from maintainer/project metadata. Branch-specific TicGit tickets could similarly support fork-local or personal branch namespaces so contributor planning does not accidentally pollute shared project ticket metadata."}

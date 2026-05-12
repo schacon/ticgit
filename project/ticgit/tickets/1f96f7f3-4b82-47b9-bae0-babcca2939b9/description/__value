@@ -1,0 +1,1 @@
+Beads has a message issue type with threading for lightweight delegation and handoff notes. TicGit could add a message or note ticket type for short-lived agent coordination: questions, handoff notes, review requests, and replies. Messages should thread to tickets where relevant and be easy to expire or close without cluttering normal feature/bug lists.

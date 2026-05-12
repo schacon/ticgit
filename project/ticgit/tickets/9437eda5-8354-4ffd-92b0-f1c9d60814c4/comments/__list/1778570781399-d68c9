@@ -1,0 +1,1 @@
+{"author":"schacon@gmail.com","body":"Beads inspiration: `bd setup` uses recipes for Cursor, Claude, Gemini, Codex, AGENTS.md, and other tools. When implementing this TicGit skills/setup ticket, consider recipe-style integrations plus a `--check` mode so agents and humans can verify instructions are installed and current."}
