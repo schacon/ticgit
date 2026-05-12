@@ -959,6 +959,104 @@ fn list_filters_and_saved_views_work() {
 }
 
 #[test]
+fn writeup_workflow_creates_versions_links_and_promotes() {
+    let repo = TestRepo::new();
+    let output = repo
+        .ti()
+        .args([
+            "writeup",
+            "new",
+            "--title",
+            "Rethink sync",
+            "--body",
+            "Initial notes",
+            "--tags",
+            "design",
+            "--id-only",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let writeup = String::from_utf8(output).unwrap().trim().to_string();
+    let writeup_prefix = &writeup[..6];
+
+    repo.ti()
+        .args(["writeup", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(writeup_prefix))
+        .stdout(predicate::str::contains("Rethink sync"))
+        .stdout(predicate::str::contains("[design]"));
+
+    repo.ti()
+        .args(["writeup", "edit", writeup_prefix, "--body", "Second notes"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Appended version 2"));
+
+    repo.ti()
+        .args(["writeup", "show", writeup_prefix])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Writeup: Rethink sync"))
+        .stdout(predicate::str::contains("Second notes"))
+        .stdout(predicate::str::contains("Initial notes").not());
+
+    let ticket = create_ticket(&repo, "related ticket");
+    repo.ti()
+        .args(["writeup", "link", writeup_prefix, &ticket[..6]])
+        .assert()
+        .success();
+    repo.ti()
+        .args(["writeup", "show", writeup_prefix])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(&ticket));
+    repo.ti()
+        .args(["writeup", "unlink", writeup_prefix, &ticket[..6]])
+        .assert()
+        .success();
+
+    let promoted_output = repo
+        .ti()
+        .args(["writeup", "promote", writeup_prefix])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Promoted writeup"))
+        .get_output()
+        .stdout
+        .clone();
+    let promoted_stdout = String::from_utf8(promoted_output).unwrap();
+    let promoted_id = promoted_stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("Full ticket id: "))
+        .expect("promoted ticket id");
+    repo.ti()
+        .args(["show", promoted_id, "--markdown"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Ticket: Rethink sync"))
+        .stdout(predicate::str::contains("Second notes"));
+
+    repo.ti()
+        .args(["writeup", "close", writeup_prefix])
+        .assert()
+        .success();
+    repo.ti()
+        .args(["writeup", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Rethink sync").not());
+    repo.ti()
+        .args(["writeup", "list", "--all"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Rethink sync"));
+}
+
+#[test]
 fn list_search_filters_title_description_and_comments() {
     let repo = TestRepo::new();
     let title = create_ticket(&repo, "parser panic");

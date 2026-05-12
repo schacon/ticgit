@@ -15,6 +15,7 @@ use uuid::Uuid;
 use crate::error::{Error, Result};
 use crate::keys;
 use crate::ticket::{Comment, CommentBody, NewTicketOpts, Ticket, TicketState, TicketStatus};
+use crate::writeup::{NewWriteupOpts, Writeup, WriteupStatus, WriteupVersion};
 
 /// Basic email format check: must contain exactly one `@` with non-empty
 /// local and domain parts.
@@ -551,6 +552,207 @@ impl TicketStore {
         Ok(())
     }
 
+    // -------------------------------------------------------------------
+    // Writeups
+    // -------------------------------------------------------------------
+
+    pub fn create_writeup(&self, title: &str, opts: NewWriteupOpts) -> Result<Writeup> {
+        let title = title.trim();
+        if title.is_empty() {
+            return Err(Error::InvalidValue(
+                "writeup title cannot be empty".to_string(),
+            ));
+        }
+
+        let id = Uuid::new_v4();
+        let p = self.project_handle();
+        let now = opts.created_at.unwrap_or_else(OffsetDateTime::now_utc);
+        let now_rfc = now
+            .format(&Rfc3339)
+            .map_err(|e| Error::Time(e.to_string()))?;
+        let author = self.session.email();
+        validate_email(author)?;
+
+        p.set(&keys::writeup_field(&id, "title"), title)?;
+        p.set(
+            &keys::writeup_field(&id, "status"),
+            WriteupStatus::Open.as_str(),
+        )?;
+        p.set(&keys::writeup_field(&id, "created-at"), now_rfc.as_str())?;
+        p.set(&keys::writeup_field(&id, "created-by"), author)?;
+        p.set_add(&keys::writeup_field(&id, "authors"), author)?;
+
+        for tag in opts.tags {
+            let tag = tag.trim();
+            if !tag.is_empty() {
+                p.set_add(&keys::writeup_field(&id, "tags"), tag)?;
+            }
+        }
+
+        if let Some(body) = opts.body {
+            self.push_writeup_version(&p, &id, &body)?;
+        }
+
+        self.load_writeup(&id)
+    }
+
+    pub fn list_writeups(&self) -> Result<Vec<Writeup>> {
+        let p = self.project_handle();
+        let pairs = p.get_all_values(Some(&keys::writeups_prefix()))?;
+        let mut by_id: BTreeMap<Uuid, Vec<(String, MetaValue)>> = BTreeMap::new();
+        for (key, value) in pairs {
+            if let Some((id, field)) = keys::parse_writeup_field(&key) {
+                by_id
+                    .entry(id)
+                    .or_default()
+                    .push((field.to_string(), value));
+            }
+        }
+
+        let mut out = Vec::with_capacity(by_id.len());
+        for (id, fields) in by_id {
+            if let Some(writeup) = build_writeup(id, fields) {
+                out.push(writeup);
+            }
+        }
+        out.sort_by(|a, b| {
+            b.created_at
+                .cmp(&a.created_at)
+                .then_with(|| a.title.cmp(&b.title))
+        });
+        Ok(out)
+    }
+
+    pub fn load_writeup(&self, id: &Uuid) -> Result<Writeup> {
+        let p = self.project_handle();
+        let pairs = p.get_all_values(Some(&keys::writeup_prefix(id)))?;
+        let mut fields = Vec::with_capacity(pairs.len());
+        for (key, value) in pairs {
+            if let Some((parsed_id, field)) = keys::parse_writeup_field(&key) {
+                if parsed_id == *id {
+                    fields.push((field.to_string(), value));
+                }
+            }
+        }
+        build_writeup(*id, fields).ok_or(Error::NotFound(*id))
+    }
+
+    pub fn resolve_writeup_id(&self, reference: &str) -> Result<Uuid> {
+        let needle = reference.trim().to_ascii_lowercase().replace('-', "");
+        if needle.is_empty() {
+            return Err(Error::NoMatch(reference.to_string()));
+        }
+        let writeups = self.list_writeups()?;
+        let matches: Vec<&Writeup> = writeups
+            .iter()
+            .filter(|writeup| {
+                let hex = writeup.id.to_string().replace('-', "");
+                hex.starts_with(&needle)
+            })
+            .collect();
+        match matches.len() {
+            0 => Err(Error::NoMatch(reference.to_string())),
+            1 => Ok(matches[0].id),
+            n => {
+                let open_matches: Vec<&Writeup> = matches
+                    .iter()
+                    .copied()
+                    .filter(|writeup| writeup.status == WriteupStatus::Open)
+                    .collect();
+                if open_matches.len() == 1 {
+                    Ok(open_matches[0].id)
+                } else {
+                    Err(Error::Ambiguous(reference.to_string(), n))
+                }
+            }
+        }
+    }
+
+    pub fn append_writeup_version(&self, id: &Uuid, body: &str) -> Result<()> {
+        self.load_writeup(id)?;
+        let p = self.project_handle();
+        self.push_writeup_version(&p, id, body)?;
+        Ok(())
+    }
+
+    fn push_writeup_version(
+        &self,
+        handle: &git_meta_lib::SessionTargetHandle<'_>,
+        id: &Uuid,
+        body: &str,
+    ) -> Result<()> {
+        let body = body.trim();
+        if body.is_empty() {
+            return Err(Error::InvalidValue(
+                "writeup version body cannot be empty".to_string(),
+            ));
+        }
+        let author = self.session.email();
+        validate_email(author)?;
+        let now = OffsetDateTime::now_utc();
+        let now_rfc = now
+            .format(&Rfc3339)
+            .map_err(|e| Error::Time(e.to_string()))?;
+        let doc = format!("---\nauthor: {author}\ndate: {now_rfc}\n---\n\n{body}");
+        handle.list_push(&keys::writeup_field(id, "versions"), &doc)?;
+        handle.set_add(&keys::writeup_field(id, "authors"), author)?;
+        Ok(())
+    }
+
+    pub fn set_writeup_status(&self, id: &Uuid, status: WriteupStatus) -> Result<()> {
+        self.load_writeup(id)?;
+        self.project_handle()
+            .set(&keys::writeup_field(id, "status"), status.as_str())?;
+        Ok(())
+    }
+
+    pub fn link_writeup_ticket(&self, writeup_id: &Uuid, ticket_id: &Uuid) -> Result<()> {
+        self.load_writeup(writeup_id)?;
+        self.load(ticket_id)?;
+        let p = self.project_handle();
+        p.set_add(
+            &keys::writeup_field(writeup_id, "tickets"),
+            &ticket_id.to_string(),
+        )?;
+        p.set_add(
+            &keys::ticket_field(ticket_id, "writeups"),
+            &writeup_id.to_string(),
+        )?;
+        Ok(())
+    }
+
+    pub fn unlink_writeup_ticket(&self, writeup_id: &Uuid, ticket_id: &Uuid) -> Result<()> {
+        self.load_writeup(writeup_id)?;
+        self.load(ticket_id)?;
+        let p = self.project_handle();
+        p.set_remove(
+            &keys::writeup_field(writeup_id, "tickets"),
+            &ticket_id.to_string(),
+        )?;
+        p.set_remove(
+            &keys::ticket_field(ticket_id, "writeups"),
+            &writeup_id.to_string(),
+        )?;
+        Ok(())
+    }
+
+    pub fn promote_writeup(&self, writeup_id: &Uuid) -> Result<Ticket> {
+        let writeup = self.load_writeup(writeup_id)?;
+        let body = writeup.latest_body().unwrap_or("").trim().to_string();
+        let ticket = self.create(
+            &writeup.title,
+            NewTicketOpts {
+                tags: writeup.tags.iter().cloned().collect(),
+                ..Default::default()
+            },
+        )?;
+        if !body.is_empty() {
+            self.set_description(&ticket.id, Some(&body))?;
+        }
+        self.link_writeup_ticket(writeup_id, &ticket.id)?;
+        self.load(&ticket.id)
+    }
+
     fn project_handle(&self) -> git_meta_lib::SessionTargetHandle<'_> {
         self.session.target(&Target::project())
     }
@@ -868,6 +1070,62 @@ fn build_ticket(id: Uuid, fields: Vec<(String, MetaValue)>) -> Option<Ticket> {
     })
 }
 
+fn build_writeup(id: Uuid, fields: Vec<(String, MetaValue)>) -> Option<Writeup> {
+    if fields.is_empty() {
+        return None;
+    }
+
+    let mut title: Option<String> = None;
+    let mut status = WriteupStatus::Open;
+    let mut created_at: Option<OffsetDateTime> = None;
+    let mut created_by = String::new();
+    let mut authors = BTreeSet::new();
+    let mut tags = BTreeSet::new();
+    let mut tickets = BTreeSet::new();
+    let mut versions = Vec::new();
+
+    for (field, value) in fields {
+        match (field.as_str(), value) {
+            ("title", MetaValue::String(s)) => title = Some(s),
+            ("status", MetaValue::String(s)) => {
+                status = WriteupStatus::parse(&s).unwrap_or(WriteupStatus::Open);
+            }
+            ("created-at", MetaValue::String(s)) => {
+                created_at = OffsetDateTime::parse(&s, &Rfc3339).ok();
+            }
+            ("created-by", MetaValue::String(s)) => created_by = s,
+            ("authors", MetaValue::Set(members)) => authors = members,
+            ("tags", MetaValue::Set(members)) => tags = members,
+            ("tickets", MetaValue::Set(members)) => {
+                tickets = members
+                    .iter()
+                    .filter_map(|s| Uuid::parse_str(s).ok())
+                    .collect();
+            }
+            ("versions", MetaValue::List(entries)) => versions = decode_writeup_versions(entries),
+            _ => {}
+        }
+    }
+
+    let title = title?;
+    let created_at = created_at.unwrap_or(OffsetDateTime::UNIX_EPOCH);
+    if created_by.is_empty() {
+        created_by = authors.iter().next().cloned().unwrap_or_default();
+    }
+
+    Some(Writeup {
+        id,
+        title,
+        status,
+        created_at,
+        created_by,
+        authors,
+        tags,
+        tickets,
+        versions,
+    })
+}
+
 fn decode_comments(entries: Vec<ListEntry>) -> Vec<Comment> {
     let mut out = Vec::with_capacity(entries.len());
     for entry in entries {
@@ -883,6 +1141,55 @@ fn decode_comments(entries: Vec<ListEntry>) -> Vec<Comment> {
         out.push(Comment { author, at, body });
     }
     out
+}
+
+fn decode_writeup_versions(entries: Vec<ListEntry>) -> Vec<WriteupVersion> {
+    let mut out = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let fallback_at =
+            OffsetDateTime::from_unix_timestamp_nanos(i128::from(entry.timestamp) * 1_000_000)
+                .unwrap_or(OffsetDateTime::UNIX_EPOCH);
+        out.push(decode_writeup_version(&entry.value, fallback_at));
+    }
+    out
+}
+
+fn decode_writeup_version(raw: &str, fallback_at: OffsetDateTime) -> WriteupVersion {
+    let Some(rest) = raw.strip_prefix("---\n") else {
+        return WriteupVersion {
+            author: "unknown".to_string(),
+            at: fallback_at,
+            body: raw.to_string(),
+        };
+    };
+    let Some((frontmatter, body)) = rest.split_once("\n---\n") else {
+        return WriteupVersion {
+            author: "unknown".to_string(),
+            at: fallback_at,
+            body: raw.to_string(),
+        };
+    };
+
+    let mut author = "unknown".to_string();
+    let mut at = fallback_at;
+    for line in frontmatter.lines() {
+        if let Some(value) = line.strip_prefix("author:") {
+            let value = value.trim();
+            if !value.is_empty() {
+                author = value.to_string();
+            }
+        } else if let Some(value) = line.strip_prefix("date:") {
+            if let Ok(parsed) = OffsetDateTime::parse(value.trim(), &Rfc3339) {
+                at = parsed;
+            }
+        }
+    }
+
+    WriteupVersion {
+        author,
+        at,
+        body: body.trim_start_matches(['\r', '\n']).to_string(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1068,6 +1375,85 @@ mod tests {
         just_a.insert(a.id);
         store.save_view("everything", &just_a).unwrap();
         assert_eq!(store.load_view("everything").unwrap(), just_a);
+    }
+
+    #[test]
+    fn writeups_round_trip_versions_and_status() {
+        let (store, _td) = test_store();
+        let writeup = store
+            .create_writeup(
+                "Design note",
+                NewWriteupOpts {
+                    body: Some("first draft".to_string()),
+                    tags: vec!["design".to_string()],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        store
+            .append_writeup_version(&writeup.id, "second draft")
+            .unwrap();
+        store
+            .set_writeup_status(&writeup.id, WriteupStatus::Closed)
+            .unwrap();
+
+        let loaded = store.load_writeup(&writeup.id).unwrap();
+        assert_eq!(loaded.title, "Design note");
+        assert_eq!(loaded.status, WriteupStatus::Closed);
+        assert!(loaded.tags.contains("design"));
+        assert!(loaded.authors.contains(store.email()));
+        assert_eq!(loaded.versions.len(), 2);
+        assert_eq!(loaded.versions[0].author, store.email());
+        assert_eq!(loaded.versions[0].body, "first draft");
+        assert_eq!(loaded.versions[1].body, "second draft");
+        assert_eq!(
+            store.resolve_writeup_id(&writeup.short_id()).unwrap(),
+            writeup.id
+        );
+    }
+
+    #[test]
+    fn writeups_link_unlink_and_promote() {
+        let (store, _td) = test_store();
+        let ticket = store.create("existing", NewTicketOpts::default()).unwrap();
+        let writeup = store
+            .create_writeup(
+                "Promotable",
+                NewWriteupOpts {
+                    body: Some("make this actionable".to_string()),
+                    tags: vec!["feature".to_string()],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+
+        store.link_writeup_ticket(&writeup.id, &ticket.id).unwrap();
+        assert!(store
+            .load_writeup(&writeup.id)
+            .unwrap()
+            .tickets
+            .contains(&ticket.id));
+        store
+            .unlink_writeup_ticket(&writeup.id, &ticket.id)
+            .unwrap();
+        assert!(!store
+            .load_writeup(&writeup.id)
+            .unwrap()
+            .tickets
+            .contains(&ticket.id));
+
+        let promoted = store.promote_writeup(&writeup.id).unwrap();
+        assert_eq!(promoted.title, "Promotable");
+        assert_eq!(
+            promoted.description.as_deref(),
+            Some("make this actionable")
+        );
+        assert!(promoted.tags.contains("feature"));
+        assert!(store
+            .load_writeup(&writeup.id)
+            .unwrap()
+            .tickets
+            .contains(&promoted.id));
     }
 
     fn insert_ticket(
