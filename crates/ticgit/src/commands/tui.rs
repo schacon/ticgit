@@ -21,8 +21,8 @@ use ratatui::widgets::{
 };
 use ratatui::{Frame, Terminal};
 use ticgit_lib::{
-    query, Comment, Filter, NewTicketOpts, SortKey, SortOrder, Ticket, TicketLifecycle,
-    TicketState, TicketStatus, TicketStore, Writeup,
+    query, Comment, Filter, NewTicketOpts, NewWriteupOpts, SortKey, SortOrder, Ticket,
+    TicketLifecycle, TicketState, TicketStatus, TicketStore, Writeup, WriteupStatus,
 };
 use time::OffsetDateTime;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -140,6 +140,7 @@ struct App {
     board_rows: [usize; BOARD_STATES.len()],
     view: ViewMode,
     active_tab: TuiTab,
+    show_all_writeups: bool,
     active_view_name: Option<String>,
     saved_view_state: ListState,
     pending_delete_view: Option<String>,
@@ -290,6 +291,7 @@ impl App {
             board_rows: [0; BOARD_STATES.len()],
             view: ViewMode::List,
             active_tab: TuiTab::Issues,
+            show_all_writeups: false,
             active_view_name: None,
             saved_view_state: ListState::default(),
             pending_delete_view: None,
@@ -779,8 +781,20 @@ impl App {
                             desc: "edit",
                         },
                         MenuHint {
+                            key: "n",
+                            desc: "new",
+                        },
+                        MenuHint {
                             key: "p",
                             desc: "promote",
+                        },
+                        MenuHint {
+                            key: "a",
+                            desc: "all/open",
+                        },
+                        MenuHint {
+                            key: "c/o",
+                            desc: "close/open",
                         },
                         MenuHint {
                             key: "l/u",
@@ -1036,10 +1050,15 @@ impl App {
 
     fn draw_writeup_list(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let count = self.visible_writeups.len();
-        let title = if self.filter.is_empty() {
-            format!("Writeups by recency ({count})")
+        let scope = if self.show_all_writeups {
+            "All writeups"
         } else {
-            format!("Writeups matching \"{}\" ({count})", self.filter)
+            "Open writeups"
+        };
+        let title = if self.filter.is_empty() {
+            format!("{scope} by recency ({count})")
+        } else {
+            format!("{scope} matching \"{}\" ({count})", self.filter)
         };
         let block = Block::default()
             .borders(Borders::ALL)
@@ -1050,7 +1069,11 @@ impl App {
 
         let items: Vec<ListItem<'_>> = if self.visible_writeups.is_empty() {
             vec![ListItem::new(Line::from(Span::styled(
-                "No writeups yet.",
+                if self.show_all_writeups {
+                    "No writeups yet."
+                } else {
+                    "No open writeups. Press a to show all."
+                },
                 Style::default().fg(Color::DarkGray),
             )))]
         } else {
@@ -1972,6 +1995,11 @@ impl App {
                     ("Enter", "details"),
                     Some(("e", "edit latest")),
                 ));
+                lines.push(help_columns(
+                    ("n", "new writeup"),
+                    Some(("a", "show all/open")),
+                ));
+                lines.push(help_columns(("c", "close"), Some(("o", "reopen"))));
                 lines.push(help_columns(("p", "promote"), Some(("l", "link issue"))));
                 lines.push(help_columns(
                     ("u", "unlink issue"),
@@ -2201,6 +2229,8 @@ impl App {
             KeyCode::Char('n') => {
                 if self.active_tab == TuiTab::Issues {
                     self.begin_create();
+                } else {
+                    self.create_writeup_in_editor(terminal)?;
                 }
                 false
             }
@@ -2271,6 +2301,8 @@ impl App {
             KeyCode::Char('c') => {
                 if self.active_tab == TuiTab::Issues {
                     self.begin_input(InputKind::Comment);
+                } else {
+                    self.set_selected_writeup_status(WriteupStatus::Closed)?;
                 }
                 false
             }
@@ -2297,6 +2329,14 @@ impl App {
             KeyCode::Char('o') => {
                 if self.active_tab == TuiTab::Issues {
                     self.begin_order();
+                } else {
+                    self.set_selected_writeup_status(WriteupStatus::Open)?;
+                }
+                false
+            }
+            KeyCode::Char('a') => {
+                if self.active_tab == TuiTab::Writeups {
+                    self.toggle_writeup_scope();
                 }
                 false
             }
@@ -2924,6 +2964,46 @@ impl App {
         Ok(())
     }
 
+    fn create_writeup_in_editor(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) -> Result<()> {
+        suspend_terminal(terminal)?;
+        let title = editor::capture("Writeup title");
+        let body = match &title {
+            Ok(Some(_)) => editor::capture("Writeup body (optional)"),
+            _ => Ok(None),
+        };
+        resume_terminal(terminal)?;
+
+        let Some(title) = title? else {
+            self.status = Some("Cancelled.".to_string());
+            return Ok(());
+        };
+        let title = title.trim();
+        if title.is_empty() {
+            self.status = Some("Writeup title cannot be empty.".to_string());
+            return Ok(());
+        }
+        let body = body?.and_then(|body| {
+            let body = body.trim().to_string();
+            (!body.is_empty()).then_some(body)
+        });
+        let writeup = self.store.create_writeup(
+            title,
+            NewWriteupOpts {
+                body,
+                ..Default::default()
+            },
+        )?;
+        self.active_tab = TuiTab::Writeups;
+        self.show_all_writeups = false;
+        self.reload_writeups(Some(writeup.id))?;
+        self.jump_to_writeup(writeup.id);
+        self.status = Some(format!("Created writeup {}.", writeup.short_id()));
+        Ok(())
+    }
+
     fn promote_selected_writeup(&mut self) -> Result<()> {
         let Some(writeup) = self.selected_writeup() else {
             self.status = Some("Select a writeup first.".to_string());
@@ -2934,6 +3014,45 @@ impl App {
         self.reload_all(Some(ticket.id), Some(writeup_id))?;
         self.status = Some(format!("Promoted to issue {}.", ticket.short_id()));
         Ok(())
+    }
+
+    fn set_selected_writeup_status(&mut self, status: WriteupStatus) -> Result<()> {
+        let Some(writeup) = self.selected_writeup() else {
+            self.status = Some("Select a writeup first.".to_string());
+            return Ok(());
+        };
+        let id = writeup.id;
+        self.store.set_writeup_status(&id, status)?;
+        self.reload_writeups(Some(id))?;
+        self.status = Some(format!(
+            "Writeup {} -> {}.",
+            &id.to_string()[..6],
+            status.as_str()
+        ));
+        Ok(())
+    }
+
+    fn toggle_writeup_scope(&mut self) {
+        let selected_id = self.selected_writeup().map(|writeup| writeup.id);
+        self.show_all_writeups = !self.show_all_writeups;
+        self.apply_writeup_filter();
+        if let Some(id) = selected_id {
+            if let Some(visible_pos) = self
+                .visible_writeups
+                .iter()
+                .position(|idx| self.writeups[*idx].id == id)
+            {
+                self.writeup_state.select(Some(visible_pos));
+                if self.writeup_detail.is_some() {
+                    self.writeup_detail = self.visible_writeups.get(visible_pos).copied();
+                }
+            }
+        }
+        self.status = Some(if self.show_all_writeups {
+            "Showing all writeups.".to_string()
+        } else {
+            "Showing open writeups.".to_string()
+        });
     }
 
     fn linked_writeups(&self, ticket_id: uuid::Uuid) -> Vec<&Writeup> {
@@ -3234,7 +3353,11 @@ impl App {
             .position(|idx| self.tickets[*idx].id == id)?;
         self.visible
             .get(selected + 1)
-            .or_else(|| selected.checked_sub(1).and_then(|previous| self.visible.get(previous)))
+            .or_else(|| {
+                selected
+                    .checked_sub(1)
+                    .and_then(|previous| self.visible.get(previous))
+            })
             .map(|idx| self.tickets[*idx].id)
     }
 
@@ -3545,7 +3668,9 @@ impl App {
             .iter()
             .enumerate()
             .filter_map(|(idx, writeup)| {
-                if needle.is_empty() || writeup_matches(writeup, &needle) {
+                if (self.show_all_writeups || writeup.status == WriteupStatus::Open)
+                    && (needle.is_empty() || writeup_matches(writeup, &needle))
+                {
                     Some(idx)
                 } else {
                     None
@@ -4265,6 +4390,10 @@ fn writeup_list_line(writeup: &Writeup, width: usize, compact: bool) -> Line<'st
             fit_display(&format!("v{}", writeup.versions.len()), LIST_STATE_WIDTH),
             Style::default().fg(Color::LightBlue),
         ),
+        (
+            fit_display(writeup_status_abbrev(writeup.status), LIST_STATE_WIDTH),
+            writeup_status_style(writeup.status),
+        ),
     ];
     if !writeup.tickets.is_empty() {
         meta.push((
@@ -4293,6 +4422,21 @@ fn writeup_recent_at(writeup: &Writeup) -> OffsetDateTime {
         .last()
         .map(|version| version.at)
         .unwrap_or(writeup.created_at)
+}
+
+fn writeup_status_abbrev(status: WriteupStatus) -> &'static str {
+    match status {
+        WriteupStatus::Open => "op",
+        WriteupStatus::Closed => "cl",
+    }
+}
+
+fn writeup_status_style(status: WriteupStatus) -> Style {
+    match status {
+        WriteupStatus::Open => Style::default().fg(Color::LightGreen),
+        WriteupStatus::Closed => Style::default().fg(Color::DarkGray),
+    }
+    .add_modifier(Modifier::BOLD)
 }
 
 fn board_ticket_line(ticket: &Ticket, width: usize) -> Line<'static> {
@@ -4432,11 +4576,7 @@ fn compact_ticket_list_line(
     )
 }
 
-fn compact_title_width(
-    short_id: Option<&str>,
-    meta: &[(String, Style)],
-    width: usize,
-) -> usize {
+fn compact_title_width(short_id: Option<&str>, meta: &[(String, Style)], width: usize) -> usize {
     let id_width = short_id
         .map(|id| UnicodeWidthStr::width(id).min(width))
         .unwrap_or_default();
