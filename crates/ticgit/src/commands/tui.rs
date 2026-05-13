@@ -5928,11 +5928,7 @@ fn outline_ticket_line(
 fn subissue_graph_prefix(ticket: &Ticket, ticket_by_id: &HashMap<uuid::Uuid, &Ticket>) -> String {
     let depth = subissue_depth(ticket, ticket_by_id).min(5);
     if depth == 0 {
-        return if ticket.children.is_empty() {
-            String::new()
-        } else {
-            "╰┄ ".to_string()
-        };
+        return String::new();
     }
 
     let marker = if ticket.children.is_empty() {
@@ -7945,7 +7941,7 @@ mod tests {
             .map(|ticket| (ticket.id, ticket))
             .collect::<HashMap<_, _>>();
 
-        assert_eq!(subissue_graph_prefix(&tickets[0], &ticket_by_id), "╰┄ ");
+        assert_eq!(subissue_graph_prefix(&tickets[0], &ticket_by_id), "");
         assert_eq!(subissue_graph_prefix(&tickets[1], &ticket_by_id), "┊╰┄ ");
         assert_eq!(subissue_graph_prefix(&tickets[2], &ticket_by_id), "┊┊├╮ ");
     }
