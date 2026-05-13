@@ -1277,29 +1277,13 @@ impl App {
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             )),
-            field_line(
-                "Updated",
-                &format!(
-                    "{} ago",
-                    relative_date(writeup_recent_at(writeup), OffsetDateTime::now_utc())
-                ),
-            ),
-            field_line("Status", writeup.status.as_str()),
-            field_line("Versions", &writeup.versions.len().to_string()),
         ];
+        lines.extend(writeup_metadata_lines(
+            writeup,
+            usize::from(area.width).saturating_sub(2),
+        ));
         if !writeup.tags.is_empty() {
             lines.push(tags_field_line(&writeup.tags));
-        }
-        if !writeup.authors.is_empty() {
-            lines.push(field_line(
-                "Authors",
-                &writeup
-                    .authors
-                    .iter()
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            ));
         }
         if !writeup.tickets.is_empty() {
             lines.push(Line::raw(""));
@@ -5034,6 +5018,101 @@ fn field_line(label: &str, value: &str) -> Line<'static> {
         Span::styled(" : ", Style::default().fg(Color::DarkGray)),
         Span::styled(value.to_string(), Style::default().fg(Color::Cyan)),
     ])
+}
+
+#[derive(Clone)]
+struct MetadataField {
+    key: &'static str,
+    label: &'static str,
+    value: String,
+}
+
+fn writeup_metadata_lines(writeup: &Writeup, width: usize) -> Vec<Line<'static>> {
+    let mut fields = vec![
+        MetadataField {
+            key: "updated",
+            label: "Updated",
+            value: format!(
+                "{} ago",
+                relative_date(writeup_recent_at(writeup), OffsetDateTime::now_utc())
+            ),
+        },
+        MetadataField {
+            key: "status",
+            label: "Status",
+            value: writeup.status.as_str().to_string(),
+        },
+        MetadataField {
+            key: "versions",
+            label: "Versions",
+            value: writeup.versions.len().to_string(),
+        },
+        MetadataField {
+            key: "authors",
+            label: "Authors",
+            value: writeup
+                .authors
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", "),
+        },
+    ];
+
+    for key in ["versions", "status", "authors"] {
+        if metadata_fields_width(&fields) <= width {
+            break;
+        }
+        if let Some(idx) = fields.iter().position(|field| field.key == key) {
+            fields.remove(idx);
+        }
+    }
+
+    metadata_lines(&fields, width)
+}
+
+fn metadata_fields_width(fields: &[MetadataField]) -> usize {
+    fields.iter().map(metadata_field_width).sum::<usize>() + fields.len().saturating_sub(1) * 2
+}
+
+fn metadata_field_width(field: &MetadataField) -> usize {
+    UnicodeWidthStr::width(field.label).max(UnicodeWidthStr::width(field.value.as_str()))
+}
+
+fn metadata_lines(fields: &[MetadataField], width: usize) -> Vec<Line<'static>> {
+    if fields.is_empty() || width == 0 {
+        return Vec::new();
+    }
+
+    let mut widths = fields.iter().map(metadata_field_width).collect::<Vec<_>>();
+    let total_width = widths.iter().sum::<usize>() + fields.len().saturating_sub(1) * 2;
+    if total_width > width {
+        let overflow = total_width - width;
+        if let Some(last_width) = widths.last_mut() {
+            *last_width = last_width.saturating_sub(overflow).max(1);
+        }
+    }
+
+    let mut label_spans = Vec::new();
+    let mut value_spans = Vec::new();
+    for (idx, (field, column_width)) in fields.iter().zip(widths).enumerate() {
+        if idx > 0 {
+            label_spans.push(Span::raw("  "));
+            value_spans.push(Span::raw("  "));
+        }
+        label_spans.push(Span::styled(
+            fit_display(field.label, column_width),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ));
+        value_spans.push(Span::styled(
+            fit_display(&field.value, column_width),
+            Style::default().fg(Color::Cyan),
+        ));
+    }
+
+    vec![Line::from(label_spans), Line::from(value_spans)]
 }
 
 fn spec_field_line(spec: &str, width: usize) -> Line<'static> {
