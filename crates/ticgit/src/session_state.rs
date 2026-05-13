@@ -36,6 +36,8 @@ pub struct State {
 pub struct ProjectSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail_width_percent: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub show_subissues: Option<bool>,
 }
 
 /// A saved set of list filter parameters.

@@ -193,6 +193,7 @@ struct App {
     assigned_filter: Option<String>,
     only_tagged: bool,
     hide_subissues: bool,
+    show_subissues_preference: bool,
     sort_order: Option<SortOrder>,
     sort_closed_desc: bool,
     closed_at: HashMap<uuid::Uuid, OffsetDateTime>,
@@ -373,6 +374,7 @@ impl App {
             .detail_width_percent
             .unwrap_or(DETAIL_WIDTH_PERCENT_DEFAULT)
             .clamp(DETAIL_WIDTH_PERCENT_MIN, DETAIL_WIDTH_PERCENT_MAX);
+        let show_subissues_preference = project_settings.show_subissues.unwrap_or(false);
         let mut app = Self {
             store,
             all_tickets: Vec::new(),
@@ -396,7 +398,8 @@ impl App {
             base_state: None,
             assigned_filter: None,
             only_tagged: false,
-            hide_subissues: false,
+            hide_subissues: !show_subissues_preference,
+            show_subissues_preference,
             sort_order: None,
             sort_closed_desc: false,
             closed_at: HashMap::new(),
@@ -1083,6 +1086,10 @@ impl App {
                             desc: "outline",
                         },
                         MenuHint {
+                            key: "U",
+                            desc: "subissues",
+                        },
+                        MenuHint {
                             key: "s",
                             desc: "state",
                         },
@@ -1134,6 +1141,10 @@ impl App {
                             desc: "list",
                         },
                         MenuHint {
+                            key: "U",
+                            desc: "subissues",
+                        },
+                        MenuHint {
                             key: "b",
                             desc: "board",
                         },
@@ -1175,6 +1186,10 @@ impl App {
                         MenuHint {
                             key: "u",
                             desc: "outline",
+                        },
+                        MenuHint {
+                            key: "U",
+                            desc: "subissues",
                         },
                         MenuHint {
                             key: "n",
@@ -1280,6 +1295,10 @@ impl App {
                             desc: "outline",
                         },
                         MenuHint {
+                            key: "U",
+                            desc: "subissues",
+                        },
+                        MenuHint {
                             key: "n",
                             desc: "new",
                         },
@@ -1341,17 +1360,28 @@ impl App {
         let compact = self.detail.is_some();
         let columns = issue_columns_for_width(&self.issue_columns, row_width);
         let widths = issue_column_widths(&columns, row_width);
+        let ticket_by_id = self
+            .all_tickets
+            .iter()
+            .map(|ticket| (ticket.id, ticket))
+            .collect::<HashMap<_, _>>();
 
         let items: Vec<ListItem<'_>> = self
             .visible
             .iter()
             .map(|&idx| {
                 let ticket = &self.tickets[idx];
+                let title_prefix = if self.hide_subissues {
+                    String::new()
+                } else {
+                    subissue_graph_prefix(ticket, &ticket_by_id)
+                };
                 ListItem::new(ticket_table_line(
                     ticket,
                     &columns,
                     &widths,
                     row_width,
+                    &title_prefix,
                     compact,
                     self.store.email(),
                     self.closed_at.get(&ticket.id).copied(),
@@ -2769,7 +2799,10 @@ impl App {
 
                 help_section(&mut lines, "Views");
                 lines.push(help_columns(("b", "list view"), Some(("d", "stats view"))));
-                lines.push(help_columns(("u", "outline view"), None));
+                lines.push(help_columns(
+                    ("u", "outline view"),
+                    Some(("U", "subissues")),
+                ));
             }
             Mode::Normal if self.view == ViewMode::Outline && self.detail.is_none() => {
                 help_section(&mut lines, "Outline");
@@ -2794,7 +2827,7 @@ impl App {
 
                 help_section(&mut lines, "Views");
                 lines.push(help_columns(("u", "list view"), Some(("b", "board view"))));
-                lines.push(help_columns(("d", "stats view"), None));
+                lines.push(help_columns(("d", "stats view"), Some(("U", "subissues"))));
             }
             Mode::Normal => {
                 help_section(&mut lines, "Navigation");
@@ -2833,7 +2866,10 @@ impl App {
 
                 help_section(&mut lines, "Views");
                 lines.push(help_columns(("b", "board view"), Some(("d", "stats view"))));
-                lines.push(help_columns(("u", "outline view"), None));
+                lines.push(help_columns(
+                    ("u", "outline view"),
+                    Some(("U", "subissues")),
+                ));
             }
         }
 
@@ -3021,6 +3057,12 @@ impl App {
                     self.handle_outline_key()?;
                 } else if self.active_tab == TuiTab::Writeups && self.writeup_detail.is_some() {
                     self.begin_unlink_issue_select();
+                }
+                false
+            }
+            KeyCode::Char('U') => {
+                if self.active_tab == TuiTab::Issues {
+                    self.toggle_subissue_visibility()?;
                 }
                 false
             }
@@ -3773,7 +3815,7 @@ impl App {
         self.base_state = None;
         self.assigned_filter = None;
         self.only_tagged = false;
-        self.hide_subissues = false;
+        self.hide_subissues = !self.show_subissues_preference;
         self.sort_order = None;
         self.sort_closed_desc = false;
         self.issue_columns = default_issue_columns();
@@ -3794,7 +3836,7 @@ impl App {
             || self.base_state.is_some()
             || self.assigned_filter.is_some()
             || self.only_tagged
-            || self.hide_subissues
+            || self.hide_subissues != !self.show_subissues_preference
             || self.sort_order.is_some()
             || !self.filter.is_empty()
             || !self.tag_filter.is_empty()
@@ -4627,9 +4669,6 @@ impl App {
         if self.only_tagged {
             parts.push("tagged only".to_string());
         }
-        if self.hide_subissues {
-            parts.push("no subissues".to_string());
-        }
         if !self.filter.is_empty() {
             parts.push(format!("\"{}\"", self.filter));
         }
@@ -5120,6 +5159,7 @@ impl App {
         let mut state = State::load().unwrap_or_default();
         let mut settings = state.project_settings_for(&git_dir);
         settings.detail_width_percent = Some(self.detail_width_percent);
+        settings.show_subissues = Some(self.show_subissues_preference);
         state.set_project_settings(&git_dir, settings);
         state.save()
     }
@@ -5231,6 +5271,20 @@ impl App {
         self.detail = None;
         self.writeup_detail = None;
         self.comments_mode = false;
+    }
+
+    fn toggle_subissue_visibility(&mut self) -> Result<()> {
+        let selected_id = self.selected_ticket().map(|ticket| ticket.id);
+        self.show_subissues_preference = self.hide_subissues;
+        self.hide_subissues = !self.show_subissues_preference;
+        self.save_project_settings()?;
+        self.reload(selected_id)?;
+        self.status = Some(if self.hide_subissues {
+            "Hiding subissues.".to_string()
+        } else {
+            "Showing subissues.".to_string()
+        });
+        Ok(())
     }
 
     fn open_board_for_detail_ticket(&mut self) {
@@ -5869,6 +5923,41 @@ fn outline_ticket_line(
     Line::from(spans)
 }
 
+fn subissue_graph_prefix(ticket: &Ticket, ticket_by_id: &HashMap<uuid::Uuid, &Ticket>) -> String {
+    let depth = subissue_depth(ticket, ticket_by_id).min(5);
+    if depth == 0 {
+        return if ticket.children.is_empty() {
+            String::new()
+        } else {
+            "+ ".to_string()
+        };
+    }
+
+    let marker = if ticket.children.is_empty() {
+        "`- "
+    } else {
+        "+- "
+    };
+    format!("{}{}", "  ".repeat(depth.saturating_sub(1)), marker)
+}
+
+fn subissue_depth(ticket: &Ticket, ticket_by_id: &HashMap<uuid::Uuid, &Ticket>) -> usize {
+    let mut depth = 0;
+    let mut current = ticket;
+    let mut seen = BTreeSet::new();
+    while let Some(parent) = current.parent {
+        if !seen.insert(parent) {
+            break;
+        }
+        let Some(parent_ticket) = ticket_by_id.get(&parent).copied() else {
+            break;
+        };
+        depth += 1;
+        current = parent_ticket;
+    }
+    depth
+}
+
 fn build_outline_rows(
     tickets: &[Ticket],
     visible: &[usize],
@@ -6085,6 +6174,7 @@ fn ticket_table_line(
     columns: &[IssueColumn],
     widths: &[usize],
     width: usize,
+    title_prefix: &str,
     _compact: bool,
     current_user: &str,
     closed_at: Option<OffsetDateTime>,
@@ -6103,6 +6193,9 @@ fn ticket_table_line(
                 ticket.assigned.as_deref() == Some(current_user),
             ),
             IssueColumn::Tags => push_issue_tags_column(&mut spans, &ticket.tags, *column_width),
+            IssueColumn::Title => {
+                push_issue_title_column(&mut spans, ticket, *column_width, title_prefix);
+            }
             _ => {
                 let (value, style) = issue_column_value(ticket, *column, closed_at, current_user);
                 spans.push(Span::styled(fit_display(&value, *column_width), style));
@@ -6148,6 +6241,28 @@ fn push_issue_id_column(
     if padding_width > 0 {
         spans.push(Span::raw(" ".repeat(padding_width)));
     }
+}
+
+fn push_issue_title_column(
+    spans: &mut Vec<Span<'static>>,
+    ticket: &Ticket,
+    width: usize,
+    title_prefix: &str,
+) {
+    if title_prefix.is_empty() {
+        let (value, style) = issue_column_value(ticket, IssueColumn::Title, None, "");
+        spans.push(Span::styled(fit_display(&value, width), style));
+        return;
+    }
+
+    let prefix = truncate_display(title_prefix, width);
+    let prefix_width = UnicodeWidthStr::width(prefix.as_str());
+    spans.push(Span::styled(prefix, Style::default().fg(Color::DarkGray)));
+    let title = flatten_display(&ticket.title);
+    spans.push(Span::styled(
+        fit_display(&title, width.saturating_sub(prefix_width)),
+        Style::default().fg(Color::Reset),
+    ));
 }
 
 fn push_issue_tags_column(spans: &mut Vec<Span<'static>>, tags: &BTreeSet<String>, width: usize) {
@@ -7025,7 +7140,6 @@ fn builtin_views(current_user: &str) -> Vec<ViewEntry> {
             name: "Default".to_string(),
             view: SavedView {
                 status: Some("open".to_string()),
-                subissues: true,
                 tag_match_all: true,
                 columns: default_issue_column_names(),
                 ..Default::default()
@@ -7037,7 +7151,6 @@ fn builtin_views(current_user: &str) -> Vec<ViewEntry> {
             view: SavedView {
                 status: Some("open".to_string()),
                 assigned: Some(current_user.to_string()),
-                subissues: true,
                 tag_match_all: true,
                 columns: default_issue_column_names(),
                 ..Default::default()
@@ -7049,7 +7162,6 @@ fn builtin_views(current_user: &str) -> Vec<ViewEntry> {
             view: SavedView {
                 status: Some("closed".to_string()),
                 order: Some("closed.desc".to_string()),
-                subissues: true,
                 tag_match_all: true,
                 columns: vec![
                     "id".to_string(),
@@ -7730,6 +7842,16 @@ mod tests {
     }
 
     #[test]
+    fn default_open_views_hide_subissues() {
+        let views = builtin_views("me@example.com");
+
+        for name in ["Default", "Mine", "Recently Closed"] {
+            let view = views.iter().find(|view| view.name == name).unwrap();
+            assert!(!view.view.subissues, "{name} should hide subissues");
+        }
+    }
+
+    #[test]
     fn id_column_reserves_space_for_claimed_marker() {
         assert_eq!(IssueColumn::Id.fixed_width(), Some(4));
     }
@@ -7794,6 +7916,26 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![(root, 0, true), (sibling, 0, false)]
         );
+    }
+
+    #[test]
+    fn subissue_graph_prefix_marks_parents_and_children() {
+        let root = uuid::Uuid::from_u128(1);
+        let child = uuid::Uuid::from_u128(2);
+        let grandchild = uuid::Uuid::from_u128(3);
+        let tickets = vec![
+            test_ticket(root, None, &[child]),
+            test_ticket(child, Some(root), &[grandchild]),
+            test_ticket(grandchild, Some(child), &[]),
+        ];
+        let ticket_by_id = tickets
+            .iter()
+            .map(|ticket| (ticket.id, ticket))
+            .collect::<HashMap<_, _>>();
+
+        assert_eq!(subissue_graph_prefix(&tickets[0], &ticket_by_id), "+ ");
+        assert_eq!(subissue_graph_prefix(&tickets[1], &ticket_by_id), "+- ");
+        assert_eq!(subissue_graph_prefix(&tickets[2], &ticket_by_id), "  `- ");
     }
 
     fn test_ticket(id: uuid::Uuid, parent: Option<uuid::Uuid>, children: &[uuid::Uuid]) -> Ticket {
