@@ -460,14 +460,14 @@ impl App {
         self.apply_filter();
 
         if let Some(id) = preferred_id {
-            if let Some(visible_pos) = self
-                .visible
+            let list_indices = self.list_ticket_indices();
+            if let Some(list_pos) = list_indices
                 .iter()
                 .position(|idx| self.tickets[*idx].id == id)
             {
-                self.list_state.select(Some(visible_pos));
+                self.list_state.select(Some(list_pos));
                 if self.detail.is_some() {
-                    self.detail = self.visible.get(visible_pos).copied();
+                    self.detail = list_indices.get(list_pos).copied();
                 }
             } else if self.detail.is_some() {
                 self.detail = None;
@@ -1367,7 +1367,7 @@ impl App {
             .collect::<HashMap<_, _>>();
 
         let items: Vec<ListItem<'_>> = self
-            .visible
+            .list_ticket_indices()
             .iter()
             .map(|&idx| {
                 let ticket = &self.tickets[idx];
@@ -4938,14 +4938,11 @@ impl App {
 
         self.detail = self.detail.filter(|idx| self.visible.contains(idx));
         self.sync_board_selection();
-        if self.visible.is_empty() {
+        let list_len = self.list_ticket_indices().len();
+        if list_len == 0 {
             self.list_state.select(None);
         } else {
-            let selected = self
-                .list_state
-                .selected()
-                .unwrap_or(0)
-                .min(self.visible.len() - 1);
+            let selected = self.list_state.selected().unwrap_or(0).min(list_len - 1);
             self.list_state.select(Some(selected));
         }
         self.sync_outline_selection();
@@ -4992,11 +4989,12 @@ impl App {
         if self.active_tab == TuiTab::Dashboard {
             return;
         }
-        if self.visible.is_empty() {
+        let list_len = self.list_ticket_indices().len();
+        if list_len == 0 {
             return;
         }
         let selected = self.list_state.selected().unwrap_or(0);
-        let next = (selected + 1) % self.visible.len();
+        let next = (selected + 1) % list_len;
         self.list_state.select(Some(next));
         self.sync_open_detail();
     }
@@ -5009,15 +5007,20 @@ impl App {
         if self.active_tab == TuiTab::Dashboard {
             return;
         }
-        if self.visible.is_empty() {
+        let list_len = self.list_ticket_indices().len();
+        if list_len == 0 {
             return;
         }
         let selected = self.list_state.selected().unwrap_or(0);
         let previous = selected
             .checked_sub(1)
-            .unwrap_or_else(|| self.visible.len().saturating_sub(1));
+            .unwrap_or_else(|| list_len.saturating_sub(1));
         self.list_state.select(Some(previous));
         self.sync_open_detail();
+    }
+
+    fn list_ticket_indices(&self) -> Vec<usize> {
+        ordered_list_indices(&self.tickets, &self.visible, !self.hide_subissues)
     }
 
     fn next_writeup(&mut self) {
@@ -5321,9 +5324,7 @@ impl App {
         }
         if let Some(idx) = self.selected_ticket_index() {
             self.detail = Some(idx);
-            if let Some(visible_pos) = self.visible.iter().position(|visible| *visible == idx) {
-                self.list_state.select(Some(visible_pos));
-            }
+            self.select_list_ticket_by_index(idx);
             if self.view == ViewMode::Outline {
                 self.select_outline_ticket_by_id(self.tickets[idx].id);
             }
@@ -5346,13 +5347,13 @@ impl App {
     }
 
     fn open_ticket_by_id(&mut self, id: uuid::Uuid) {
-        if let Some(visible_pos) = self
-            .visible
+        let list_indices = self.list_ticket_indices();
+        if let Some(list_pos) = list_indices
             .iter()
             .position(|idx| self.tickets[*idx].id == id)
         {
-            self.list_state.select(Some(visible_pos));
-            self.detail = self.visible.get(visible_pos).copied();
+            self.list_state.select(Some(list_pos));
+            self.detail = list_indices.get(list_pos).copied();
             self.comments_mode = false;
             if self.view == ViewMode::Outline {
                 self.select_outline_ticket_by_id(id);
@@ -5427,9 +5428,7 @@ impl App {
 
     fn sync_board_to_list_selection(&mut self) {
         if let Some(idx) = self.selected_ticket_index() {
-            if let Some(visible_pos) = self.visible.iter().position(|visible| *visible == idx) {
-                self.list_state.select(Some(visible_pos));
-            }
+            self.select_list_ticket_by_index(idx);
         }
     }
 
@@ -5449,13 +5448,17 @@ impl App {
 
     fn sync_outline_to_list_selection(&mut self) {
         if let Some(row) = self.selected_outline_row() {
-            if let Some(visible_pos) = self
-                .visible
-                .iter()
-                .position(|visible| *visible == row.ticket_idx)
-            {
-                self.list_state.select(Some(visible_pos));
-            }
+            self.select_list_ticket_by_index(row.ticket_idx);
+        }
+    }
+
+    fn select_list_ticket_by_index(&mut self, idx: usize) {
+        if let Some(list_pos) = self
+            .list_ticket_indices()
+            .iter()
+            .position(|candidate| *candidate == idx)
+        {
+            self.list_state.select(Some(list_pos));
         }
     }
 
@@ -5559,8 +5562,7 @@ impl App {
         }
         self.list_state
             .selected()
-            .and_then(|selected| self.visible.get(selected))
-            .copied()
+            .and_then(|selected| self.list_ticket_indices().get(selected).copied())
     }
 
     fn selected_writeup(&self) -> Option<&Writeup> {
@@ -5929,16 +5931,16 @@ fn subissue_graph_prefix(ticket: &Ticket, ticket_by_id: &HashMap<uuid::Uuid, &Ti
         return if ticket.children.is_empty() {
             String::new()
         } else {
-            "+ ".to_string()
+            "╰┄ ".to_string()
         };
     }
 
     let marker = if ticket.children.is_empty() {
-        "`- "
+        "├╮ "
     } else {
-        "+- "
+        "╰┄ "
     };
-    format!("{}{}", "  ".repeat(depth.saturating_sub(1)), marker)
+    format!("{}{}", "┊".repeat(depth), marker)
 }
 
 fn subissue_depth(ticket: &Ticket, ticket_by_id: &HashMap<uuid::Uuid, &Ticket>) -> usize {
@@ -5956,6 +5958,16 @@ fn subissue_depth(ticket: &Ticket, ticket_by_id: &HashMap<uuid::Uuid, &Ticket>) 
         current = parent_ticket;
     }
     depth
+}
+
+fn ordered_list_indices(tickets: &[Ticket], visible: &[usize], show_subissues: bool) -> Vec<usize> {
+    if !show_subissues {
+        return visible.to_vec();
+    }
+    build_outline_rows(tickets, visible, &BTreeSet::new())
+        .into_iter()
+        .map(|row| row.ticket_idx)
+        .collect()
 }
 
 fn build_outline_rows(
@@ -7933,9 +7945,30 @@ mod tests {
             .map(|ticket| (ticket.id, ticket))
             .collect::<HashMap<_, _>>();
 
-        assert_eq!(subissue_graph_prefix(&tickets[0], &ticket_by_id), "+ ");
-        assert_eq!(subissue_graph_prefix(&tickets[1], &ticket_by_id), "+- ");
-        assert_eq!(subissue_graph_prefix(&tickets[2], &ticket_by_id), "  `- ");
+        assert_eq!(subissue_graph_prefix(&tickets[0], &ticket_by_id), "╰┄ ");
+        assert_eq!(subissue_graph_prefix(&tickets[1], &ticket_by_id), "┊╰┄ ");
+        assert_eq!(subissue_graph_prefix(&tickets[2], &ticket_by_id), "┊┊├╮ ");
+    }
+
+    #[test]
+    fn list_order_places_visible_children_after_parent() {
+        let root = uuid::Uuid::from_u128(1);
+        let child = uuid::Uuid::from_u128(2);
+        let sibling = uuid::Uuid::from_u128(3);
+        let tickets = vec![
+            test_ticket(root, None, &[child]),
+            test_ticket(child, Some(root), &[]),
+            test_ticket(sibling, None, &[]),
+        ];
+
+        assert_eq!(
+            ordered_list_indices(&tickets, &[1, 0, 2], false),
+            vec![1, 0, 2]
+        );
+        assert_eq!(
+            ordered_list_indices(&tickets, &[1, 0, 2], true),
+            vec![0, 1, 2]
+        );
     }
 
     fn test_ticket(id: uuid::Uuid, parent: Option<uuid::Uuid>, children: &[uuid::Uuid]) -> Ticket {
