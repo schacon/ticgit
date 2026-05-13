@@ -224,6 +224,7 @@ enum Mode {
     ConfirmDeleteView,
     SaveView,
     LinkIssueSearch,
+    UnlinkIssueSelect,
     Versions,
     Input(InputKind),
     State,
@@ -258,7 +259,6 @@ enum InputKind {
     Points,
     AddTags,
     RemoveTags,
-    UnlinkIssue,
 }
 
 #[derive(Debug, Default)]
@@ -499,6 +499,7 @@ impl App {
             Mode::ConfirmDeleteView => self.draw_delete_view_confirm_modal(frame),
             Mode::SaveView => self.draw_save_view_modal(frame),
             Mode::LinkIssueSearch => self.draw_link_issue_search_modal(frame),
+            Mode::UnlinkIssueSelect => self.draw_unlink_issue_select_modal(frame),
             Mode::Versions => self.draw_versions_modal(frame),
             Mode::Input(kind) => self.draw_input_modal(frame, kind),
             Mode::State => self.draw_state_modal(frame),
@@ -711,6 +712,24 @@ impl App {
                     MenuHint {
                         key: "Backspace",
                         desc: "delete",
+                    },
+                ],
+            ),
+            Mode::UnlinkIssueSelect => (
+                "unlink issue",
+                None,
+                vec![
+                    MenuHint {
+                        key: "j/k",
+                        desc: "move",
+                    },
+                    MenuHint {
+                        key: "Enter",
+                        desc: "unlink",
+                    },
+                    MenuHint {
+                        key: "Esc",
+                        desc: "cancel",
                     },
                 ],
             ),
@@ -1240,6 +1259,27 @@ impl App {
             ),
             status_state_line(ticket),
         ];
+        if !ticket.tags.is_empty() {
+            detail_lines.push(tags_field_line(&ticket.tags));
+        }
+        if let Some(assigned) = &ticket.assigned {
+            detail_lines.push(field_line("Assigned", assigned));
+        }
+        if let Some(closed_by) = &ticket.closed_by {
+            detail_lines.push(field_line("Closed by", closed_by));
+        }
+        if let Some(priority) = ticket.priority {
+            detail_lines.push(field_line("Priority", &priority.to_string()));
+        }
+        if let Some(points) = ticket.points {
+            detail_lines.push(field_line("Points", &points.to_string()));
+        }
+        if let Some(milestone) = &ticket.milestone {
+            detail_lines.push(field_line("Milestone", milestone));
+        }
+        if let Some(spec) = &ticket.spec {
+            detail_lines.push(spec_field_line(spec, detail_width));
+        }
         let linked_writeups = self.linked_writeups(ticket.id);
         if !linked_writeups.is_empty() {
             detail_lines.push(Line::raw(""));
@@ -1263,27 +1303,6 @@ impl App {
                     Span::raw(writeup.title.clone()),
                 ]));
             }
-        }
-        if !ticket.tags.is_empty() {
-            detail_lines.push(tags_field_line(&ticket.tags));
-        }
-        if let Some(assigned) = &ticket.assigned {
-            detail_lines.push(field_line("Assigned", assigned));
-        }
-        if let Some(closed_by) = &ticket.closed_by {
-            detail_lines.push(field_line("Closed by", closed_by));
-        }
-        if let Some(priority) = ticket.priority {
-            detail_lines.push(field_line("Priority", &priority.to_string()));
-        }
-        if let Some(points) = ticket.points {
-            detail_lines.push(field_line("Points", &points.to_string()));
-        }
-        if let Some(milestone) = &ticket.milestone {
-            detail_lines.push(field_line("Milestone", milestone));
-        }
-        if let Some(spec) = &ticket.spec {
-            detail_lines.push(spec_field_line(spec, detail_width));
         }
         if let Some(description) = &ticket.description {
             detail_lines.push(Line::raw(""));
@@ -1472,7 +1491,6 @@ impl App {
             InputKind::Points => "Enter points estimate. Empty clears it.".to_string(),
             InputKind::AddTags => "Enter comma- or space-separated tags to add.".to_string(),
             InputKind::RemoveTags => "Enter comma- or space-separated tags to remove.".to_string(),
-            InputKind::UnlinkIssue => "Enter an issue id to unlink from this writeup.".to_string(),
         };
         let lines = vec![
             Line::from(Span::styled(help, Style::default().fg(Color::DarkGray))),
@@ -1563,6 +1581,50 @@ impl App {
         frame.render_widget(search, chunks[0]);
         frame.render_stateful_widget(list, chunks[1], &mut self.link_issue_state);
         frame.render_widget(help, chunks[2]);
+    }
+
+    fn draw_unlink_issue_select_modal(&mut self, frame: &mut Frame<'_>) {
+        let area = centered_rect(74, 20, frame.area());
+        let linked = self.linked_issue_ids_for_selected_writeup();
+        let selected = self
+            .link_issue_state
+            .selected()
+            .unwrap_or(0)
+            .min(linked.len().saturating_sub(1));
+        if linked.is_empty() {
+            self.link_issue_state.select(None);
+        } else {
+            self.link_issue_state.select(Some(selected));
+        }
+
+        let row_width = usize::from(area.width)
+            .saturating_sub(2)
+            .saturating_sub(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL));
+        let items: Vec<ListItem<'_>> = if linked.is_empty() {
+            vec![ListItem::new(Line::from(Span::styled(
+                "No linked issues.",
+                Style::default().fg(Color::DarkGray),
+            )))]
+        } else {
+            linked
+                .iter()
+                .map(|ticket_id| self.linked_issue_line(*ticket_id, row_width))
+                .map(ListItem::new)
+                .collect()
+        };
+        let list = List::new(items)
+            .block(Block::default().borders(Borders::ALL).title("Unlink Issue"))
+            .highlight_style(
+                Style::default()
+                    .bg(Color::Rgb(0, 0, 95))
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol(HIGHLIGHT_SYMBOL)
+            .highlight_spacing(HighlightSpacing::Always);
+
+        frame.render_widget(Clear, area);
+        frame.render_stateful_widget(list, area, &mut self.link_issue_state);
     }
 
     fn draw_versions_modal(&mut self, frame: &mut Frame<'_>) {
@@ -2167,6 +2229,14 @@ impl App {
                 ));
                 lines.push(help_columns(("Esc", "cancel"), None));
             }
+            Mode::UnlinkIssueSelect => {
+                help_section(&mut lines, "Unlink Issue");
+                lines.push(help_columns(
+                    ("j/k", "move issue"),
+                    Some(("Enter", "unlink selected")),
+                ));
+                lines.push(help_columns(("Esc", "cancel"), None));
+            }
             Mode::Versions => {
                 help_section(&mut lines, "Versions");
                 lines.push(help_columns(
@@ -2365,6 +2435,10 @@ impl App {
             }
             Mode::LinkIssueSearch => {
                 self.handle_link_issue_search_key(key)?;
+                false
+            }
+            Mode::UnlinkIssueSelect => {
+                self.handle_unlink_issue_select_key(key)?;
                 false
             }
             Mode::Versions => {
@@ -2590,7 +2664,7 @@ impl App {
             }
             KeyCode::Char('u') => {
                 if self.active_tab == TuiTab::Writeups && self.writeup_detail.is_some() {
-                    self.begin_input(InputKind::UnlinkIssue);
+                    self.begin_unlink_issue_select();
                 }
                 false
             }
@@ -2794,6 +2868,24 @@ impl App {
                 self.input.push(c);
                 self.reset_link_issue_selection();
             }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_unlink_issue_select_key(&mut self, key: KeyEvent) -> Result<()> {
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                self.status = Some("Cancelled.".to_string());
+            }
+            KeyCode::Enter => {
+                if self.unlink_selected_issue()? {
+                    self.mode = Mode::Normal;
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => self.next_unlink_issue(),
+            KeyCode::Up | KeyCode::Char('k') => self.previous_unlink_issue(),
             _ => {}
         }
         Ok(())
@@ -3451,13 +3543,6 @@ impl App {
                 }
                 None
             }
-            InputKind::UnlinkIssue => {
-                if self.selected_writeup().is_none() {
-                    self.status = Some("Select a writeup first.".to_string());
-                    return;
-                }
-                None
-            }
             _ => {
                 let Some(ticket) = self.selected_ticket() else {
                     self.status = Some("Select a ticket first.".to_string());
@@ -3473,10 +3558,7 @@ impl App {
                 .and_then(|ticket| ticket.points)
                 .map(|value| value.to_string())
                 .unwrap_or_default(),
-            InputKind::Comment
-            | InputKind::AddTags
-            | InputKind::RemoveTags
-            | InputKind::UnlinkIssue => String::new(),
+            InputKind::Comment | InputKind::AddTags | InputKind::RemoveTags => String::new(),
         };
         self.mode = Mode::Input(kind);
     }
@@ -3498,6 +3580,19 @@ impl App {
         }
         self.link_issue_state.select(Some(0));
         self.mode = Mode::LinkIssueSearch;
+    }
+
+    fn begin_unlink_issue_select(&mut self) {
+        let Some(writeup) = self.selected_writeup() else {
+            self.status = Some("Select a writeup first.".to_string());
+            return;
+        };
+        if writeup.tickets.is_empty() {
+            self.status = Some("No linked issues.".to_string());
+            return;
+        }
+        self.link_issue_state.select(Some(0));
+        self.mode = Mode::UnlinkIssueSelect;
     }
 
     fn begin_versions(&mut self) {
@@ -3536,9 +3631,6 @@ impl App {
         let Mode::Input(kind) = self.mode else {
             return Ok(false);
         };
-        if kind == InputKind::UnlinkIssue {
-            return self.submit_writeup_link_input(kind);
-        }
         if matches!(kind, InputKind::AddTags | InputKind::RemoveTags) {
             return self.submit_tag_input(kind);
         }
@@ -3592,9 +3684,7 @@ impl App {
                     None => "Cleared points.".to_string(),
                 });
             }
-            InputKind::AddTags | InputKind::RemoveTags | InputKind::UnlinkIssue => {
-                unreachable!("handled above")
-            }
+            InputKind::AddTags | InputKind::RemoveTags => unreachable!("handled above"),
         }
 
         self.reload(preferred_after_reload)?;
@@ -3646,29 +3736,6 @@ impl App {
             InputKind::RemoveTags => "Removed tag(s).".to_string(),
             _ => unreachable!("only tag inputs are submitted here"),
         });
-        Ok(true)
-    }
-
-    fn submit_writeup_link_input(&mut self, kind: InputKind) -> Result<bool> {
-        let Some(writeup) = self.selected_writeup() else {
-            self.status = Some("Select a writeup first.".to_string());
-            return Ok(false);
-        };
-        let writeup_id = writeup.id;
-        let ticket_ref = self.input.trim();
-        if ticket_ref.is_empty() {
-            self.status = Some("Enter an issue id.".to_string());
-            return Ok(false);
-        }
-        let ticket_id = self.store.resolve_id(ticket_ref)?;
-        match kind {
-            InputKind::UnlinkIssue => {
-                self.store.unlink_writeup_ticket(&writeup_id, &ticket_id)?;
-                self.status = Some(format!("Unlinked issue {}.", &ticket_id.to_string()[..6]));
-            }
-            _ => unreachable!("only writeup unlink input is handled here"),
-        }
-        self.reload_all(None, Some(writeup_id))?;
         Ok(true)
     }
 
@@ -3745,6 +3812,66 @@ impl App {
         } else {
             self.link_issue_state.select(Some(0));
         }
+    }
+
+    fn linked_issue_ids_for_selected_writeup(&self) -> Vec<uuid::Uuid> {
+        self.selected_writeup()
+            .map(|writeup| writeup.tickets.iter().copied().collect())
+            .unwrap_or_default()
+    }
+
+    fn linked_issue_line(&self, ticket_id: uuid::Uuid, width: usize) -> Line<'static> {
+        if let Some(ticket) = self.tickets.iter().find(|ticket| ticket.id == ticket_id) {
+            return ticket_list_line(ticket, width, false, self.store.email());
+        }
+        let short_id = ticket_id.to_string()[..6].to_string();
+        ticket_list_line_from_parts(Some(&short_id), "missing issue", &[], None, false, width)
+    }
+
+    fn unlink_selected_issue(&mut self) -> Result<bool> {
+        let Some(writeup) = self.selected_writeup() else {
+            self.status = Some("Select a writeup first.".to_string());
+            return Ok(false);
+        };
+        let writeup_id = writeup.id;
+        let linked = self.linked_issue_ids_for_selected_writeup();
+        let Some(ticket_id) = self
+            .link_issue_state
+            .selected()
+            .and_then(|selected| linked.get(selected))
+            .copied()
+        else {
+            self.status = Some("No issue selected.".to_string());
+            return Ok(false);
+        };
+        self.store.unlink_writeup_ticket(&writeup_id, &ticket_id)?;
+        self.reload_all(None, Some(writeup_id))?;
+        self.status = Some(format!("Unlinked issue {}.", &ticket_id.to_string()[..6]));
+        Ok(true)
+    }
+
+    fn next_unlink_issue(&mut self) {
+        let linked = self.linked_issue_ids_for_selected_writeup();
+        if linked.is_empty() {
+            self.link_issue_state.select(None);
+            return;
+        }
+        let selected = self.link_issue_state.selected().unwrap_or(0);
+        self.link_issue_state
+            .select(Some((selected + 1) % linked.len()));
+    }
+
+    fn previous_unlink_issue(&mut self) {
+        let linked = self.linked_issue_ids_for_selected_writeup();
+        if linked.is_empty() {
+            self.link_issue_state.select(None);
+            return;
+        }
+        let selected = self.link_issue_state.selected().unwrap_or(0);
+        let previous = selected
+            .checked_sub(1)
+            .unwrap_or_else(|| linked.len().saturating_sub(1));
+        self.link_issue_state.select(Some(previous));
     }
 
     fn next_version(&mut self) {
@@ -4629,7 +4756,6 @@ impl InputKind {
             InputKind::Points => "points",
             InputKind::AddTags => "add tags",
             InputKind::RemoveTags => "remove tags",
-            InputKind::UnlinkIssue => "unlink issue",
         }
     }
 
@@ -4639,8 +4765,7 @@ impl InputKind {
             InputKind::Priority
             | InputKind::Points
             | InputKind::AddTags
-            | InputKind::RemoveTags
-            | InputKind::UnlinkIssue => 9,
+            | InputKind::RemoveTags => 9,
         }
     }
 }
