@@ -33,6 +33,7 @@ pub mod tui;
 pub mod update;
 pub mod users;
 pub mod view;
+pub mod writeup;
 
 use anyhow::{Context, Result};
 use ticgit_lib::TicketStore;

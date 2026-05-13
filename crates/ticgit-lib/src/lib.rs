@@ -17,6 +17,12 @@
 //! ticgit:tickets:<uuid>:comments       # list of JSON-encoded {author, body}
 //! ticgit:tickets:<uuid>:created-at     # RFC3339 string
 //! ticgit:tickets:<uuid>:created-by     # string (email)
+//! ticgit:writeups:<uuid>:title         # string
+//! ticgit:writeups:<uuid>:status        # string ("open" | "closed")
+//! ticgit:writeups:<uuid>:tags          # set
+//! ticgit:writeups:<uuid>:authors       # set of emails
+//! ticgit:writeups:<uuid>:versions      # list of markdown documents
+//! ticgit:writeups:<uuid>:tickets       # set of linked ticket UUIDs
 //! ticgit:views:<name>                  # set of UUIDs (saved selection)
 //! ticgit:owners                        # set of emails
 //! ticgit:schema-version                # string ("1")
@@ -30,6 +36,7 @@ pub mod keys;
 pub mod query;
 pub mod store;
 pub mod ticket;
+pub mod writeup;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
@@ -40,6 +47,7 @@ pub use store::TicketStore;
 pub use ticket::{
     validate_code_uri, Comment, NewTicketOpts, Ticket, TicketLifecycle, TicketState, TicketStatus,
 };
+pub use writeup::{NewWriteupOpts, Writeup, WriteupStatus, WriteupVersion};
 
 /// Re-exported for callers who want to talk to git-meta directly.
 pub use git_meta_lib::{MetaValue, Session, Target};

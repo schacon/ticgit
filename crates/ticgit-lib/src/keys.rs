@@ -11,6 +11,7 @@
 //! keys:
 //!   ticgit:<system-key>             # ticketing-system metadata
 //!   ticgit:tickets:<uuid>:<field>   # per-ticket fields
+//!   ticgit:writeups:<uuid>:<field>  # per-writeup fields
 //!   ticgit:views:<name>             # saved selections (set of UUIDs)
 //! ```
 
@@ -44,6 +45,26 @@ pub fn ticket_prefix(id: &Uuid) -> String {
 #[must_use]
 pub fn ticket_field(id: &Uuid, field: &str) -> String {
     format!("{NS}:tickets:{id}:{field}")
+}
+
+/// Prefix for the per-writeup field keyspace; pass to
+/// `SessionTargetHandle::get_all_values` for project-wide writeup scans.
+#[must_use]
+pub fn writeups_prefix() -> String {
+    format!("{NS}:writeups")
+}
+
+/// All keys for a single writeup share this prefix; used for one-writeup
+/// scans.
+#[must_use]
+pub fn writeup_prefix(id: &Uuid) -> String {
+    format!("{NS}:writeups:{id}")
+}
+
+/// A specific field on a specific writeup, e.g. `ticgit:writeups:<uuid>:title`.
+#[must_use]
+pub fn writeup_field(id: &Uuid, field: &str) -> String {
+    format!("{NS}:writeups:{id}:{field}")
 }
 
 /// A specific metadata field on a ticket, e.g. `ticgit:tickets:<uuid>:meta:branch`.
@@ -87,7 +108,11 @@ pub fn user_key(nick: &str) -> String {
 pub fn parse_user_nick(key: &str) -> Option<&str> {
     let prefix = format!("{NS}:users:");
     let name = key.strip_prefix(&prefix)?;
-    if name.is_empty() { None } else { Some(name) }
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
 }
 
 /// If `key` is a per-ticket field key, returns `(ticket_uuid, field_name)`.
@@ -95,6 +120,20 @@ pub fn parse_user_nick(key: &str) -> Option<&str> {
 #[must_use]
 pub fn parse_ticket_field(key: &str) -> Option<(Uuid, &str)> {
     let prefix = format!("{NS}:tickets:");
+    let rest = key.strip_prefix(&prefix)?;
+    let (uuid_part, field) = rest.split_once(':')?;
+    let uuid = Uuid::parse_str(uuid_part).ok()?;
+    if field.is_empty() {
+        return None;
+    }
+    Some((uuid, field))
+}
+
+/// If `key` is a per-writeup field key, returns `(writeup_uuid, field_name)`.
+/// Returns `None` for system keys, ticket keys, or anything malformed.
+#[must_use]
+pub fn parse_writeup_field(key: &str) -> Option<(Uuid, &str)> {
+    let prefix = format!("{NS}:writeups:");
     let rest = key.strip_prefix(&prefix)?;
     let (uuid_part, field) = rest.split_once(':')?;
     let uuid = Uuid::parse_str(uuid_part).ok()?;
@@ -140,6 +179,15 @@ mod tests {
             ticket_field(&id, "state"),
             "ticgit:tickets:00000000-0000-0000-0000-000000000001:state"
         );
+        assert_eq!(writeups_prefix(), "ticgit:writeups");
+        assert_eq!(
+            writeup_prefix(&id),
+            "ticgit:writeups:00000000-0000-0000-0000-000000000001"
+        );
+        assert_eq!(
+            writeup_field(&id, "title"),
+            "ticgit:writeups:00000000-0000-0000-0000-000000000001:title"
+        );
         assert_eq!(
             ticket_meta_field(&id, "branch"),
             "ticgit:tickets:00000000-0000-0000-0000-000000000001:meta:branch"
@@ -177,9 +225,35 @@ mod tests {
     fn parse_ticket_field_rejects_non_ticket_keys() {
         assert!(parse_ticket_field("ticgit:owners").is_none());
         assert!(parse_ticket_field("ticgit:views:foo").is_none());
+        assert!(
+            parse_ticket_field("ticgit:writeups:00000000-0000-0000-0000-000000000001:title")
+                .is_none()
+        );
         assert!(parse_ticket_field("ticgit:tickets").is_none());
         assert!(parse_ticket_field("ticgit:tickets:not-a-uuid:title").is_none());
         assert!(parse_ticket_field("foo:bar:baz").is_none());
+    }
+
+    #[test]
+    fn parse_writeup_field_round_trips_known_uuids() {
+        let id = fixed_uuid();
+        let key = writeup_field(&id, "versions");
+        let (got_id, field) = parse_writeup_field(&key).expect("should parse");
+        assert_eq!(got_id, id);
+        assert_eq!(field, "versions");
+    }
+
+    #[test]
+    fn parse_writeup_field_rejects_non_writeup_keys() {
+        assert!(parse_writeup_field("ticgit:owners").is_none());
+        assert!(parse_writeup_field("ticgit:views:foo").is_none());
+        assert!(
+            parse_writeup_field("ticgit:tickets:00000000-0000-0000-0000-000000000001:title")
+                .is_none()
+        );
+        assert!(parse_writeup_field("ticgit:writeups").is_none());
+        assert!(parse_writeup_field("ticgit:writeups:not-a-uuid:title").is_none());
+        assert!(parse_writeup_field("foo:bar:baz").is_none());
     }
 
     #[test]
