@@ -5931,12 +5931,7 @@ fn subissue_graph_prefix(ticket: &Ticket, ticket_by_id: &HashMap<uuid::Uuid, &Ti
         return String::new();
     }
 
-    let marker = if ticket.children.is_empty() {
-        "├╮ "
-    } else {
-        "╰┄ "
-    };
-    format!("{}{}", "┊".repeat(depth), marker)
+    format!("{}╰┄ ", "┊".repeat(depth))
 }
 
 fn subissue_depth(ticket: &Ticket, ticket_by_id: &HashMap<uuid::Uuid, &Ticket>) -> usize {
@@ -7943,7 +7938,7 @@ mod tests {
 
         assert_eq!(subissue_graph_prefix(&tickets[0], &ticket_by_id), "");
         assert_eq!(subissue_graph_prefix(&tickets[1], &ticket_by_id), "┊╰┄ ");
-        assert_eq!(subissue_graph_prefix(&tickets[2], &ticket_by_id), "┊┊├╮ ");
+        assert_eq!(subissue_graph_prefix(&tickets[2], &ticket_by_id), "┊┊╰┄ ");
     }
 
     #[test]
