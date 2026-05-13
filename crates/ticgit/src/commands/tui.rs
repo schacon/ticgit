@@ -1266,18 +1266,10 @@ impl App {
             return;
         };
         let writeup = &self.writeups[idx];
-        let mut lines = vec![
-            Line::from(Span::styled(
-                writeup.id.to_string(),
-                Style::default().fg(Color::DarkGray),
-            )),
-            Line::from(Span::styled(
-                writeup.title.clone(),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )),
-        ];
+        let mut lines = vec![Line::from(Span::styled(
+            writeup.id.to_string(),
+            Style::default().fg(Color::DarkGray),
+        ))];
         lines.extend(writeup_metadata_lines(
             writeup,
             usize::from(area.width).saturating_sub(2),
@@ -1332,8 +1324,22 @@ impl App {
                 Span::styled(&version.author, Style::default().fg(Color::Cyan)),
             ]));
             lines.push(Line::raw(""));
+            lines.push(Line::from(Span::styled(
+                writeup.title.clone(),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            lines.push(Line::raw(""));
             lines.extend(version.body.lines().map(|line| Line::raw(line.to_string())));
         } else {
+            lines.push(Line::from(Span::styled(
+                writeup.title.clone(),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            lines.push(Line::raw(""));
             lines.push(Line::from(Span::styled(
                 "No versions yet. Press e to add one.",
                 Style::default().fg(Color::DarkGray),
