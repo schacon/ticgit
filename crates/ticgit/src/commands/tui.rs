@@ -177,6 +177,8 @@ struct App {
     writeups: Vec<Writeup>,
     visible_writeups: Vec<usize>,
     list_state: ListState,
+    outline_state: ListState,
+    outline_collapsed: BTreeSet<uuid::Uuid>,
     writeup_state: ListState,
     board_column: usize,
     board_rows: [usize; BOARD_STATES.len()],
@@ -221,6 +223,7 @@ struct App {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ViewMode {
     List,
+    Outline,
     Board,
 }
 
@@ -340,7 +343,16 @@ struct NewTicketDraft {
     description: String,
     tags: String,
     assigned: String,
+    parent: Option<uuid::Uuid>,
     field: NewTicketField,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct OutlineRow {
+    ticket_idx: usize,
+    depth: usize,
+    has_children: bool,
+    collapsed: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -369,6 +381,8 @@ impl App {
             writeups: Vec::new(),
             visible_writeups: Vec::new(),
             list_state: ListState::default(),
+            outline_state: ListState::default(),
+            outline_collapsed: BTreeSet::new(),
             writeup_state: ListState::default(),
             board_column: 0,
             board_rows: [0; BOARD_STATES.len()],
@@ -550,7 +564,7 @@ impl App {
                 self.draw_comments_list(frame, panes[0]);
                 self.draw_comment_detail(frame, panes[1]);
             } else {
-                self.draw_list(frame, panes[0]);
+                self.draw_issue_view(frame, panes[0]);
                 self.draw_detail(frame, panes[1]);
             }
         } else if self.active_tab == TuiTab::Writeups && self.writeup_detail.is_some() {
@@ -568,6 +582,7 @@ impl App {
             match self.active_tab {
                 TuiTab::Issues => match self.view {
                     ViewMode::List => self.draw_list(frame, outer[0]),
+                    ViewMode::Outline => self.draw_outline(frame, outer[0]),
                     ViewMode::Board => self.draw_board(frame, outer[0]),
                 },
                 TuiTab::Writeups => self.draw_writeup_list(frame, outer[0]),
@@ -1052,6 +1067,10 @@ impl App {
                             desc: "list",
                         },
                         MenuHint {
+                            key: "u",
+                            desc: "outline",
+                        },
+                        MenuHint {
                             key: "s",
                             desc: "state",
                         },
@@ -1080,6 +1099,45 @@ impl App {
                             desc: "quit",
                         },
                     ]
+                } else if self.view == ViewMode::Outline && self.detail.is_none() {
+                    vec![
+                        MenuHint {
+                            key: "Tab",
+                            desc: "writeups",
+                        },
+                        MenuHint {
+                            key: "j/k",
+                            desc: "tickets",
+                        },
+                        MenuHint {
+                            key: "Space",
+                            desc: "collapse",
+                        },
+                        MenuHint {
+                            key: "Enter",
+                            desc: "details",
+                        },
+                        MenuHint {
+                            key: "u",
+                            desc: "list",
+                        },
+                        MenuHint {
+                            key: "b",
+                            desc: "board",
+                        },
+                        MenuHint {
+                            key: "n",
+                            desc: "new",
+                        },
+                        MenuHint {
+                            key: "r",
+                            desc: "refresh",
+                        },
+                        MenuHint {
+                            key: "q",
+                            desc: "quit",
+                        },
+                    ]
                 } else if self.detail.is_some() {
                     vec![
                         MenuHint {
@@ -1093,6 +1151,18 @@ impl App {
                         MenuHint {
                             key: "b",
                             desc: "board",
+                        },
+                        MenuHint {
+                            key: "u",
+                            desc: "outline",
+                        },
+                        MenuHint {
+                            key: "n",
+                            desc: "subissue",
+                        },
+                        MenuHint {
+                            key: "P",
+                            desc: "parent",
                         },
                         MenuHint {
                             key: "+/-",
@@ -1180,6 +1250,10 @@ impl App {
                         MenuHint {
                             key: "b",
                             desc: "board",
+                        },
+                        MenuHint {
+                            key: "u",
+                            desc: "outline",
                         },
                         MenuHint {
                             key: "n",
@@ -1281,6 +1355,62 @@ impl App {
             .highlight_symbol(HIGHLIGHT_SYMBOL)
             .highlight_spacing(HighlightSpacing::Always);
         frame.render_stateful_widget(list, chunks[1], &mut self.list_state);
+    }
+
+    fn draw_issue_view(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        match self.view {
+            ViewMode::List | ViewMode::Board => self.draw_list(frame, area),
+            ViewMode::Outline => self.draw_outline(frame, area),
+        }
+    }
+
+    fn draw_outline(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        let rows = self.outline_rows();
+        let filter = self.active_filter_display();
+        let title = if filter.is_empty() {
+            format!("Issue outline ({})", self.visible.len())
+        } else {
+            format!("Issue outline matching {filter} ({})", self.visible.len())
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(tabs_title(self.active_tab, &title));
+        let row_width = usize::from(block.inner(area).width)
+            .saturating_sub(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL));
+
+        let items: Vec<ListItem<'_>> = if rows.is_empty() {
+            vec![ListItem::new(Line::from(Span::styled(
+                "No issues match the current filters.",
+                Style::default().fg(Color::DarkGray),
+            )))]
+        } else {
+            rows.iter()
+                .map(|row| {
+                    let ticket = &self.tickets[row.ticket_idx];
+                    ListItem::new(outline_ticket_line(
+                        ticket,
+                        row.depth,
+                        row.has_children,
+                        row.collapsed,
+                        row_width,
+                        self.store.email(),
+                        !self.linked_writeups(ticket.id).is_empty(),
+                    ))
+                })
+                .collect()
+        };
+
+        let list = List::new(items)
+            .block(block)
+            .highlight_style(
+                Style::default()
+                    .bg(Color::Rgb(0, 0, 95))
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol(HIGHLIGHT_SYMBOL)
+            .highlight_spacing(HighlightSpacing::Always);
+        frame.render_stateful_widget(list, area, &mut self.outline_state);
     }
 
     fn draw_writeup_list(&mut self, frame: &mut Frame<'_>, area: Rect) {
@@ -1437,6 +1567,18 @@ impl App {
         }
         if let Some(closed_by) = &ticket.closed_by {
             detail_lines.push(field_line("Closed by", closed_by));
+        }
+        if let Some(parent) = ticket.parent {
+            detail_lines.push(field_line("Parent", &self.issue_label(parent)));
+        }
+        if !ticket.children.is_empty() {
+            detail_lines.push(field_line(
+                "Sub-issues",
+                &format!("{} (press u for outline)", ticket.children.len()),
+            ));
+            for child in ticket.children.iter().take(5) {
+                detail_lines.push(detail_child_issue_line(&self.issue_label(*child)));
+            }
         }
         if let Some(priority) = ticket.priority {
             detail_lines.push(field_line("Priority", &priority.to_string()));
@@ -2334,8 +2476,18 @@ impl App {
     }
 
     fn draw_create_modal(&self, frame: &mut Frame<'_>) {
-        let area = centered_rect(72, 15, frame.area());
-        let lines = vec![
+        let height = if self.new_ticket.parent.is_some() {
+            17
+        } else {
+            15
+        };
+        let area = centered_rect(72, height, frame.area());
+        let mut lines = Vec::new();
+        if let Some(parent_id) = self.new_ticket.parent {
+            lines.push(field_line("Parent", &self.issue_label(parent_id)));
+            lines.push(Line::raw(""));
+        }
+        lines.extend([
             new_ticket_field_line(
                 NewTicketField::Title,
                 self.new_ticket.field,
@@ -2369,9 +2521,14 @@ impl App {
                 "Tab/Up/Down switch fields  Enter create  Esc cancel",
                 Style::default().fg(Color::Yellow),
             )),
-        ];
+        ]);
+        let title = if self.new_ticket.parent.is_some() {
+            "New sub-issue"
+        } else {
+            "New ticket"
+        };
         let modal = Paragraph::new(lines)
-            .block(Block::default().borders(Borders::ALL).title("New ticket"))
+            .block(Block::default().borders(Borders::ALL).title(title))
             .wrap(Wrap { trim: false });
         frame.render_widget(Clear, area);
         frame.render_widget(modal, area);
@@ -2581,6 +2738,25 @@ impl App {
                 lines.push(help_columns(("c", "comment"), Some(("t", "manage tags"))));
                 lines.push(help_columns(("p", "priority"), Some(("o", "order"))));
             }
+            Mode::Normal if self.view == ViewMode::Outline && self.detail.is_none() => {
+                help_section(&mut lines, "Outline");
+                lines.push(help_columns(
+                    ("j/k", "move tickets"),
+                    Some(("Space", "collapse / expand")),
+                ));
+                lines.push(help_columns(("Enter", "details"), Some(("u", "list view"))));
+                lines.push(help_columns(("b", "board view"), Some(("n", "new ticket"))));
+                lines.push(help_columns(("r", "refresh"), None));
+
+                help_section(&mut lines, "Edit Ticket");
+                lines.push(help_columns(("C", "claim"), Some(("s", "state"))));
+                lines.push(help_columns(
+                    ("e", "edit title/body"),
+                    Some(("i", "edit spec")),
+                ));
+                lines.push(help_columns(("c", "comment"), Some(("t", "manage tags"))));
+                lines.push(help_columns(("p", "priority"), Some(("o", "order"))));
+            }
             Mode::Normal => {
                 help_section(&mut lines, "Navigation");
                 lines.push(help_columns(
@@ -2595,7 +2771,11 @@ impl App {
                     ("Enter", "details"),
                     Some(("b", "board view")),
                 ));
-                lines.push(help_columns(("m", "comments"), Some(("n", "new ticket"))));
+                lines.push(help_columns(
+                    ("u", "outline view"),
+                    Some(("n", "new/subissue")),
+                ));
+                lines.push(help_columns(("P", "jump parent"), Some(("m", "comments"))));
                 lines.push(help_columns(("+/-", "resize detail"), None));
                 lines.push(help_columns(("r", "refresh"), None));
 
@@ -2742,7 +2922,7 @@ impl App {
                     self.detail = None;
                     self.comments_mode = false;
                     false
-                } else if self.view == ViewMode::Board {
+                } else if matches!(self.view, ViewMode::Board | ViewMode::Outline) {
                     self.view = ViewMode::List;
                     false
                 } else if self.has_active_view_filters() {
@@ -2789,7 +2969,15 @@ impl App {
             }
             KeyCode::Char('b') => {
                 if self.active_tab == TuiTab::Issues {
-                    self.handle_board_key();
+                    self.handle_board_key()?;
+                }
+                false
+            }
+            KeyCode::Char('u') => {
+                if self.active_tab == TuiTab::Issues {
+                    self.handle_outline_key()?;
+                } else if self.active_tab == TuiTab::Writeups && self.writeup_detail.is_some() {
+                    self.begin_unlink_issue_select();
                 }
                 false
             }
@@ -2799,7 +2987,11 @@ impl App {
             }
             KeyCode::Char('n') => {
                 if self.active_tab == TuiTab::Issues {
-                    self.begin_create();
+                    if let Some(parent_id) = self.detail.map(|idx| self.tickets[idx].id) {
+                        self.begin_create_subissue(parent_id);
+                    } else {
+                        self.begin_create();
+                    }
                 } else {
                     self.create_writeup_in_editor(terminal)?;
                 }
@@ -2813,6 +3005,8 @@ impl App {
                     && self.detail.is_none()
                 {
                     self.next_board_ticket();
+                } else if self.active_tab == TuiTab::Issues && self.view == ViewMode::Outline {
+                    self.next_outline_ticket();
                 } else {
                     self.next();
                 }
@@ -2826,6 +3020,8 @@ impl App {
                     && self.detail.is_none()
                 {
                     self.previous_board_ticket();
+                } else if self.active_tab == TuiTab::Issues && self.view == ViewMode::Outline {
+                    self.previous_outline_ticket();
                 } else {
                     self.previous();
                 }
@@ -2839,6 +3035,11 @@ impl App {
                     && self.detail.is_none()
                 {
                     self.next_board_column();
+                } else if self.active_tab == TuiTab::Issues
+                    && self.view == ViewMode::Outline
+                    && self.detail.is_none()
+                {
+                    self.expand_selected_outline_node();
                 }
                 false
             }
@@ -2848,6 +3049,20 @@ impl App {
                     && self.detail.is_none()
                 {
                     self.previous_board_column();
+                } else if self.active_tab == TuiTab::Issues
+                    && self.view == ViewMode::Outline
+                    && self.detail.is_none()
+                {
+                    self.collapse_selected_outline_node();
+                }
+                false
+            }
+            KeyCode::Char(' ') => {
+                if self.active_tab == TuiTab::Issues
+                    && self.view == ViewMode::Outline
+                    && self.detail.is_none()
+                {
+                    self.toggle_selected_outline_node();
                 }
                 false
             }
@@ -2897,6 +3112,12 @@ impl App {
                 }
                 false
             }
+            KeyCode::Char('P') => {
+                if self.active_tab == TuiTab::Issues {
+                    self.jump_to_parent_issue();
+                }
+                false
+            }
             KeyCode::Char('o') => {
                 if self.active_tab == TuiTab::Issues {
                     self.begin_order();
@@ -2923,12 +3144,6 @@ impl App {
             }
             KeyCode::Char('-') => {
                 self.resize_detail(-(DETAIL_WIDTH_PERCENT_STEP as i16));
-                false
-            }
-            KeyCode::Char('u') => {
-                if self.active_tab == TuiTab::Writeups && self.writeup_detail.is_some() {
-                    self.begin_unlink_issue_select();
-                }
                 false
             }
             KeyCode::Char('s') => {
@@ -3249,6 +3464,14 @@ impl App {
 
     fn begin_create(&mut self) {
         self.new_ticket = NewTicketDraft::default();
+        self.mode = Mode::Create;
+    }
+
+    fn begin_create_subissue(&mut self, parent_id: uuid::Uuid) {
+        self.new_ticket = NewTicketDraft {
+            parent: Some(parent_id),
+            ..Default::default()
+        };
         self.mode = Mode::Create;
     }
 
@@ -3818,6 +4041,23 @@ impl App {
         }
     }
 
+    fn jump_to_parent_issue(&mut self) {
+        let Some(ticket) = self.detail.map(|idx| &self.tickets[idx]) else {
+            self.status = Some("Open ticket details first.".to_string());
+            return;
+        };
+        let Some(parent) = ticket.parent else {
+            self.status = Some("This issue has no parent.".to_string());
+            return;
+        };
+        self.open_ticket_by_id(parent);
+        if self.detail.map(|idx| self.tickets[idx].id) == Some(parent) {
+            self.status = Some(format!("Opened parent {}.", self.issue_label(parent)));
+        } else {
+            self.status = Some("Parent issue is hidden by current filters.".to_string());
+        }
+    }
+
     fn start_sync(&mut self) {
         if self.sync.is_some() {
             self.status = Some("Sync already running.".to_string());
@@ -4160,6 +4400,17 @@ impl App {
         )
     }
 
+    fn issue_label(&self, id: uuid::Uuid) -> String {
+        let short_id = id.to_string().chars().take(6).collect::<String>();
+        let title = self
+            .all_tickets
+            .iter()
+            .find(|ticket| ticket.id == id)
+            .map(|ticket| flatten_display(&ticket.title))
+            .unwrap_or_else(|| "missing issue".to_string());
+        format!("{short_id} {title}")
+    }
+
     fn unlink_selected_issue(&mut self) -> Result<bool> {
         let Some(writeup) = self.selected_writeup() else {
             self.status = Some("Select a writeup first.".to_string());
@@ -4293,6 +4544,7 @@ impl App {
                 comment: None,
                 tags: split_tags(&self.new_ticket.tags),
                 assigned: optional_trimmed(&self.new_ticket.assigned).map(ToString::to_string),
+                parent: self.new_ticket.parent,
                 ..Default::default()
             },
         )?;
@@ -4302,6 +4554,9 @@ impl App {
         }
 
         self.filter.clear();
+        if self.new_ticket.parent.is_some() {
+            self.hide_subissues = false;
+        }
         self.detail = Some(0);
         self.reload(Some(id))?;
         self.open_ticket_by_id(id);
@@ -4611,6 +4866,7 @@ impl App {
                 .min(self.visible.len() - 1);
             self.list_state.select(Some(selected));
         }
+        self.sync_outline_selection();
         self.apply_writeup_filter();
     }
 
@@ -4704,6 +4960,96 @@ impl App {
         self.sync_open_writeup_detail();
     }
 
+    fn outline_rows(&self) -> Vec<OutlineRow> {
+        build_outline_rows(&self.tickets, &self.visible, &self.outline_collapsed)
+    }
+
+    fn selected_outline_row(&self) -> Option<OutlineRow> {
+        self.outline_state
+            .selected()
+            .and_then(|selected| self.outline_rows().get(selected).copied())
+    }
+
+    fn next_outline_ticket(&mut self) {
+        let rows = self.outline_rows();
+        if rows.is_empty() {
+            self.outline_state.select(None);
+            return;
+        }
+        let selected = self.outline_state.selected().unwrap_or(0);
+        self.outline_state.select(Some((selected + 1) % rows.len()));
+        self.sync_outline_to_list_selection();
+        self.sync_open_detail();
+    }
+
+    fn previous_outline_ticket(&mut self) {
+        let rows = self.outline_rows();
+        if rows.is_empty() {
+            self.outline_state.select(None);
+            return;
+        }
+        let selected = self.outline_state.selected().unwrap_or(0);
+        let previous = selected
+            .checked_sub(1)
+            .unwrap_or_else(|| rows.len().saturating_sub(1));
+        self.outline_state.select(Some(previous));
+        self.sync_outline_to_list_selection();
+        self.sync_open_detail();
+    }
+
+    fn toggle_selected_outline_node(&mut self) {
+        let Some(row) = self.selected_outline_row() else {
+            return;
+        };
+        if !row.has_children {
+            return;
+        }
+        let id = self.tickets[row.ticket_idx].id;
+        if !self.outline_collapsed.remove(&id) {
+            self.outline_collapsed.insert(id);
+        }
+        self.sync_outline_selection();
+    }
+
+    fn expand_selected_outline_node(&mut self) {
+        let Some(row) = self.selected_outline_row() else {
+            return;
+        };
+        if row.has_children {
+            let id = self.tickets[row.ticket_idx].id;
+            self.outline_collapsed.remove(&id);
+            self.sync_outline_selection();
+        }
+    }
+
+    fn collapse_selected_outline_node(&mut self) {
+        let Some(row) = self.selected_outline_row() else {
+            return;
+        };
+        if row.has_children {
+            let id = self.tickets[row.ticket_idx].id;
+            self.outline_collapsed.insert(id);
+            self.sync_outline_selection();
+            return;
+        }
+
+        if row.depth == 0 {
+            return;
+        }
+        let Some(parent) = self.tickets[row.ticket_idx].parent else {
+            return;
+        };
+        if let Some(parent_row) = self
+            .outline_rows()
+            .iter()
+            .position(|candidate| self.tickets[candidate.ticket_idx].id == parent)
+        {
+            self.outline_state.select(Some(parent_row));
+            self.sync_outline_to_list_selection();
+            self.sync_open_detail();
+        }
+    }
+
     fn resize_detail(&mut self, delta: i16) {
         if self.detail.is_none() && self.writeup_detail.is_none() {
             self.status = Some("Open details first.".to_string());
@@ -4739,10 +5085,15 @@ impl App {
         let selected_id = self.selected_ticket().map(|ticket| ticket.id);
         let selected_writeup_id = self.selected_writeup().map(|writeup| writeup.id);
         let was_board = self.view == ViewMode::Board && self.detail.is_none();
+        let was_outline = self.view == ViewMode::Outline;
         self.reload_all(selected_id, selected_writeup_id)?;
         if was_board {
             if let Some(id) = selected_id {
                 self.select_board_ticket_by_id(id);
+            }
+        } else if was_outline {
+            if let Some(id) = selected_id {
+                self.select_outline_ticket_by_id(id);
             }
         }
         self.status = Some("Refreshed.".to_string());
@@ -4761,12 +5112,16 @@ impl App {
         };
     }
 
-    fn toggle_view(&mut self) {
-        self.view = match self.view {
-            ViewMode::List => ViewMode::Board,
-            ViewMode::Board => ViewMode::List,
+    fn select_outline_ticket_by_id(&mut self, id: uuid::Uuid) {
+        let Some(row) = self
+            .outline_rows()
+            .iter()
+            .position(|row| self.tickets[row.ticket_idx].id == id)
+        else {
+            return;
         };
-        self.sync_board_to_list_selection();
+        self.outline_state.select(Some(row));
+        self.sync_outline_to_list_selection();
     }
 
     fn select_board_ticket_by_id(&mut self, id: uuid::Uuid) {
@@ -4788,12 +5143,39 @@ impl App {
         self.board_rows[column] = row;
     }
 
-    fn handle_board_key(&mut self) {
+    fn handle_board_key(&mut self) -> Result<()> {
         if self.detail.is_some() {
             self.open_board_for_detail_ticket();
+        } else if self.view == ViewMode::Board {
+            self.view = ViewMode::List;
         } else {
-            self.toggle_view();
+            let selected_id = self.selected_ticket().map(|ticket| ticket.id);
+            self.view = ViewMode::Board;
+            if let Some(id) = selected_id {
+                self.select_board_ticket_by_id(id);
+            }
         }
+        Ok(())
+    }
+
+    fn handle_outline_key(&mut self) -> Result<()> {
+        let selected_id = self.selected_ticket().map(|ticket| ticket.id);
+        if self.view == ViewMode::Outline && self.detail.is_none() {
+            self.view = ViewMode::List;
+            self.sync_outline_to_list_selection();
+            return Ok(());
+        }
+        if self.hide_subissues {
+            self.hide_subissues = false;
+            self.reload(selected_id)?;
+        }
+        self.view = ViewMode::Outline;
+        self.detail = None;
+        self.comments_mode = false;
+        if let Some(id) = selected_id {
+            self.select_outline_ticket_by_id(id);
+        }
+        Ok(())
     }
 
     fn open_board_for_detail_ticket(&mut self) {
@@ -4833,6 +5215,9 @@ impl App {
             if let Some(visible_pos) = self.visible.iter().position(|visible| *visible == idx) {
                 self.list_state.select(Some(visible_pos));
             }
+            if self.view == ViewMode::Outline {
+                self.select_outline_ticket_by_id(self.tickets[idx].id);
+            }
             self.comments_mode = false;
             self.sync_comment_selection();
         }
@@ -4860,6 +5245,9 @@ impl App {
             self.list_state.select(Some(visible_pos));
             self.detail = self.visible.get(visible_pos).copied();
             self.comments_mode = false;
+            if self.view == ViewMode::Outline {
+                self.select_outline_ticket_by_id(id);
+            }
             self.sync_comment_selection();
         }
     }
@@ -4931,6 +5319,32 @@ impl App {
     fn sync_board_to_list_selection(&mut self) {
         if let Some(idx) = self.selected_ticket_index() {
             if let Some(visible_pos) = self.visible.iter().position(|visible| *visible == idx) {
+                self.list_state.select(Some(visible_pos));
+            }
+        }
+    }
+
+    fn sync_outline_selection(&mut self) {
+        let rows = self.outline_rows();
+        if rows.is_empty() {
+            self.outline_state.select(None);
+            return;
+        }
+        let selected = self
+            .outline_state
+            .selected()
+            .unwrap_or(0)
+            .min(rows.len() - 1);
+        self.outline_state.select(Some(selected));
+    }
+
+    fn sync_outline_to_list_selection(&mut self) {
+        if let Some(row) = self.selected_outline_row() {
+            if let Some(visible_pos) = self
+                .visible
+                .iter()
+                .position(|visible| *visible == row.ticket_idx)
+            {
                 self.list_state.select(Some(visible_pos));
             }
         }
@@ -5030,6 +5444,9 @@ impl App {
             return tickets
                 .get(self.board_rows[self.board_column])
                 .map(|idx| **idx);
+        }
+        if self.view == ViewMode::Outline {
+            return self.selected_outline_row().map(|row| row.ticket_idx);
         }
         self.list_state
             .selected()
@@ -5361,6 +5778,180 @@ fn ticket_list_line(
         width,
         has_writeups.then(|| ("[w]".to_string(), Style::default().fg(Color::Yellow))),
     )
+}
+
+fn outline_ticket_line(
+    ticket: &Ticket,
+    depth: usize,
+    has_children: bool,
+    collapsed: bool,
+    width: usize,
+    current_user: &str,
+    has_writeups: bool,
+) -> Line<'static> {
+    let indent_width = depth.saturating_mul(2).min(width);
+    let marker = match (has_children, collapsed) {
+        (true, true) => "+",
+        (true, false) => "-",
+        (false, _) => " ",
+    };
+    let marker_width = UnicodeWidthStr::width(marker);
+    let gap_width = usize::from(width > indent_width + marker_width);
+    let prefix_width = indent_width + marker_width + gap_width;
+    let mut spans = vec![
+        Span::raw(" ".repeat(indent_width)),
+        Span::styled(marker.to_string(), Style::default().fg(Color::Yellow)),
+        Span::raw(" ".repeat(gap_width)),
+    ];
+    let content = ticket_list_line(
+        ticket,
+        width.saturating_sub(prefix_width),
+        true,
+        current_user,
+        has_writeups,
+    );
+    spans.extend(content.spans);
+    Line::from(spans)
+}
+
+fn build_outline_rows(
+    tickets: &[Ticket],
+    visible: &[usize],
+    collapsed: &BTreeSet<uuid::Uuid>,
+) -> Vec<OutlineRow> {
+    let visible_set = visible.iter().copied().collect::<BTreeSet<_>>();
+    let visible_order = visible
+        .iter()
+        .enumerate()
+        .map(|(order, idx)| (*idx, order))
+        .collect::<HashMap<_, _>>();
+    let index_by_id = tickets
+        .iter()
+        .enumerate()
+        .map(|(idx, ticket)| (ticket.id, idx))
+        .collect::<HashMap<_, _>>();
+
+    let mut roots = Vec::new();
+    let mut children_by_parent = HashMap::<uuid::Uuid, Vec<usize>>::new();
+    for &idx in visible {
+        let Some(ticket) = tickets.get(idx) else {
+            continue;
+        };
+        if let Some(parent) = ticket.parent {
+            if index_by_id
+                .get(&parent)
+                .is_some_and(|parent_idx| visible_set.contains(parent_idx))
+            {
+                children_by_parent.entry(parent).or_default().push(idx);
+                continue;
+            }
+        }
+        roots.push(idx);
+    }
+
+    roots.sort_by_key(|idx| visible_order.get(idx).copied().unwrap_or(usize::MAX));
+    for children in children_by_parent.values_mut() {
+        children.sort_by_key(|idx| visible_order.get(idx).copied().unwrap_or(usize::MAX));
+    }
+
+    let mut rows = Vec::new();
+    let mut visited = BTreeSet::<uuid::Uuid>::new();
+    for idx in roots {
+        push_outline_row(
+            tickets,
+            idx,
+            0,
+            collapsed,
+            &children_by_parent,
+            &mut visited,
+            &mut rows,
+        );
+    }
+    for &idx in visible {
+        let Some(ticket) = tickets.get(idx) else {
+            continue;
+        };
+        if visited.contains(&ticket.id) {
+            continue;
+        }
+        push_outline_row(
+            tickets,
+            idx,
+            0,
+            collapsed,
+            &children_by_parent,
+            &mut visited,
+            &mut rows,
+        );
+    }
+
+    rows
+}
+
+fn push_outline_row(
+    tickets: &[Ticket],
+    idx: usize,
+    depth: usize,
+    collapsed: &BTreeSet<uuid::Uuid>,
+    children_by_parent: &HashMap<uuid::Uuid, Vec<usize>>,
+    visited: &mut BTreeSet<uuid::Uuid>,
+    rows: &mut Vec<OutlineRow>,
+) {
+    let Some(ticket) = tickets.get(idx) else {
+        return;
+    };
+    if !visited.insert(ticket.id) {
+        return;
+    }
+
+    let children = children_by_parent.get(&ticket.id);
+    let has_children = children.is_some_and(|children| !children.is_empty());
+    let is_collapsed = collapsed.contains(&ticket.id);
+    rows.push(OutlineRow {
+        ticket_idx: idx,
+        depth,
+        has_children,
+        collapsed: is_collapsed,
+    });
+
+    if is_collapsed {
+        if let Some(children) = children {
+            mark_outline_descendants_visited(tickets, children, children_by_parent, visited);
+        }
+        return;
+    }
+    if let Some(children) = children {
+        for &child in children {
+            push_outline_row(
+                tickets,
+                child,
+                depth + 1,
+                collapsed,
+                children_by_parent,
+                visited,
+                rows,
+            );
+        }
+    }
+}
+
+fn mark_outline_descendants_visited(
+    tickets: &[Ticket],
+    children: &[usize],
+    children_by_parent: &HashMap<uuid::Uuid, Vec<usize>>,
+    visited: &mut BTreeSet<uuid::Uuid>,
+) {
+    for &child in children {
+        let Some(ticket) = tickets.get(child) else {
+            continue;
+        };
+        if !visited.insert(ticket.id) {
+            continue;
+        }
+        if let Some(grandchildren) = children_by_parent.get(&ticket.id) {
+            mark_outline_descendants_visited(tickets, grandchildren, children_by_parent, visited);
+        }
+    }
 }
 
 fn issue_columns_for_width(columns: &[IssueColumn], width: usize) -> Vec<IssueColumn> {
@@ -6671,6 +7262,13 @@ fn field_line(label: &str, value: &str) -> Line<'static> {
     ])
 }
 
+fn detail_child_issue_line(value: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::raw(" ".repeat(13)),
+        Span::styled(value.to_string(), Style::default().fg(Color::Cyan)),
+    ])
+}
+
 #[derive(Clone)]
 struct MetadataField {
     key: &'static str,
@@ -7091,5 +7689,81 @@ mod tests {
 
         assert_eq!(spans_width(&spans), 8);
         assert!(spans.iter().any(|span| span.content.as_ref() == "bug"));
+    }
+
+    #[test]
+    fn outline_rows_indent_visible_subissues() {
+        let root = uuid::Uuid::from_u128(1);
+        let child = uuid::Uuid::from_u128(2);
+        let grandchild = uuid::Uuid::from_u128(3);
+        let sibling = uuid::Uuid::from_u128(4);
+        let tickets = vec![
+            test_ticket(root, None, &[child]),
+            test_ticket(child, Some(root), &[grandchild]),
+            test_ticket(grandchild, Some(child), &[]),
+            test_ticket(sibling, None, &[]),
+        ];
+
+        let rows = build_outline_rows(&tickets, &[0, 1, 2, 3], &BTreeSet::new());
+
+        assert_eq!(
+            rows.iter()
+                .map(|row| (tickets[row.ticket_idx].id, row.depth, row.has_children))
+                .collect::<Vec<_>>(),
+            vec![
+                (root, 0, true),
+                (child, 1, true),
+                (grandchild, 2, false),
+                (sibling, 0, false)
+            ]
+        );
+    }
+
+    #[test]
+    fn outline_rows_hide_descendants_under_collapsed_parent() {
+        let root = uuid::Uuid::from_u128(1);
+        let child = uuid::Uuid::from_u128(2);
+        let sibling = uuid::Uuid::from_u128(3);
+        let tickets = vec![
+            test_ticket(root, None, &[child]),
+            test_ticket(child, Some(root), &[]),
+            test_ticket(sibling, None, &[]),
+        ];
+        let collapsed = BTreeSet::from([root]);
+
+        let rows = build_outline_rows(&tickets, &[0, 1, 2], &collapsed);
+
+        assert_eq!(
+            rows.iter()
+                .map(|row| (tickets[row.ticket_idx].id, row.depth, row.collapsed))
+                .collect::<Vec<_>>(),
+            vec![(root, 0, true), (sibling, 0, false)]
+        );
+    }
+
+    fn test_ticket(id: uuid::Uuid, parent: Option<uuid::Uuid>, children: &[uuid::Uuid]) -> Ticket {
+        Ticket {
+            id,
+            title: format!("Ticket {id}"),
+            description: None,
+            spec: None,
+            status: TicketStatus::Open,
+            state: TicketState::New,
+            assigned: None,
+            closed_by: None,
+            priority: None,
+            points: None,
+            milestone: None,
+            code: None,
+            parent,
+            children: children.iter().copied().collect(),
+            depends_on: BTreeSet::new(),
+            blocks: BTreeSet::new(),
+            tags: BTreeSet::new(),
+            meta: BTreeMap::new(),
+            comments: Vec::new(),
+            created_at: OffsetDateTime::UNIX_EPOCH,
+            created_by: "test@example.com".to_string(),
+        }
     }
 }
