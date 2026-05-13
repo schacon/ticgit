@@ -973,6 +973,10 @@ impl App {
                             desc: "issues",
                         },
                         MenuHint {
+                            key: "d",
+                            desc: "issues",
+                        },
+                        MenuHint {
                             key: "r",
                             desc: "refresh",
                         },
@@ -1024,6 +1028,10 @@ impl App {
                             desc: "all/open",
                         },
                         MenuHint {
+                            key: "d",
+                            desc: "stats",
+                        },
+                        MenuHint {
                             key: "c/o",
                             desc: "close/open",
                         },
@@ -1065,6 +1073,10 @@ impl App {
                         MenuHint {
                             key: "b",
                             desc: "list",
+                        },
+                        MenuHint {
+                            key: "d",
+                            desc: "stats",
                         },
                         MenuHint {
                             key: "u",
@@ -1126,6 +1138,10 @@ impl App {
                             desc: "board",
                         },
                         MenuHint {
+                            key: "d",
+                            desc: "stats",
+                        },
+                        MenuHint {
                             key: "n",
                             desc: "new",
                         },
@@ -1151,6 +1167,10 @@ impl App {
                         MenuHint {
                             key: "b",
                             desc: "board",
+                        },
+                        MenuHint {
+                            key: "d",
+                            desc: "stats",
                         },
                         MenuHint {
                             key: "u",
@@ -1250,6 +1270,10 @@ impl App {
                         MenuHint {
                             key: "b",
                             desc: "board",
+                        },
+                        MenuHint {
+                            key: "d",
+                            desc: "stats",
                         },
                         MenuHint {
                             key: "u",
@@ -2710,11 +2734,17 @@ impl App {
                     ("+/-", "resize detail"),
                     Some(("r", "refresh")),
                 ));
+
+                help_section(&mut lines, "Views");
+                lines.push(help_columns(("d", "stats view"), None));
             }
             Mode::Normal if self.active_tab == TuiTab::Dashboard => {
                 help_section(&mut lines, "Dashboard");
                 lines.push(help_columns(("Tab", "issues tab"), Some(("r", "refresh"))));
                 lines.push(help_columns(("S", "sync tickets"), Some(("q", "quit"))));
+
+                help_section(&mut lines, "Views");
+                lines.push(help_columns(("d", "issues view"), None));
             }
             Mode::Normal if self.view == ViewMode::Board && self.detail.is_none() => {
                 help_section(&mut lines, "Navigation");
@@ -2726,8 +2756,7 @@ impl App {
                     ("Left/Right", "move columns"),
                     Some(("Up/Down", "move tickets")),
                 ));
-                lines.push(help_columns(("Enter", "details"), Some(("b", "list view"))));
-                lines.push(help_columns(("r", "refresh"), None));
+                lines.push(help_columns(("Enter", "details"), Some(("r", "refresh"))));
 
                 help_section(&mut lines, "Edit Ticket");
                 lines.push(help_columns(("C", "claim"), Some(("s", "state"))));
@@ -2737,6 +2766,10 @@ impl App {
                 ));
                 lines.push(help_columns(("c", "comment"), Some(("t", "manage tags"))));
                 lines.push(help_columns(("p", "priority"), Some(("o", "order"))));
+
+                help_section(&mut lines, "Views");
+                lines.push(help_columns(("b", "list view"), Some(("d", "stats view"))));
+                lines.push(help_columns(("u", "outline view"), None));
             }
             Mode::Normal if self.view == ViewMode::Outline && self.detail.is_none() => {
                 help_section(&mut lines, "Outline");
@@ -2744,8 +2777,10 @@ impl App {
                     ("j/k", "move tickets"),
                     Some(("Space", "collapse / expand")),
                 ));
-                lines.push(help_columns(("Enter", "details"), Some(("u", "list view"))));
-                lines.push(help_columns(("b", "board view"), Some(("n", "new ticket"))));
+                lines.push(help_columns(
+                    ("Enter", "details"),
+                    Some(("n", "new ticket")),
+                ));
                 lines.push(help_columns(("r", "refresh"), None));
 
                 help_section(&mut lines, "Edit Ticket");
@@ -2756,6 +2791,10 @@ impl App {
                 ));
                 lines.push(help_columns(("c", "comment"), Some(("t", "manage tags"))));
                 lines.push(help_columns(("p", "priority"), Some(("o", "order"))));
+
+                help_section(&mut lines, "Views");
+                lines.push(help_columns(("u", "list view"), Some(("b", "board view"))));
+                lines.push(help_columns(("d", "stats view"), None));
             }
             Mode::Normal => {
                 help_section(&mut lines, "Navigation");
@@ -2769,17 +2808,13 @@ impl App {
                 ));
                 lines.push(help_columns(
                     ("Enter", "details"),
-                    Some(("b", "board view")),
-                ));
-                lines.push(help_columns(
-                    ("u", "outline view"),
                     Some(("n", "new/subissue")),
                 ));
                 lines.push(help_columns(("P", "jump parent"), Some(("m", "comments"))));
                 lines.push(help_columns(("+/-", "resize detail"), None));
                 lines.push(help_columns(("r", "refresh"), None));
 
-                help_section(&mut lines, "Views & Filters");
+                help_section(&mut lines, "Filters");
                 lines.push(help_columns(
                     ("/", "search text"),
                     Some(("g", "tag picker")),
@@ -2795,6 +2830,10 @@ impl App {
                 ));
                 lines.push(help_columns(("c", "comment"), Some(("t", "manage tags"))));
                 lines.push(help_columns(("p", "priority"), None));
+
+                help_section(&mut lines, "Views");
+                lines.push(help_columns(("b", "board view"), Some(("d", "stats view"))));
+                lines.push(help_columns(("u", "outline view"), None));
             }
         }
 
@@ -2971,6 +3010,10 @@ impl App {
                 if self.active_tab == TuiTab::Issues {
                     self.handle_board_key()?;
                 }
+                false
+            }
+            KeyCode::Char('d') => {
+                self.handle_dashboard_key();
                 false
             }
             KeyCode::Char('u') => {
@@ -5176,6 +5219,18 @@ impl App {
             self.select_outline_ticket_by_id(id);
         }
         Ok(())
+    }
+
+    fn handle_dashboard_key(&mut self) {
+        if self.active_tab == TuiTab::Dashboard {
+            self.active_tab = TuiTab::Issues;
+            self.view = ViewMode::List;
+            return;
+        }
+        self.active_tab = TuiTab::Dashboard;
+        self.detail = None;
+        self.writeup_detail = None;
+        self.comments_mode = false;
     }
 
     fn open_board_for_detail_ticket(&mut self) {
