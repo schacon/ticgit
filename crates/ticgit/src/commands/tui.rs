@@ -155,6 +155,8 @@ struct App {
     tag_filter_match_all: bool,
     tag_picker_state: ListState,
     manage_tag_state: ListState,
+    link_issue_state: ListState,
+    version_state: ListState,
     order_state: ListState,
     mode: Mode,
     input: String,
@@ -221,6 +223,8 @@ enum Mode {
     SavedViews,
     ConfirmDeleteView,
     SaveView,
+    LinkIssueSearch,
+    Versions,
     Input(InputKind),
     State,
     Create,
@@ -254,7 +258,6 @@ enum InputKind {
     Points,
     AddTags,
     RemoveTags,
-    LinkIssue,
     UnlinkIssue,
 }
 
@@ -312,6 +315,8 @@ impl App {
             tag_filter_match_all: true,
             tag_picker_state: ListState::default(),
             manage_tag_state: ListState::default(),
+            link_issue_state: ListState::default(),
+            version_state: ListState::default(),
             order_state: ListState::default(),
             mode: Mode::Normal,
             input: String::new(),
@@ -493,6 +498,8 @@ impl App {
             Mode::SavedViews => self.draw_saved_views_modal(frame),
             Mode::ConfirmDeleteView => self.draw_delete_view_confirm_modal(frame),
             Mode::SaveView => self.draw_save_view_modal(frame),
+            Mode::LinkIssueSearch => self.draw_link_issue_search_modal(frame),
+            Mode::Versions => self.draw_versions_modal(frame),
             Mode::Input(kind) => self.draw_input_modal(frame, kind),
             Mode::State => self.draw_state_modal(frame),
             Mode::Create => self.draw_create_modal(frame),
@@ -681,6 +688,46 @@ impl App {
                     },
                 ],
             ),
+            Mode::LinkIssueSearch => (
+                "link issue",
+                (!self.input.is_empty()).then(|| self.input.clone()),
+                vec![
+                    MenuHint {
+                        key: "type",
+                        desc: "search",
+                    },
+                    MenuHint {
+                        key: "j/k",
+                        desc: "move",
+                    },
+                    MenuHint {
+                        key: "Enter",
+                        desc: "link",
+                    },
+                    MenuHint {
+                        key: "Esc",
+                        desc: "cancel",
+                    },
+                    MenuHint {
+                        key: "Backspace",
+                        desc: "delete",
+                    },
+                ],
+            ),
+            Mode::Versions => (
+                "versions",
+                None,
+                vec![
+                    MenuHint {
+                        key: "j/k",
+                        desc: "move",
+                    },
+                    MenuHint {
+                        key: "Enter/Esc",
+                        desc: "close",
+                    },
+                ],
+            ),
             Mode::Input(kind) => (
                 "editing",
                 Some(kind.label().to_string()),
@@ -789,6 +836,10 @@ impl App {
                         MenuHint {
                             key: "t",
                             desc: "tags",
+                        },
+                        MenuHint {
+                            key: "v",
+                            desc: "versions",
                         },
                         MenuHint {
                             key: "n",
@@ -1310,21 +1361,6 @@ impl App {
         lines.push(Line::raw(""));
         if let Some(version) = writeup.versions.last() {
             lines.push(Line::from(Span::styled(
-                "Latest Version",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            )));
-            lines.push(Line::from(vec![
-                Span::styled(
-                    relative_date(version.at, OffsetDateTime::now_utc()),
-                    Style::default().fg(Color::DarkGray),
-                ),
-                Span::raw("  "),
-                Span::styled(&version.author, Style::default().fg(Color::Cyan)),
-            ]));
-            lines.push(Line::raw(""));
-            lines.push(Line::from(Span::styled(
                 writeup.title.clone(),
                 Style::default()
                     .fg(Color::Cyan)
@@ -1436,7 +1472,6 @@ impl App {
             InputKind::Points => "Enter points estimate. Empty clears it.".to_string(),
             InputKind::AddTags => "Enter comma- or space-separated tags to add.".to_string(),
             InputKind::RemoveTags => "Enter comma- or space-separated tags to remove.".to_string(),
-            InputKind::LinkIssue => "Enter an issue id to link to this writeup.".to_string(),
             InputKind::UnlinkIssue => "Enter an issue id to unlink from this writeup.".to_string(),
         };
         let lines = vec![
@@ -1454,6 +1489,180 @@ impl App {
             .wrap(Wrap { trim: false });
         frame.render_widget(Clear, area);
         frame.render_widget(modal, area);
+    }
+
+    fn draw_link_issue_search_modal(&mut self, frame: &mut Frame<'_>) {
+        let area = centered_rect(74, 22, frame.area());
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Min(1),
+                Constraint::Length(1),
+            ])
+            .split(area);
+        let results = self.link_issue_search_results();
+        let selected = self
+            .link_issue_state
+            .selected()
+            .unwrap_or(0)
+            .min(results.len().saturating_sub(1));
+        if results.is_empty() {
+            self.link_issue_state.select(None);
+        } else {
+            self.link_issue_state.select(Some(selected));
+        }
+
+        let search = Paragraph::new(Line::from(self.input.as_str())).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Search issues"),
+        );
+        let row_width = usize::from(chunks[1].width)
+            .saturating_sub(2)
+            .saturating_sub(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL));
+        let items: Vec<ListItem<'_>> = if results.is_empty() {
+            vec![ListItem::new(Line::from(Span::styled(
+                "No matching unlinked issues.",
+                Style::default().fg(Color::DarkGray),
+            )))]
+        } else {
+            results
+                .iter()
+                .map(|idx| {
+                    ListItem::new(ticket_list_line(
+                        &self.tickets[*idx],
+                        row_width,
+                        false,
+                        self.store.email(),
+                    ))
+                })
+                .collect()
+        };
+        let list = List::new(items)
+            .block(Block::default().borders(Borders::ALL).title("Link Issue"))
+            .highlight_style(
+                Style::default()
+                    .bg(Color::Rgb(0, 0, 95))
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol(HIGHLIGHT_SYMBOL)
+            .highlight_spacing(HighlightSpacing::Always);
+        let help = Paragraph::new(Line::from(vec![
+            Span::styled("Enter", Style::default().fg(Color::Yellow)),
+            Span::raw(" link  "),
+            Span::styled("j/k", Style::default().fg(Color::Yellow)),
+            Span::raw(" move  "),
+            Span::styled("Esc", Style::default().fg(Color::Yellow)),
+            Span::raw(" cancel"),
+        ]))
+        .style(Style::default().bg(Color::DarkGray));
+
+        frame.render_widget(Clear, area);
+        frame.render_widget(search, chunks[0]);
+        frame.render_stateful_widget(list, chunks[1], &mut self.link_issue_state);
+        frame.render_widget(help, chunks[2]);
+    }
+
+    fn draw_versions_modal(&mut self, frame: &mut Frame<'_>) {
+        let Some(writeup) = self.selected_writeup().cloned() else {
+            return;
+        };
+        let title = writeup.title.clone();
+        let versions = writeup.versions;
+        let area = centered_rect(86, 28, frame.area());
+        let panes = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(34), Constraint::Percentage(66)])
+            .split(area);
+        let selected = self
+            .version_state
+            .selected()
+            .unwrap_or_else(|| versions.len().saturating_sub(1))
+            .min(versions.len().saturating_sub(1));
+        if versions.is_empty() {
+            self.version_state.select(None);
+        } else {
+            self.version_state.select(Some(selected));
+        }
+
+        let items: Vec<ListItem<'_>> = if versions.is_empty() {
+            vec![ListItem::new(Line::from(Span::styled(
+                "No versions yet.",
+                Style::default().fg(Color::DarkGray),
+            )))]
+        } else {
+            versions
+                .iter()
+                .enumerate()
+                .map(|(idx, version)| {
+                    ListItem::new(Line::from(vec![
+                        Span::styled(
+                            format!("v{}", idx + 1),
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw(" "),
+                        Span::styled(
+                            relative_date(version.at, OffsetDateTime::now_utc()),
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                    ]))
+                })
+                .collect()
+        };
+        let list = List::new(items)
+            .block(Block::default().borders(Borders::ALL).title("Versions"))
+            .highlight_style(
+                Style::default()
+                    .bg(Color::Rgb(0, 0, 95))
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol(HIGHLIGHT_SYMBOL)
+            .highlight_spacing(HighlightSpacing::Always);
+
+        let mut preview_lines = Vec::new();
+        if let Some(version) = self
+            .version_state
+            .selected()
+            .and_then(|idx| versions.get(idx))
+        {
+            preview_lines.push(Line::from(Span::styled(
+                title,
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            preview_lines.push(Line::raw(""));
+            preview_lines.push(Line::from(vec![
+                Span::styled(
+                    version
+                        .at
+                        .format(&time::format_description::well_known::Rfc3339)
+                        .unwrap_or_else(|_| relative_date(version.at, OffsetDateTime::now_utc())),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::raw("  "),
+                Span::styled(&version.author, Style::default().fg(Color::Cyan)),
+            ]));
+            preview_lines.push(Line::raw(""));
+            preview_lines.extend(version.body.lines().map(|line| Line::raw(line.to_string())));
+        } else {
+            preview_lines.push(Line::from(Span::styled(
+                "No version selected.",
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+        let preview = Paragraph::new(preview_lines)
+            .block(Block::default().borders(Borders::ALL).title("Preview"))
+            .wrap(Wrap { trim: false });
+
+        frame.render_widget(Clear, area);
+        frame.render_stateful_widget(list, panes[0], &mut self.version_state);
+        frame.render_widget(preview, panes[1]);
     }
 
     fn draw_tags_modal(&mut self, frame: &mut Frame<'_>) {
@@ -1946,6 +2155,25 @@ impl App {
                 ));
                 lines.push(help_columns(("Enter", "save"), Some(("Esc", "cancel"))));
             }
+            Mode::LinkIssueSearch => {
+                help_section(&mut lines, "Link Issue");
+                lines.push(help_columns(
+                    ("type", "search title/description"),
+                    Some(("Backspace", "delete char")),
+                ));
+                lines.push(help_columns(
+                    ("j/k", "move issue"),
+                    Some(("Enter", "link selected")),
+                ));
+                lines.push(help_columns(("Esc", "cancel"), None));
+            }
+            Mode::Versions => {
+                help_section(&mut lines, "Versions");
+                lines.push(help_columns(
+                    ("j/k", "move version"),
+                    Some(("Enter/Esc", "close")),
+                ));
+            }
             Mode::Input(kind) => {
                 help_section(&mut lines, &format!("Editing {}", kind.label()));
                 lines.push(help_columns(
@@ -2000,10 +2228,8 @@ impl App {
                 ));
                 lines.push(help_columns(("c", "close"), Some(("o", "reopen"))));
                 lines.push(help_columns(("p", "promote"), Some(("l", "link issue"))));
-                lines.push(help_columns(
-                    ("u", "unlink issue"),
-                    Some(("t", "manage tags")),
-                ));
+                lines.push(help_columns(("v", "versions"), Some(("t", "manage tags"))));
+                lines.push(help_columns(("u", "unlink issue"), None));
                 lines.push(help_columns(("1-9", "jump issue"), None));
                 lines.push(help_columns(
                     ("+/-", "resize detail"),
@@ -2137,6 +2363,14 @@ impl App {
                 self.handle_save_view_key(key)?;
                 false
             }
+            Mode::LinkIssueSearch => {
+                self.handle_link_issue_search_key(key)?;
+                false
+            }
+            Mode::Versions => {
+                self.handle_versions_key(key);
+                false
+            }
             Mode::Input(_) => {
                 self.handle_input_key(key)?;
                 false
@@ -2203,7 +2437,9 @@ impl App {
                 false
             }
             KeyCode::Char('v') => {
-                if self.active_tab == TuiTab::Issues {
+                if self.active_tab == TuiTab::Writeups && self.writeup_detail.is_some() {
+                    self.begin_versions();
+                } else if self.active_tab == TuiTab::Issues {
                     self.begin_saved_views();
                 }
                 false
@@ -2260,7 +2496,7 @@ impl App {
             }
             KeyCode::Right | KeyCode::Char('l') => {
                 if self.active_tab == TuiTab::Writeups && self.writeup_detail.is_some() {
-                    self.begin_input(InputKind::LinkIssue);
+                    self.begin_link_issue_search();
                 } else if self.active_tab == TuiTab::Issues
                     && self.view == ViewMode::Board
                     && self.detail.is_none()
@@ -2533,6 +2769,45 @@ impl App {
             _ => {}
         }
         Ok(())
+    }
+
+    fn handle_link_issue_search_key(&mut self, key: KeyEvent) -> Result<()> {
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                self.input.clear();
+                self.status = Some("Cancelled.".to_string());
+            }
+            KeyCode::Enter => {
+                if self.link_selected_issue()? {
+                    self.mode = Mode::Normal;
+                    self.input.clear();
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => self.next_link_issue_result(),
+            KeyCode::Up | KeyCode::Char('k') => self.previous_link_issue_result(),
+            KeyCode::Backspace => {
+                self.input.pop();
+                self.reset_link_issue_selection();
+            }
+            KeyCode::Char(c) => {
+                self.input.push(c);
+                self.reset_link_issue_selection();
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_versions_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Enter | KeyCode::Esc => {
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Down | KeyCode::Char('j') => self.next_version(),
+            KeyCode::Up | KeyCode::Char('k') => self.previous_version(),
+            _ => {}
+        }
     }
 
     fn handle_state_key(&mut self, key: KeyEvent) -> Result<()> {
@@ -3176,7 +3451,7 @@ impl App {
                 }
                 None
             }
-            InputKind::LinkIssue | InputKind::UnlinkIssue => {
+            InputKind::UnlinkIssue => {
                 if self.selected_writeup().is_none() {
                     self.status = Some("Select a writeup first.".to_string());
                     return;
@@ -3201,10 +3476,42 @@ impl App {
             InputKind::Comment
             | InputKind::AddTags
             | InputKind::RemoveTags
-            | InputKind::LinkIssue
             | InputKind::UnlinkIssue => String::new(),
         };
         self.mode = Mode::Input(kind);
+    }
+
+    fn begin_link_issue_search(&mut self) {
+        let Some(writeup) = self.selected_writeup() else {
+            self.status = Some("Select a writeup first.".to_string());
+            return;
+        };
+        let linked_tickets = writeup.tickets.clone();
+        self.input.clear();
+        let has_unlinked_issue = self
+            .tickets
+            .iter()
+            .any(|ticket| !linked_tickets.contains(&ticket.id));
+        if !has_unlinked_issue {
+            self.status = Some("No unlinked issues available.".to_string());
+            return;
+        }
+        self.link_issue_state.select(Some(0));
+        self.mode = Mode::LinkIssueSearch;
+    }
+
+    fn begin_versions(&mut self) {
+        let Some(writeup) = self.selected_writeup() else {
+            self.status = Some("Select a writeup first.".to_string());
+            return;
+        };
+        if writeup.versions.is_empty() {
+            self.version_state.select(None);
+        } else {
+            self.version_state
+                .select(Some(writeup.versions.len().saturating_sub(1)));
+        }
+        self.mode = Mode::Versions;
     }
 
     fn priority_range_display(&self) -> String {
@@ -3229,7 +3536,7 @@ impl App {
         let Mode::Input(kind) = self.mode else {
             return Ok(false);
         };
-        if matches!(kind, InputKind::LinkIssue | InputKind::UnlinkIssue) {
+        if kind == InputKind::UnlinkIssue {
             return self.submit_writeup_link_input(kind);
         }
         if matches!(kind, InputKind::AddTags | InputKind::RemoveTags) {
@@ -3285,10 +3592,9 @@ impl App {
                     None => "Cleared points.".to_string(),
                 });
             }
-            InputKind::AddTags
-            | InputKind::RemoveTags
-            | InputKind::LinkIssue
-            | InputKind::UnlinkIssue => unreachable!("handled above"),
+            InputKind::AddTags | InputKind::RemoveTags | InputKind::UnlinkIssue => {
+                unreachable!("handled above")
+            }
         }
 
         self.reload(preferred_after_reload)?;
@@ -3356,18 +3662,119 @@ impl App {
         }
         let ticket_id = self.store.resolve_id(ticket_ref)?;
         match kind {
-            InputKind::LinkIssue => {
-                self.store.link_writeup_ticket(&writeup_id, &ticket_id)?;
-                self.status = Some(format!("Linked issue {}.", &ticket_id.to_string()[..6]));
-            }
             InputKind::UnlinkIssue => {
                 self.store.unlink_writeup_ticket(&writeup_id, &ticket_id)?;
                 self.status = Some(format!("Unlinked issue {}.", &ticket_id.to_string()[..6]));
             }
-            _ => unreachable!("only writeup link input is handled here"),
+            _ => unreachable!("only writeup unlink input is handled here"),
         }
         self.reload_all(None, Some(writeup_id))?;
         Ok(true)
+    }
+
+    fn link_selected_issue(&mut self) -> Result<bool> {
+        let Some(writeup) = self.selected_writeup() else {
+            self.status = Some("Select a writeup first.".to_string());
+            return Ok(false);
+        };
+        let writeup_id = writeup.id;
+        let results = self.link_issue_search_results();
+        let Some(ticket_id) = self
+            .link_issue_state
+            .selected()
+            .and_then(|selected| results.get(selected))
+            .map(|idx| self.tickets[*idx].id)
+        else {
+            self.status = Some("No issue selected.".to_string());
+            return Ok(false);
+        };
+        self.store.link_writeup_ticket(&writeup_id, &ticket_id)?;
+        self.reload_all(Some(ticket_id), Some(writeup_id))?;
+        self.status = Some(format!("Linked issue {}.", &ticket_id.to_string()[..6]));
+        Ok(true)
+    }
+
+    fn link_issue_search_results(&self) -> Vec<usize> {
+        let Some(writeup) = self.selected_writeup() else {
+            return Vec::new();
+        };
+        let needle = self.input.trim().to_ascii_lowercase();
+        self.tickets
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, ticket)| {
+                if writeup.tickets.contains(&ticket.id) {
+                    return None;
+                }
+                if needle.is_empty() || ticket_matches(ticket, &needle) {
+                    Some(idx)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn next_link_issue_result(&mut self) {
+        let results = self.link_issue_search_results();
+        if results.is_empty() {
+            self.link_issue_state.select(None);
+            return;
+        }
+        let selected = self.link_issue_state.selected().unwrap_or(0);
+        self.link_issue_state
+            .select(Some((selected + 1) % results.len()));
+    }
+
+    fn previous_link_issue_result(&mut self) {
+        let results = self.link_issue_search_results();
+        if results.is_empty() {
+            self.link_issue_state.select(None);
+            return;
+        }
+        let selected = self.link_issue_state.selected().unwrap_or(0);
+        let previous = selected
+            .checked_sub(1)
+            .unwrap_or_else(|| results.len().saturating_sub(1));
+        self.link_issue_state.select(Some(previous));
+    }
+
+    fn reset_link_issue_selection(&mut self) {
+        if self.link_issue_search_results().is_empty() {
+            self.link_issue_state.select(None);
+        } else {
+            self.link_issue_state.select(Some(0));
+        }
+    }
+
+    fn next_version(&mut self) {
+        let Some(writeup) = self.selected_writeup() else {
+            self.version_state.select(None);
+            return;
+        };
+        if writeup.versions.is_empty() {
+            self.version_state.select(None);
+            return;
+        }
+        let selected = self.version_state.selected().unwrap_or(0);
+        self.version_state
+            .select(Some((selected + 1) % writeup.versions.len()));
+    }
+
+    fn previous_version(&mut self) {
+        let Some(writeup) = self.selected_writeup() else {
+            self.version_state.select(None);
+            return;
+        };
+        if writeup.versions.is_empty() {
+            self.version_state.select(None);
+            return;
+        }
+        let selected = self.version_state.selected().unwrap_or(0);
+        let previous = selected
+            .checked_sub(1)
+            .unwrap_or_else(|| writeup.versions.len().saturating_sub(1));
+        self.version_state.select(Some(previous));
     }
 
     fn adjacent_ticket_for_priority_triage(&self, id: uuid::Uuid) -> Option<uuid::Uuid> {
@@ -4222,7 +4629,6 @@ impl InputKind {
             InputKind::Points => "points",
             InputKind::AddTags => "add tags",
             InputKind::RemoveTags => "remove tags",
-            InputKind::LinkIssue => "link issue",
             InputKind::UnlinkIssue => "unlink issue",
         }
     }
@@ -4234,7 +4640,6 @@ impl InputKind {
             | InputKind::Points
             | InputKind::AddTags
             | InputKind::RemoveTags
-            | InputKind::LinkIssue
             | InputKind::UnlinkIssue => 9,
         }
     }
