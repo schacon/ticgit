@@ -1111,6 +1111,7 @@ impl App {
                     row_width,
                     compact,
                     self.store.email(),
+                    !self.linked_writeups(ticket.id).is_empty(),
                 ))
             })
             .collect();
@@ -1553,6 +1554,7 @@ impl App {
                         row_width,
                         false,
                         self.store.email(),
+                        false,
                     ))
                 })
                 .collect()
@@ -3822,10 +3824,18 @@ impl App {
 
     fn linked_issue_line(&self, ticket_id: uuid::Uuid, width: usize) -> Line<'static> {
         if let Some(ticket) = self.tickets.iter().find(|ticket| ticket.id == ticket_id) {
-            return ticket_list_line(ticket, width, false, self.store.email());
+            return ticket_list_line(ticket, width, false, self.store.email(), false);
         }
         let short_id = ticket_id.to_string()[..6].to_string();
-        ticket_list_line_from_parts(Some(&short_id), "missing issue", &[], None, false, width)
+        ticket_list_line_from_parts(
+            Some(&short_id),
+            "missing issue",
+            &[],
+            None,
+            false,
+            width,
+            None,
+        )
     }
 
     fn unlink_selected_issue(&mut self) -> Result<bool> {
@@ -4939,6 +4949,7 @@ fn ticket_list_line(
     width: usize,
     compact: bool,
     current_user: &str,
+    has_writeups: bool,
 ) -> Line<'static> {
     let short_id = ticket
         .short_id()
@@ -4953,6 +4964,7 @@ fn ticket_list_line(
             &list_meta_display(ticket),
             ticket.assigned.as_deref() == Some(current_user),
             width,
+            has_writeups.then(|| ("[w]".to_string(), Style::default().fg(Color::Yellow))),
         );
     }
 
@@ -4963,6 +4975,7 @@ fn ticket_list_line(
         Some(&ticket.tags),
         ticket.assigned.as_deref() == Some(current_user),
         width,
+        has_writeups.then(|| ("[w]".to_string(), Style::default().fg(Color::Yellow))),
     )
 }
 
@@ -4973,7 +4986,7 @@ fn writeup_list_line(writeup: &Writeup, width: usize, compact: bool) -> Line<'st
         .take(LIST_ID_WIDTH)
         .collect::<String>();
     let title = flatten_display(&writeup.title);
-    let mut meta = vec![
+    let meta = vec![
         (
             fit_display(
                 &relative_date(writeup_recent_at(writeup), OffsetDateTime::now_utc()),
@@ -4992,15 +5005,23 @@ fn writeup_list_line(writeup: &Writeup, width: usize, compact: bool) -> Line<'st
             writeup_status_style(writeup.status),
         ),
     ];
-    if !writeup.tickets.is_empty() {
-        meta.push((
-            fit_display(&format!("i{}", writeup.tickets.len()), LIST_PRIORITY_WIDTH),
+    let issue_indicator = (!writeup.tickets.is_empty()).then(|| {
+        (
+            format!("[{}]", writeup.tickets.len()),
             Style::default().fg(Color::Magenta),
-        ));
-    }
+        )
+    });
 
     if compact {
-        return ticket_list_line_from_parts(Some(&short_id), &title, &meta, None, false, width);
+        return ticket_list_line_from_parts(
+            Some(&short_id),
+            &title,
+            &meta,
+            None,
+            false,
+            width,
+            issue_indicator,
+        );
     }
 
     ticket_list_line_from_parts(
@@ -5010,6 +5031,7 @@ fn writeup_list_line(writeup: &Writeup, width: usize, compact: bool) -> Line<'st
         Some(&writeup.tags),
         false,
         width,
+        issue_indicator,
     )
 }
 
@@ -5074,6 +5096,7 @@ fn ticket_list_line_from_parts(
     tags: Option<&BTreeSet<String>>,
     assigned_to_current_user: bool,
     width: usize,
+    right_indicator: Option<(String, Style)>,
 ) -> Line<'static> {
     let mut leading = Vec::new();
     let mut used_width = 0;
@@ -5105,7 +5128,14 @@ fn ticket_list_line_from_parts(
         0
     };
     let meta_gap = " ".repeat(meta_gap_width);
-    let content_width = width.saturating_sub(used_width + meta_width + meta_gap_width);
+    let indicator_width = right_indicator
+        .as_ref()
+        .map(|(label, _)| UnicodeWidthStr::width(label.as_str()).min(width))
+        .unwrap_or_default();
+    let indicator_gap_width = usize::from(indicator_width > 0);
+    let content_width = width
+        .saturating_sub(used_width + meta_width + meta_gap_width)
+        .saturating_sub(indicator_width + indicator_gap_width);
 
     if meta_width > 0 {
         leading.push(Span::raw(meta_gap));
@@ -5113,6 +5143,7 @@ fn ticket_list_line_from_parts(
 
     let Some(tags) = tags.filter(|tags| !tags.is_empty()) else {
         leading.push(Span::raw(truncate_display(title, content_width)));
+        push_right_indicator(&mut leading, right_indicator, width);
         return Line::from(leading);
     };
 
@@ -5137,7 +5168,29 @@ fn ticket_list_line_from_parts(
     leading.push(Span::raw(title));
     leading.push(Span::raw(" ".repeat(padding_width)));
     leading.extend(tag_spans);
+    push_right_indicator(&mut leading, right_indicator, width);
     Line::from(leading)
+}
+
+fn push_right_indicator(
+    spans: &mut Vec<Span<'static>>,
+    right_indicator: Option<(String, Style)>,
+    width: usize,
+) {
+    let Some((label, style)) = right_indicator else {
+        return;
+    };
+    let used_width = spans_width(spans);
+    if used_width >= width {
+        return;
+    }
+    let available_width = width - used_width;
+    let label = truncate_display(&label, available_width);
+    let label_width = UnicodeWidthStr::width(label.as_str());
+    spans.push(Span::raw(
+        " ".repeat(available_width.saturating_sub(label_width)),
+    ));
+    spans.push(Span::styled(label, style));
 }
 
 fn compact_ticket_list_line(
@@ -5146,6 +5199,7 @@ fn compact_ticket_list_line(
     meta: &[(String, Style)],
     assigned_to_current_user: bool,
     width: usize,
+    right_indicator: Option<(String, Style)>,
 ) -> Line<'static> {
     let title_target_width = COMPACT_LIST_MIN_TITLE_WIDTH.min(width).max(1);
     let mut short_id = Some(short_id);
@@ -5170,6 +5224,7 @@ fn compact_ticket_list_line(
         None,
         assigned_to_current_user,
         width,
+        right_indicator,
     )
 }
 
