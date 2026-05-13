@@ -1,0 +1,1 @@
+{"author":"schacon@gmail.com","body":"Implemented in e6a0afa: added a TUI outline view for parent/subissue trees with collapse/expand controls, detail shortcuts for creating subissues, and parent navigation from subissue details. Added outline row tests and verified with cargo test -p ticgit."}

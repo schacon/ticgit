@@ -1,0 +1,1 @@
+{"author":"schacon@gmail.com","body":"Added TUI writeup tab: switch between issues/writeups, view latest writeup version, edit latest in editor, promote/link/unlink issues, and jump both directions between linked issues/writeups. cargo test passes."}

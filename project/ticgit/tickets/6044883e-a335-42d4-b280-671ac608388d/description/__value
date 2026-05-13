@@ -1,0 +1,1 @@
+Add a `ti writeup` workflow for rough notes, ideas, and design drafts that are not yet ready to be formal tickets. Writeups should be Git-native, collaboratively editable through append-only versions, linkable to tickets, and promotable into one or more tickets when the idea becomes actionable.

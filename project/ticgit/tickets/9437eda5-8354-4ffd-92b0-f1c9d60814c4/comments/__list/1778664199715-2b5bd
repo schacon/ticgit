@@ -1,0 +1,1 @@
+{"author":"schacon@gmail.com","body":"Implemented ti agent skill installer and related CLI coverage. Commit: 445ab18. Verified with cargo test -p ticgit."}

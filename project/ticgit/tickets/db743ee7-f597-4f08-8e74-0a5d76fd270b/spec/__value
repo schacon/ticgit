@@ -1,0 +1,1 @@
+Implement a TUI issue outline view backed by ticket parent/children relationships. Add keyboard navigation to expand/collapse outline rows, create subissues from an issue detail, and jump from a subissue detail to its parent. Cover outline row construction with focused tests.

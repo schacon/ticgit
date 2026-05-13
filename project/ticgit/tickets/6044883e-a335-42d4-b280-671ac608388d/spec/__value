@@ -1,0 +1,78 @@
+Implement Git-native writeups as lightweight, versioned pre-tickets.
+
+
+Writeups are a parallel workflow for capturing rough notes, ideas, design sketches, and work candidates before they are ready to become formal tickets. They should feel lighter than tickets, support multi-user collaboration without edit conflicts, and provide a clean path to promote or link the resulting work to tickets.
+
+
+Each writeup has:
+
+- UUID, prefix-addressable like tickets.
+- Title.
+- Status: `open` or `closed`, defaulting to `open`.
+- Authors list, containing every user who has contributed a version.
+- Versions list, ordered append-only.
+- Ticket links list, containing associated ticket UUIDs.
+
+Each version is a markdown document with optional YAML frontmatter:
+
+```markdown
+---
+author: user@example.com
+date: 2026-05-12T13:40:00Z
+parent: [list-id of starting point]
+---
+
+Markdown content goes here.
+```
+
+The append-only version list is the collaboration primitive: edits do not rewrite existing thinking. A user adds a new version with their updated notes, and the history shows how the idea evolved.
+
+
+Use the existing git-meta key/value storage, not a separate ref or directory layout.
+
+Proposed keys:
+
+```text
+ticgit:writeups:<uuid>:title    = string
+ticgit:writeups:<uuid>:status   = "open" | "closed"
+ticgit:writeups:<uuid>:authors  = set/list of author ids
+ticgit:writeups:<uuid>:versions = ordered list of markdown version bodies
+ticgit:writeups:<uuid>:tickets  = set/list of linked ticket UUIDs
+```
+
+For reverse lookups from tickets, also maintain:
+
+```text
+ticgit:tickets:<uuid>:writeups = set/list of linked writeup UUIDs
+```
+
+This keeps writeups in the normal TicGit metadata namespace and lets `ti sync` move writeup data without a special sync path.
+
+
+Add a `ti writeup` command group:
+
+- `ti writeup new --title "..."` creates a writeup UUID, sets title/status, records the creator in authors, and optionally captures the first version.
+- `ti writeup list` lists open writeups by default.
+- `ti writeup show <id>` shows writeup metadata and latest version.
+- `ti writeup show <id> --all` shows full version history.
+- `ti writeup edit <id>` opens an editor and appends a new version with current author/date frontmatter.
+- `ti writeup promote <id>` creates a ticket from the latest version content and links the writeup to the created ticket.
+- `ti writeup close <id>` marks the writeup closed.
+- `ti writeup archive <id>` can be treated as a soft-close/archive action if separate archive semantics are desired.
+- `ti writeup link <writeup-id> <ticket-id>` creates writeup-to-ticket and ticket-to-writeup associations.
+- `ti writeup unlink <writeup-id> <ticket-id>` removes both sides of that association.
+
+
+- Prefix resolution should work for writeup ids the same way ticket id prefixes do.
+- `list` should default to open writeups and have a way to include closed/all writeups.
+- `show` should present title, status, authors, linked tickets, latest version, and enough version metadata to understand provenance.
+- `edit` should append a version rather than mutating prior versions.
+- `authors` should be updated when a new version is appended by someone not already in the list.
+- `promote` should create at least one ticket from the latest version; start with single-ticket promotion unless there is already an established UI pattern for splitting.
+- `link`/`unlink` should keep both forward and reverse metadata in sync.
+
+
+- Whether writeups need tags immediately, or whether linked tickets and title search are enough for the first version.
+- Whether `promote` should eventually support extracting multiple tickets from one writeup.
+- Whether comments on writeups are needed, or whether append-only versions are sufficient.
+- Whether `archive` should be distinct from `close` or simply an alias/state.

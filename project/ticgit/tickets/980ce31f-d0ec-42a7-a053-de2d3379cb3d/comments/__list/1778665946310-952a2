@@ -1,0 +1,1 @@
+{"author":"schacon@gmail.com","body":"Implemented configurable TUI columns, saved-view column persistence, Recently Closed closed-date behavior, TUI dashboard, docs updates, and comment editor title context. Commit: 4ff79fa. Verified with cargo test -p ticgit and cargo run -p ticgit -- stats."}

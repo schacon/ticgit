@@ -1,0 +1,1 @@
+{"author":"schacon@gmail.com","body":"Implemented first writeup CLI/storage version: git-meta writeup keys, append-only versions, list/show/edit/promote/close/archive/link/unlink, plus tests. cargo test passes."}

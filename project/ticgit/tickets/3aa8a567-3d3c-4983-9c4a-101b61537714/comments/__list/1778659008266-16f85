@@ -1,0 +1,1 @@
+{"author":"schacon@gmail.com","body":"Implemented TUI comment composition through the default editor and removed the old inline comment modal path. Verified with cargo test -p ticgit."}

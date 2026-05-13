@@ -1,1 +1,22 @@
-ti agent installs skills for currently used agents
+`ti agent skill` installs skills for currently used agents.
+
+When run, if we have an interactive terminal, it should prompt the user if they want instructions added to AGENTS.md, a skill installed in the local repo settings, or a skill installed in the global settings.
+
+If they choose AGENTS.md, write simple instructions into AGENTS.md, similar to the Beads install - that this project uses Ticgit, how to install it, how to learn how to use it (run `ti agent` for usage instructions).
+
+If they choose a skill install, then prompt what agent:
+
+> Agent Skills - Shared .agents/skills format (/Users/schacon/.agents/skills/gitbutler)
+  Claude Code - Claude Code CLI skill format (/Users/schacon/.claude/skills/gitbutler)
+  OpenCode - OpenCode AI skill format (/Users/schacon/.opencode/skills/gitbutler)
+  Codex - Codex skill format (/Users/schacon/.codex/skills/gitbutler)
+  GitHub Copilot - GitHub Copilot global skill format (/Users/schacon/.copilot/skills/gitbutler)
+  Cursor - Cursor AI skill format (/Users/schacon/.cursor/skills/gitbutler)
+  Windsurf - Windsurf skill format (/Users/schacon/.windsurf/skills/gitbutler)
+
+Or local
+  ...
+  Cursor - Cursor AI skill format (./.cursor/skills/gitbutler)
+> Windsurf - Windsurf skill format (./.windsurf/skills/gitbutler)
+
+Then write the `ti agent` output in the proper skills format to that place. Research all of these tools skills capabilities and formats to make sure we're doing it correctly.

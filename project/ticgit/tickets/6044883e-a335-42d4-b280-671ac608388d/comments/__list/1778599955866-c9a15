@@ -1,0 +1,1 @@
+{"author":"schacon@gmail.com","body":"Updated TUI writeup tab: defaults to open writeups, adds all/open toggle, editor-based new writeup creation, and c/o close/reopen actions. cargo test passes."}
