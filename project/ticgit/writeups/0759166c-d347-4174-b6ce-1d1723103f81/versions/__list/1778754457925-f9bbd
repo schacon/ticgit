@@ -1,0 +1,267 @@
+---
+author: schacon@gmail.com
+date: 2026-05-14T10:27:37.9257Z
+---
+
+# Code Review and Merge Workflow
+
+## Goal
+
+Define the end-to-end lifecycle from writeup through implementation to code review and merge, including all the git-meta keys needed to store review state. This closes the loop on ticgit's workflow: ideas become tickets, tickets become branches, branches get reviewed, and reviews get merged.
+
+## The Full Lifecycle
+
+```
+writeup → ticket → sub-issues + specs → implement → code link → review → approve → merge → close
+```
+
+### Phase 1: Writeup (already implemented)
+
+An idea starts as a writeup with versioned content.
+
+```
+ticgit:writeups:<uuid>:title           (string)
+ticgit:writeups:<uuid>:status          (string)  open | closed
+ticgit:writeups:<uuid>:versions        (list)    versioned markdown content
+ticgit:writeups:<uuid>:authors         (set)     contributor emails
+ticgit:writeups:<uuid>:tags            (set)
+ticgit:writeups:<uuid>:tickets         (set)     linked ticket UUIDs
+```
+
+Commands: `ti writeup new`, `ti writeup edit`, `ti writeup link`
+
+### Phase 2: Ticket + Sub-issues + Spec (already implemented)
+
+Promote a writeup to a ticket, break it down, add implementation specs.
+
+```
+ticgit:tickets:<uuid>:title            (string)
+ticgit:tickets:<uuid>:spec             (string)  implementation specification
+ticgit:tickets:<uuid>:parent           (string)  parent ticket UUID
+ticgit:tickets:<uuid>:children         (set)     child ticket UUIDs
+ticgit:tickets:<uuid>:writeups         (set)     linked writeup UUIDs
+```
+
+Commands: `ti writeup promote`, `ti new --subissue`, `ti spec`
+
+### Phase 3: Implementation + Code Link (partially implemented)
+
+Developer works on a branch, links it to the ticket.
+
+```
+ticgit:tickets:<uuid>:code             (string)  https://host/repo:branch
+```
+
+Currently `code` is a single string field. This works for simple cases but doesn't track the full picture. See "What's Missing" below.
+
+### Phase 4: Review (NEW - needs design)
+
+This is the gap. Once code is written, we need a way to:
+1. Request a review
+2. Track who's reviewing
+3. Leave review comments (distinct from ticket comments)
+4. Approve or request changes
+5. Sign off on the final state
+6. Merge
+
+## What's Missing: Review Data Model
+
+### Option A: Reviews as a sub-namespace under tickets
+
+Store review state directly on the ticket:
+
+```
+ticgit:tickets:<uuid>:reviews:<review-uuid>:branch      (string)  branch name
+ticgit:tickets:<uuid>:reviews:<review-uuid>:base         (string)  base branch (e.g. main)
+ticgit:tickets:<uuid>:reviews:<review-uuid>:head         (string)  head commit SHA
+ticgit:tickets:<uuid>:reviews:<review-uuid>:status       (string)  open | approved | changes-requested | merged | closed
+ticgit:tickets:<uuid>:reviews:<review-uuid>:reviewers    (set)     requested reviewer emails
+ticgit:tickets:<uuid>:reviews:<review-uuid>:approvals    (set)     emails who approved
+ticgit:tickets:<uuid>:reviews:<review-uuid>:comments     (list)    review-specific comments
+ticgit:tickets:<uuid>:reviews:<review-uuid>:created-at   (string)  RFC3339
+ticgit:tickets:<uuid>:reviews:<review-uuid>:created-by   (string)  email
+ticgit:tickets:<uuid>:reviews:<review-uuid>:merged-at    (string)  RFC3339 (set on merge)
+ticgit:tickets:<uuid>:reviews:<review-uuid>:merged-by    (string)  email
+```
+
+**Pros:** Everything lives under the ticket. Simple queries.
+**Cons:** Deep nesting. A review is conceptually its own entity.
+
+### Option B: Reviews as a top-level namespace (recommended)
+
+```
+ticgit:reviews:<uuid>:title            (string)  defaults to ticket title
+ticgit:reviews:<uuid>:ticket           (string)  linked ticket UUID
+ticgit:reviews:<uuid>:branch           (string)  branch name
+ticgit:reviews:<uuid>:base             (string)  base branch
+ticgit:reviews:<uuid>:head             (string)  head commit SHA at time of review request
+ticgit:reviews:<uuid>:status           (string)  open | approved | changes-requested | merged | closed
+ticgit:reviews:<uuid>:reviewers        (set)     requested reviewer emails
+ticgit:reviews:<uuid>:approvals        (set)     emails who approved
+ticgit:reviews:<uuid>:comments         (list)    review comments (JSON: author, body, commit, path, line)
+ticgit:reviews:<uuid>:created-at       (string)  RFC3339
+ticgit:reviews:<uuid>:created-by       (string)  email
+ticgit:reviews:<uuid>:merged-at        (string)  RFC3339
+ticgit:reviews:<uuid>:merged-by        (string)  email
+```
+
+Plus a backlink on the ticket:
+```
+ticgit:tickets:<uuid>:reviews          (set)     review UUIDs linked to this ticket
+```
+
+**Pros:** Follows the same pattern as writeups (own namespace, bidirectional links). Reviews are first-class. Cleaner key paths.
+**Cons:** Slightly more work to implement bidirectional links (but we already do this for writeups).
+
+### Option C: Use git-meta branch targets instead of project targets
+
+Since reviews are inherently about branches, we could attach review metadata to the branch itself:
+
+```
+target: branch/<branch-name>
+key: ticgit:review:status              (string)
+key: ticgit:review:ticket              (string)
+key: ticgit:review:reviewers           (set)
+key: ticgit:review:approvals           (set)
+key: ticgit:review:comments            (list)
+...
+```
+
+**Pros:** Semantically correct - the review IS about the branch. No UUID needed, branch name is the identifier. Natural fit for git-meta's target model.
+**Cons:** All other ticgit data uses `project` target. Mixing target types adds complexity. Branch names can be reused. Would need to rethink how `ti sync` works for branch targets.
+
+## Recommendation: Option B (top-level namespace)
+
+This is consistent with how writeups work. Reviews are first-class objects with their own UUIDs, bidirectional links to tickets, and a flat key structure.
+
+## Proposed Commands
+
+```bash
+# Create a review from a ticket (uses ticket's code branch or current branch)
+ti review new <ticket-id>
+ti review new <ticket-id> --branch feature-branch --base main
+
+# List reviews
+ti review list
+ti review list --status open
+
+# Show review details
+ti review show <review-id>
+
+# Add reviewers
+ti review add-reviewer <review-id> alice@example.com
+
+# Leave a review comment
+ti review comment <review-id> "looks good but check the edge case on line 42"
+
+# Approve
+ti review approve <review-id>
+
+# Request changes
+ti review request-changes <review-id> "needs error handling in the parser"
+
+# Update head commit (after pushing new changes)
+ti review update <review-id>
+ti review update <review-id> --head abc123
+
+# Merge (records the merge, doesn't do git merge)
+ti review merge <review-id>
+
+# Or actually do the merge
+ti review merge <review-id> --execute
+```
+
+## Review Comments Format
+
+Review comments need more structure than ticket comments. Stored as JSON in the list:
+
+```json
+{
+  "author": "alice@example.com",
+  "body": "This function needs bounds checking",
+  "type": "comment",
+  "commit": "abc123",
+  "path": "src/parser.rs",
+  "line": 42
+}
+```
+
+Types: `comment`, `approval`, `changes-requested`, `resolved`
+
+The `commit`, `path`, and `line` fields are optional - general review comments omit them, inline comments include them.
+
+## Patch Queue Tracking
+
+When a review gets new commits pushed after review comments, we want to track what changed:
+
+```
+ticgit:reviews:<uuid>:revisions        (list)    commit SHAs marking review rounds
+```
+
+Each entry in revisions is a JSON object:
+```json
+{
+  "head": "abc123",
+  "message": "addressed review feedback"
+}
+```
+
+This lets reviewers see "what changed since I last looked" by diffing between revision entries.
+
+## Full Lifecycle Example
+
+```bash
+# 1. Start with a writeup
+ti writeup new --title "Add caching layer"
+ti writeup edit 075
+
+# 2. Promote to ticket
+ti writeup promote 075 --tags feature
+
+# 3. Break into sub-issues
+ti new --title "Cache invalidation strategy" --subissue a3f
+ti new --title "Redis adapter" --subissue a3f
+ti new --title "Cache hit metrics" --subissue a3f
+
+# 4. Add spec to parent ticket
+ti spec a3f    # opens editor
+
+# 5. Implement on a branch, link code
+ti checkout a3f
+ti state in-progress
+ti code a3f https://github.com/org/repo:sc-caching
+
+# 6. Create review
+ti review new a3f --base main
+# → Created review 8b2c (branch: sc-caching, base: main)
+
+# 7. Add reviewers
+ti review add-reviewer 8b2c alice@example.com
+
+# 8. Reviewer leaves comments
+ti review comment 8b2c "Need to handle cache stampede"
+ti review request-changes 8b2c "See comment about stampede"
+
+# 9. Author pushes fixes, updates review
+ti review update 8b2c
+ti review comment 8b2c "Added stampede protection with singleflight"
+
+# 10. Reviewer approves
+ti review approve 8b2c
+
+# 11. Merge and close
+ti review merge 8b2c --execute
+ti close a3f
+```
+
+## Open Questions
+
+1. **Should `ti review merge --execute` actually run `git merge`?** Or should it just record the merge event and let the user handle git? Probably both options (default: record only, `--execute` does the merge).
+
+2. **GitHub/GitLab sync.** If someone creates a review in ticgit but the repo is on GitHub, should `ti review new` optionally create a GitHub PR too? And should `ti import gh` import PR review state? This is a future concern but worth designing the data model to support it.
+
+3. **Multiple reviews per ticket.** A ticket might go through multiple review rounds (branch gets reset, new approach). The model supports this since reviews have their own UUIDs and a ticket has a `reviews` set.
+
+4. **Review without a ticket.** Should reviews be creatable standalone? Probably yes - quick fixes don't always need a ticket first. The `ticket` field would be optional.
+
+5. **Integration with `ti context`.** The agent context command should include active review state when an agent is working on a ticket that has an open review.
