@@ -21,8 +21,9 @@ use ratatui::widgets::{
 };
 use ratatui::{Frame, Terminal};
 use ticgit_lib::{
-    query, Comment, Filter, NewTicketOpts, NewWriteupOpts, SortKey, SortOrder, Ticket,
-    TicketLifecycle, TicketState, TicketStatus, TicketStore, Writeup, WriteupStatus,
+    keys, query, Comment, Filter, MetaValue, NewTicketOpts, NewWriteupOpts, SortKey, SortOrder,
+    Target, Ticket, TicketLifecycle, TicketState, TicketStatus, TicketStore, Writeup,
+    WriteupStatus,
 };
 use time::OffsetDateTime;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -176,8 +177,10 @@ struct App {
     visible: Vec<usize>,
     writeups: Vec<Writeup>,
     visible_writeups: Vec<usize>,
+    ticket_reviews: HashMap<uuid::Uuid, TicketReview>,
     list_state: ListState,
     writeup_state: ListState,
+    review_state: ListState,
     board_column: usize,
     board_rows: [usize; BOARD_STATES.len()],
     view: ViewMode,
@@ -211,6 +214,7 @@ struct App {
     new_ticket: NewTicketDraft,
     detail: Option<usize>,
     writeup_detail: Option<usize>,
+    review_detail: Option<usize>,
     writeup_detail_focus: WriteupPaneFocus,
     writeup_detail_scroll: u16,
     writeup_toc_open: bool,
@@ -233,6 +237,7 @@ enum ViewMode {
 enum TuiTab {
     Issues,
     Writeups,
+    Reviews,
     Dashboard,
 }
 
@@ -285,6 +290,23 @@ struct WriteupBodyStats {
     words: usize,
     read_minutes: usize,
     headings: usize,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct TicketReview {
+    branch_id: String,
+    branch_name: Option<String>,
+    title: String,
+    status: String,
+    head_sha: Option<String>,
+    revisions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct CommitReviewStatus {
+    reviewed: BTreeSet<String>,
+    approvals: BTreeSet<String>,
+    signed_off: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -405,8 +427,10 @@ impl App {
             visible: Vec::new(),
             writeups: Vec::new(),
             visible_writeups: Vec::new(),
+            ticket_reviews: HashMap::new(),
             list_state: ListState::default(),
             writeup_state: ListState::default(),
+            review_state: ListState::default(),
             board_column: 0,
             board_rows: [0; BOARD_STATES.len()],
             view: ViewMode::List,
@@ -440,6 +464,7 @@ impl App {
             new_ticket: NewTicketDraft::default(),
             detail: None,
             writeup_detail: None,
+            review_detail: None,
             writeup_detail_focus: WriteupPaneFocus::List,
             writeup_detail_scroll: 0,
             writeup_toc_open: false,
@@ -459,6 +484,7 @@ impl App {
         let tickets = self.store.list()?;
         self.closed_at = load_closed_times(&self.store.session().repo_git_dir(), &tickets);
         self.all_tickets = tickets.clone();
+        self.ticket_reviews = load_ticket_reviews(&self.store, &tickets).unwrap_or_default();
         self.tickets = query::apply(
             tickets,
             &Filter {
@@ -500,6 +526,7 @@ impl App {
             }
         }
         self.sync_comment_selection();
+        self.sync_review_selection();
 
         Ok(())
     }
@@ -606,6 +633,17 @@ impl App {
                 .split(outer[0]);
             self.draw_writeup_list(frame, panes[0]);
             self.draw_writeup_detail(frame, panes[1]);
+        } else if self.active_tab == TuiTab::Reviews && self.review_detail.is_some() {
+            let list_width = 100_u16.saturating_sub(self.detail_width_percent);
+            let panes = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(list_width),
+                    Constraint::Percentage(self.detail_width_percent),
+                ])
+                .split(outer[0]);
+            self.draw_review_list(frame, panes[0]);
+            self.draw_review_detail(frame, panes[1]);
         } else {
             match self.active_tab {
                 TuiTab::Issues => match self.view {
@@ -613,6 +651,7 @@ impl App {
                     ViewMode::Board => self.draw_board(frame, outer[0]),
                 },
                 TuiTab::Writeups => self.draw_writeup_list(frame, outer[0]),
+                TuiTab::Reviews => self.draw_review_list(frame, outer[0]),
                 TuiTab::Dashboard => self.draw_dashboard(frame, outer[0]),
             }
         }
@@ -1143,6 +1182,45 @@ impl App {
                             desc: "quit",
                         },
                     ]
+                } else if self.active_tab == TuiTab::Reviews {
+                    vec![
+                        MenuHint {
+                            key: "Tab",
+                            desc: "issues",
+                        },
+                        MenuHint {
+                            key: "j/k",
+                            desc: "reviews",
+                        },
+                        MenuHint {
+                            key: "Enter",
+                            desc: "details",
+                        },
+                        MenuHint {
+                            key: "+/-",
+                            desc: "resize",
+                        },
+                        MenuHint {
+                            key: "Esc",
+                            desc: "close",
+                        },
+                        MenuHint {
+                            key: "/",
+                            desc: "search",
+                        },
+                        MenuHint {
+                            key: "g",
+                            desc: "filter tags",
+                        },
+                        MenuHint {
+                            key: "r",
+                            desc: "refresh",
+                        },
+                        MenuHint {
+                            key: "q",
+                            desc: "quit",
+                        },
+                    ]
                 } else if self.view == ViewMode::Board && self.detail.is_none() {
                     vec![
                         MenuHint {
@@ -1502,6 +1580,50 @@ impl App {
         frame.render_stateful_widget(list, area, &mut self.writeup_state);
     }
 
+    fn draw_review_list(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        let indices = self.review_ticket_indices();
+        let count = indices.len();
+        let title = if self.filter.is_empty() {
+            format!("Open reviews ({count})")
+        } else {
+            format!("Open reviews matching \"{}\" ({count})", self.filter)
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(tabs_title(self.active_tab, &title));
+        let row_width = usize::from(block.inner(area).width)
+            .saturating_sub(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL));
+        let compact = self.review_detail.is_some();
+
+        let items: Vec<ListItem<'_>> = if indices.is_empty() {
+            vec![ListItem::new(Line::from(Span::styled(
+                "No open tickets with connected review branches.",
+                Style::default().fg(Color::DarkGray),
+            )))]
+        } else {
+            indices
+                .iter()
+                .map(|&idx| {
+                    let ticket = &self.all_tickets[idx];
+                    let review = self.ticket_reviews.get(&ticket.id);
+                    ListItem::new(review_ticket_line(ticket, review, row_width, compact))
+                })
+                .collect()
+        };
+
+        let list = List::new(items)
+            .block(block)
+            .highlight_style(
+                Style::default()
+                    .bg(Color::Rgb(0, 0, 95))
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol(HIGHLIGHT_SYMBOL)
+            .highlight_spacing(HighlightSpacing::Always);
+        frame.render_stateful_widget(list, area, &mut self.review_state);
+    }
+
     fn draw_dashboard(&self, frame: &mut Frame<'_>, area: Rect) {
         let block = Block::default()
             .borders(Borders::ALL)
@@ -1677,6 +1799,61 @@ impl App {
         let detail_block = Block::default().borders(Borders::ALL).title("Details");
         let detail = Paragraph::new(detail_lines)
             .block(detail_block)
+            .wrap(Wrap { trim: false });
+        frame.render_widget(detail, area);
+    }
+
+    fn draw_review_detail(&self, frame: &mut Frame<'_>, area: Rect) {
+        let Some(idx) = self.review_detail else {
+            return;
+        };
+        let ticket = &self.all_tickets[idx];
+        let Some(review) = self.ticket_reviews.get(&ticket.id) else {
+            return;
+        };
+        let mut lines = vec![
+            Line::from(Span::styled(
+                review.title.clone(),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            field_line("Ticket", &format!("{} {}", ticket.short_id(), ticket.title)),
+            field_line("Branch", &review_branch_label(review)),
+        ];
+        if !review.status.is_empty() {
+            lines.push(field_line("Status", &review.status));
+        }
+        if let Some(head) = review.head_sha.as_deref() {
+            lines.push(field_line("Current version", short_hash(head)));
+        }
+
+        lines.push(Line::raw(""));
+        lines.push(Line::from(Span::styled(
+            "Commits",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )));
+
+        let commits = review_commits(review);
+        if commits.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "No review revisions recorded yet. Run `ti review update`.",
+                Style::default().fg(Color::DarkGray),
+            )));
+        } else {
+            for sha in commits {
+                lines.push(review_commit_line(
+                    &sha,
+                    &commit_subject(&sha).unwrap_or_default(),
+                    &commit_review_status(&self.store, &sha),
+                ));
+            }
+        }
+
+        let detail = Paragraph::new(lines)
+            .block(Block::default().borders(Borders::ALL).title("Review"))
             .wrap(Wrap { trim: false });
         frame.render_widget(detail, area);
     }
@@ -2794,6 +2971,25 @@ impl App {
                 help_section(&mut lines, "Views");
                 lines.push(help_columns(("d", "stats view"), None));
             }
+            Mode::Normal if self.active_tab == TuiTab::Reviews => {
+                help_section(&mut lines, "Reviews");
+                lines.push(help_columns(
+                    ("Tab", "issues tab"),
+                    Some(("j/k", "move reviews")),
+                ));
+                lines.push(help_columns(
+                    ("Enter", "details"),
+                    Some(("Esc", "close detail")),
+                ));
+                lines.push(help_columns(
+                    ("/", "search text"),
+                    Some(("g", "tag picker")),
+                ));
+                lines.push(help_columns(
+                    ("+/-", "resize detail"),
+                    Some(("r", "refresh")),
+                ));
+            }
             Mode::Normal if self.active_tab == TuiTab::Dashboard => {
                 help_section(&mut lines, "Dashboard");
                 lines.push(help_columns(("Tab", "issues tab"), Some(("r", "refresh"))));
@@ -2997,6 +3193,9 @@ impl App {
                     self.writeup_detail_scroll = 0;
                     self.writeup_toc_open = false;
                     false
+                } else if self.active_tab == TuiTab::Reviews && self.review_detail.is_some() {
+                    self.review_detail = None;
+                    false
                 } else if self.detail.is_some() {
                     self.detail = None;
                     self.comments_mode = false;
@@ -3017,7 +3216,7 @@ impl App {
                 false
             }
             KeyCode::Char('g') => {
-                if self.active_tab == TuiTab::Issues {
+                if matches!(self.active_tab, TuiTab::Issues | TuiTab::Reviews) {
                     self.begin_tag_filter();
                 }
                 false
@@ -3028,6 +3227,8 @@ impl App {
                     && self.writeup_detail_focus != WriteupPaneFocus::List
                 {
                     self.toggle_writeup_toc();
+                } else if self.active_tab == TuiTab::Reviews {
+                    self.status = Some("Review tags are managed from the issue tab.".to_string());
                 } else {
                     self.begin_manage_tags();
                 }
@@ -3086,7 +3287,7 @@ impl App {
                     } else {
                         self.begin_create();
                     }
-                } else {
+                } else if self.active_tab == TuiTab::Writeups {
                     self.create_writeup_in_editor(terminal)?;
                 }
                 false
@@ -3815,6 +4016,7 @@ impl App {
         self.issue_columns = saved_issue_columns(view);
         self.detail = None;
         self.writeup_detail = None;
+        self.review_detail = None;
         self.comments_mode = false;
         self.active_tab = TuiTab::Issues;
         self.view = ViewMode::List;
@@ -3838,6 +4040,7 @@ impl App {
         self.tag_filter_match_all = true;
         self.detail = None;
         self.writeup_detail = None;
+        self.review_detail = None;
         self.comments_mode = false;
         self.reload(None)?;
         self.status = Some("Cleared to default view.".to_string());
@@ -4109,6 +4312,7 @@ impl App {
                 };
                 self.jump_to_ticket(ticket_id);
             }
+            TuiTab::Reviews => {}
             TuiTab::Dashboard => {}
         }
     }
@@ -5054,11 +5258,16 @@ impl App {
                 .min(self.visible_writeups.len() - 1);
             self.writeup_state.select(Some(selected));
         }
+        self.sync_review_selection();
     }
 
     fn next(&mut self) {
         if self.active_tab == TuiTab::Writeups {
             self.next_writeup();
+            return;
+        }
+        if self.active_tab == TuiTab::Reviews {
+            self.next_review();
             return;
         }
         if self.active_tab == TuiTab::Dashboard {
@@ -5077,6 +5286,10 @@ impl App {
     fn previous(&mut self) {
         if self.active_tab == TuiTab::Writeups {
             self.previous_writeup();
+            return;
+        }
+        if self.active_tab == TuiTab::Reviews {
+            self.previous_review();
             return;
         }
         if self.active_tab == TuiTab::Dashboard {
@@ -5106,6 +5319,53 @@ impl App {
         let next = (selected + 1) % self.visible_writeups.len();
         self.writeup_state.select(Some(next));
         self.sync_open_writeup_detail();
+    }
+
+    fn review_ticket_indices(&self) -> Vec<usize> {
+        let needle = self.filter.to_ascii_lowercase();
+        self.all_tickets
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, ticket)| {
+                if ticket.status == TicketStatus::Open
+                    && self.ticket_reviews.contains_key(&ticket.id)
+                    && (needle.is_empty() || ticket_matches(ticket, &needle))
+                    && ticket_matches_tag_filter(
+                        ticket,
+                        &self.tag_filter,
+                        self.tag_filter_match_all,
+                    )
+                {
+                    Some(idx)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn next_review(&mut self) {
+        let indices = self.review_ticket_indices();
+        if indices.is_empty() {
+            return;
+        }
+        let selected = self.review_state.selected().unwrap_or(0);
+        self.review_state
+            .select(Some((selected + 1) % indices.len()));
+        self.sync_open_review_detail();
+    }
+
+    fn previous_review(&mut self) {
+        let indices = self.review_ticket_indices();
+        if indices.is_empty() {
+            return;
+        }
+        let selected = self.review_state.selected().unwrap_or(0);
+        let previous = selected
+            .checked_sub(1)
+            .unwrap_or_else(|| indices.len().saturating_sub(1));
+        self.review_state.select(Some(previous));
+        self.sync_open_review_detail();
     }
 
     fn previous_writeup(&mut self) {
@@ -5242,7 +5502,7 @@ impl App {
     }
 
     fn resize_detail(&mut self, delta: i16) {
-        if self.detail.is_none() && self.writeup_detail.is_none() {
+        if self.detail.is_none() && self.writeup_detail.is_none() && self.review_detail.is_none() {
             self.status = Some("Open details first.".to_string());
             return;
         }
@@ -5276,8 +5536,12 @@ impl App {
     fn refresh_data(&mut self) -> Result<()> {
         let selected_id = self.selected_ticket().map(|ticket| ticket.id);
         let selected_writeup_id = self.selected_writeup().map(|writeup| writeup.id);
+        let selected_review_id = self.selected_review_ticket().map(|ticket| ticket.id);
         let was_board = self.view == ViewMode::Board && self.detail.is_none();
         self.reload_all(selected_id, selected_writeup_id)?;
+        if let Some(id) = selected_review_id {
+            self.select_review_ticket_by_id(id);
+        }
         if was_board {
             if let Some(id) = selected_id {
                 self.select_board_ticket_by_id(id);
@@ -5294,7 +5558,8 @@ impl App {
                 self.view = ViewMode::List;
                 TuiTab::Writeups
             }
-            TuiTab::Writeups => TuiTab::Issues,
+            TuiTab::Writeups => TuiTab::Reviews,
+            TuiTab::Reviews => TuiTab::Issues,
             TuiTab::Dashboard => TuiTab::Issues,
         };
     }
@@ -5342,6 +5607,7 @@ impl App {
         self.active_tab = TuiTab::Dashboard;
         self.detail = None;
         self.writeup_detail = None;
+        self.review_detail = None;
         self.comments_mode = false;
     }
 
@@ -5391,6 +5657,10 @@ impl App {
             self.open_selected_writeup();
             return;
         }
+        if self.active_tab == TuiTab::Reviews {
+            self.open_selected_review();
+            return;
+        }
         if let Some(idx) = self.selected_ticket_index() {
             self.detail = Some(idx);
             self.select_list_ticket_by_index(idx);
@@ -5419,6 +5689,19 @@ impl App {
         }
     }
 
+    fn open_selected_review(&mut self) {
+        let indices = self.review_ticket_indices();
+        if let Some(idx) = self
+            .review_state
+            .selected()
+            .and_then(|selected| indices.get(selected))
+            .copied()
+        {
+            self.review_detail = Some(idx);
+            self.select_review_ticket_by_index(idx);
+        }
+    }
+
     fn open_ticket_by_id(&mut self, id: uuid::Uuid) {
         let list_indices = self.list_ticket_indices();
         if let Some(list_pos) = list_indices
@@ -5441,6 +5724,47 @@ impl App {
     fn sync_open_writeup_detail(&mut self) {
         if self.writeup_detail.is_some() {
             self.open_selected_writeup();
+        }
+    }
+
+    fn sync_open_review_detail(&mut self) {
+        if self.review_detail.is_some() {
+            self.open_selected_review();
+        }
+    }
+
+    fn sync_review_selection(&mut self) {
+        let indices = self.review_ticket_indices();
+        self.review_detail = self.review_detail.filter(|idx| indices.contains(idx));
+        if indices.is_empty() {
+            self.review_state.select(None);
+        } else {
+            let selected = self
+                .review_state
+                .selected()
+                .unwrap_or(0)
+                .min(indices.len() - 1);
+            self.review_state.select(Some(selected));
+        }
+    }
+
+    fn select_review_ticket_by_index(&mut self, idx: usize) {
+        if let Some(pos) = self
+            .review_ticket_indices()
+            .iter()
+            .position(|review_idx| *review_idx == idx)
+        {
+            self.review_state.select(Some(pos));
+        }
+    }
+
+    fn select_review_ticket_by_id(&mut self, id: uuid::Uuid) {
+        let Some(idx) = self.all_tickets.iter().position(|ticket| ticket.id == id) else {
+            return;
+        };
+        self.select_review_ticket_by_index(idx);
+        if self.review_detail.is_some() {
+            self.review_detail = Some(idx);
         }
     }
 
@@ -5585,6 +5909,14 @@ impl App {
                     ticket.tags.clone(),
                 ))
             }
+            TuiTab::Reviews => {
+                let ticket = self.selected_review_ticket()?;
+                Some((
+                    TagTarget::Ticket(ticket.id),
+                    ticket.short_id(),
+                    ticket.tags.clone(),
+                ))
+            }
             TuiTab::Writeups => {
                 let writeup = self.selected_writeup()?;
                 Some((
@@ -5624,6 +5956,16 @@ impl App {
             .selected()
             .and_then(|selected| self.visible_writeups.get(selected))
             .copied()
+    }
+
+    fn selected_review_ticket(&self) -> Option<&Ticket> {
+        if self.active_tab != TuiTab::Reviews {
+            return None;
+        }
+        self.review_state
+            .selected()
+            .and_then(|selected| self.review_ticket_indices().get(selected).copied())
+            .map(|idx| &self.all_tickets[idx])
     }
 }
 
@@ -5902,7 +6244,155 @@ fn tabs_title(active: TuiTab, title: &str) -> String {
     } else {
         " writeups "
     };
-    format!("{issues} {writeups}  {title}")
+    let reviews = if active == TuiTab::Reviews {
+        "[reviews]"
+    } else {
+        " reviews "
+    };
+    format!("{issues} {writeups} {reviews}  {title}")
+}
+
+fn load_ticket_reviews(
+    store: &TicketStore,
+    tickets: &[Ticket],
+) -> Result<HashMap<uuid::Uuid, TicketReview>> {
+    let project = store.session().target(&Target::project());
+    let mut reviews = HashMap::new();
+
+    for ticket in tickets {
+        if let Some(branch_id) =
+            meta_string(project.get_value(&keys::ticket_field(&ticket.id, "branch-id"))?)
+        {
+            reviews.insert(ticket.id, load_review_metadata(store, &branch_id));
+        } else if let Some(branch_name) = ticket.code.as_deref().and_then(code_branch_name) {
+            reviews.insert(ticket.id, ticket_code_review(branch_name));
+        }
+    }
+
+    for branch_id in meta_set(project.get_value("review:branches")?) {
+        let review = load_review_metadata(store, &branch_id);
+        let target = store.session().target(&Target::branch(&branch_id));
+        for ticket_id in meta_set(target.get_value("issue:id")?) {
+            if let Ok(ticket_id) = uuid::Uuid::parse_str(&ticket_id) {
+                reviews.entry(ticket_id).or_insert_with(|| review.clone());
+            }
+        }
+    }
+
+    Ok(reviews)
+}
+
+fn load_review_metadata(store: &TicketStore, branch_id: &str) -> TicketReview {
+    let target = store.session().target(&Target::branch(branch_id));
+    let branch_name = meta_string(target.get_value("code:branch").ok().flatten());
+    let title = meta_string(target.get_value("title").ok().flatten())
+        .or_else(|| branch_name.clone())
+        .unwrap_or_else(|| branch_id.to_string());
+    let status = meta_string(target.get_value("status").ok().flatten()).unwrap_or_default();
+    let head_sha = meta_string(target.get_value("head:sha").ok().flatten());
+    let revisions = target
+        .list_entries("review:revisions")
+        .unwrap_or_default()
+        .into_iter()
+        .map(|entry| entry.value)
+        .collect();
+    TicketReview {
+        branch_id: branch_id.to_string(),
+        branch_name,
+        title,
+        status,
+        head_sha,
+        revisions,
+    }
+}
+
+fn ticket_code_review(branch_name: &str) -> TicketReview {
+    TicketReview {
+        branch_id: branch_name.to_string(),
+        branch_name: Some(branch_name.to_string()),
+        title: branch_name.to_string(),
+        status: "open".to_string(),
+        head_sha: resolve_git_ref(branch_name).ok(),
+        revisions: Vec::new(),
+    }
+}
+
+fn code_branch_name(code: &str) -> Option<&str> {
+    code.rsplit_once(':')
+        .map(|(_, branch)| branch.trim())
+        .filter(|branch| !branch.is_empty())
+}
+
+fn meta_string(value: Option<MetaValue>) -> Option<String> {
+    match value {
+        Some(MetaValue::String(value)) if !value.is_empty() => Some(value),
+        _ => None,
+    }
+}
+
+fn meta_set(value: Option<MetaValue>) -> BTreeSet<String> {
+    match value {
+        Some(MetaValue::Set(values)) => values,
+        Some(MetaValue::String(value)) if !value.is_empty() => BTreeSet::from([value]),
+        _ => BTreeSet::new(),
+    }
+}
+
+fn review_branch_label(review: &TicketReview) -> String {
+    match review.branch_name.as_deref() {
+        Some(name) if name != review.branch_id => format!("{name} ({})", review.branch_id),
+        Some(name) => name.to_string(),
+        None => review.branch_id.clone(),
+    }
+}
+
+fn review_commits(review: &TicketReview) -> Vec<String> {
+    if !review.revisions.is_empty() {
+        return review.revisions.clone();
+    }
+    review.head_sha.iter().cloned().collect()
+}
+
+fn commit_review_status(store: &TicketStore, sha: &str) -> CommitReviewStatus {
+    let Ok(target) = Target::commit(sha) else {
+        return CommitReviewStatus::default();
+    };
+    let handle = store.session().target(&target);
+    CommitReviewStatus {
+        reviewed: meta_set(handle.get_value("review:reviewed").ok().flatten()),
+        approvals: meta_set(handle.get_value("review:approvals").ok().flatten()),
+        signed_off: meta_set(handle.get_value("signed-off").ok().flatten()),
+    }
+}
+
+fn resolve_git_ref(reference: &str) -> Result<String> {
+    let output = Command::new("git")
+        .args(["rev-parse", reference])
+        .output()
+        .with_context(|| format!("running git rev-parse {reference}"))?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "git rev-parse {reference} failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn commit_subject(sha: &str) -> Option<String> {
+    let output = Command::new("git")
+        .args(["show", "-s", "--format=%s", sha])
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|subject| !subject.is_empty())
+}
+
+fn short_hash(value: &str) -> &str {
+    value.get(..7).unwrap_or(value)
 }
 
 fn ticket_list_line(
@@ -5938,6 +6428,116 @@ fn ticket_list_line(
         width,
         has_writeups.then(|| ("[w]".to_string(), Style::default().fg(Color::Yellow))),
     )
+}
+
+fn review_ticket_line(
+    ticket: &Ticket,
+    review: Option<&TicketReview>,
+    width: usize,
+    compact: bool,
+) -> Line<'static> {
+    let short_id = ticket
+        .short_id()
+        .chars()
+        .take(LIST_ID_WIDTH)
+        .collect::<String>();
+    let mut meta = vec![
+        (
+            short_id,
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
+        (
+            relative_time(ticket.created_at, OffsetDateTime::now_utc()),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM),
+        ),
+    ];
+    if let Some(review) = review {
+        if !review.status.is_empty() {
+            meta.push((review.status.clone(), review_status_style(&review.status)));
+        }
+        meta.push((
+            review
+                .branch_name
+                .clone()
+                .unwrap_or_else(|| review.branch_id.clone()),
+            Style::default().fg(Color::LightBlue),
+        ));
+    }
+
+    let title = review
+        .map(|review| review.title.as_str())
+        .filter(|title| !title.is_empty())
+        .unwrap_or(&ticket.title);
+    if compact {
+        compact_ticket_list_line("", title, &meta, false, width, None)
+    } else {
+        ticket_list_line_from_parts(
+            Some(""),
+            title,
+            &meta,
+            Some(&ticket.tags),
+            false,
+            width,
+            None,
+        )
+    }
+}
+
+fn review_commit_line(sha: &str, subject: &str, status: &CommitReviewStatus) -> Line<'static> {
+    let mut spans = vec![
+        Span::styled(
+            short_hash(sha).to_string(),
+            Style::default().fg(Color::Cyan),
+        ),
+        Span::raw(" "),
+        Span::raw(subject.to_string()),
+    ];
+    spans.push(Span::raw(" "));
+    push_commit_status(&mut spans, "rv", &status.reviewed, Color::LightBlue);
+    spans.push(Span::raw(" "));
+    push_commit_status(&mut spans, "ap", &status.approvals, Color::LightGreen);
+    spans.push(Span::raw(" "));
+    push_commit_status(&mut spans, "so", &status.signed_off, Color::Yellow);
+    Line::from(spans)
+}
+
+fn push_commit_status(
+    spans: &mut Vec<Span<'static>>,
+    label: &'static str,
+    people: &BTreeSet<String>,
+    color: Color,
+) {
+    let marker = if people.is_empty() { "-" } else { "+" };
+    let detail = if people.is_empty() {
+        String::new()
+    } else {
+        format!(
+            ":{}",
+            people
+                .iter()
+                .map(|s| short_assignee(s))
+                .collect::<Vec<_>>()
+                .join(",")
+        )
+    };
+    spans.push(Span::styled(
+        format!("{label}{marker}{detail}"),
+        Style::default().fg(color),
+    ));
+}
+
+fn review_status_style(status: &str) -> Style {
+    let color = match status {
+        "approved" | "merged" => Color::LightGreen,
+        "changes-requested" => Color::LightRed,
+        "closed" => Color::DarkGray,
+        _ => Color::LightBlue,
+    };
+    Style::default().fg(color).add_modifier(Modifier::BOLD)
 }
 
 fn issue_title_prefix(
@@ -8202,6 +8802,55 @@ mod tests {
 
         assert_eq!(spans_width(&spans), 8);
         assert!(spans.iter().any(|span| span.content.as_ref() == "bug"));
+    }
+
+    #[test]
+    fn tabs_title_includes_reviews_tab() {
+        let title = tabs_title(TuiTab::Reviews, "Open reviews");
+        assert!(title.contains(" issues "));
+        assert!(title.contains(" writeups "));
+        assert!(title.contains("[reviews]"));
+        assert!(title.contains("Open reviews"));
+    }
+
+    #[test]
+    fn review_commit_line_marks_review_approval_and_signoff() {
+        let status = CommitReviewStatus {
+            reviewed: BTreeSet::from(["reviewer@example.com".to_string()]),
+            approvals: BTreeSet::new(),
+            signed_off: BTreeSet::from(["signer@example.com".to_string()]),
+        };
+        let line = review_commit_line("abcdef123456", "Add parser checks", &status);
+        let text = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(text.contains("abcdef1"));
+        assert!(text.contains("Add parser checks"));
+        assert!(text.contains("rv+:reviewer"));
+        assert!(text.contains("ap-"));
+        assert!(text.contains("so+:signer"));
+    }
+
+    #[test]
+    fn review_commits_fall_back_to_current_head() {
+        let review = TicketReview {
+            head_sha: Some("abcdef123456".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(review_commits(&review), vec!["abcdef123456".to_string()]);
+
+        let review = TicketReview {
+            head_sha: Some("abcdef123456".to_string()),
+            revisions: vec!["1111111".to_string(), "2222222".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(
+            review_commits(&review),
+            vec!["1111111".to_string(), "2222222".to_string()]
+        );
     }
 
     #[test]
