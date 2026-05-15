@@ -361,7 +361,7 @@ struct ReviewCommitInfo {
 
 #[derive(Debug, Clone)]
 struct ReviewDiffRender {
-    lines: Arc<Vec<Line<'static>>>,
+    line_count: usize,
     spans: Arc<Vec<DiffFileSpan>>,
     toc_entries: Arc<Vec<DiffTocEntry>>,
     files: Arc<Vec<String>>,
@@ -1926,12 +1926,8 @@ impl App {
         frame.render_widget(detail, area);
     }
 
-    fn draw_review_detail(&self, frame: &mut Frame<'_>, area: Rect) {
-        let Some(idx) = self.review_detail else {
-            return;
-        };
-        let ticket = &self.all_tickets[idx];
-        let Some(review) = self.ticket_reviews.get(&ticket.id) else {
+    fn draw_review_detail(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        let Some((ticket, review)) = self.selected_review_context_owned() else {
             return;
         };
         let mut lines = vec![
@@ -1942,7 +1938,7 @@ impl App {
                     .add_modifier(Modifier::BOLD),
             )),
             field_line("Ticket", &format!("{} {}", ticket.short_id(), ticket.title)),
-            field_line("Branch", &review_branch_label(review)),
+            field_line("Branch", &review_branch_label(&review)),
         ];
         if !review.status.is_empty() {
             lines.push(field_line("Status", &review.status));
@@ -1959,19 +1955,19 @@ impl App {
                 .add_modifier(Modifier::BOLD),
         )));
 
-        let commits = review_commits(review);
+        let commits = review_commits(&review);
         if commits.is_empty() {
             lines.push(Line::from(Span::styled(
                 "No review revisions recorded yet. Run `ti review update`.",
                 Style::default().fg(Color::DarkGray),
             )));
         } else {
-            for sha in commits {
-                lines.push(review_commit_line(
-                    &sha,
-                    &commit_subject(&sha).unwrap_or_default(),
-                    &commit_review_status(&self.store, &sha),
-                ));
+            let total = commits.len();
+            let width = usize::from(area.width).saturating_sub(2);
+            for (idx, sha) in commits.iter().enumerate() {
+                let info = self.review_commit_info_cached(sha);
+                let status = self.commit_review_status_cached(sha);
+                lines.push(review_commit_line(idx, total, sha, &info, &status, width));
             }
         }
 
@@ -2237,17 +2233,16 @@ impl App {
         };
         let mut selected_line =
             (!folding_active).then_some(usize::from(self.review_diff_line_focus));
-        let lines = render.lines;
         let spans = render.spans;
         if let Some(line) = selected_line {
-            let max_line = lines.len().saturating_sub(1);
+            let max_line = render.line_count.saturating_sub(1);
             if line > max_line {
                 self.review_diff_line_focus = max_line.min(usize::from(u16::MAX)) as u16;
                 selected_line = Some(max_line);
             }
         }
-        let max_scroll = lines
-            .len()
+        let max_scroll = render
+            .line_count
             .saturating_sub(usize::from(self.review_diff_page_height));
         let max_scroll = max_scroll.min(usize::from(u16::MAX)) as u16;
         self.review_diff_scroll = self.review_diff_scroll.min(max_scroll);
@@ -2276,8 +2271,23 @@ impl App {
                     .map(|span| span.start)
             })
             .or(selected_line);
+        let info = self.review_commit_info_cached(sha);
+        let patch_lines = self.commit_patch_lines_cached(sha);
+        let collapsed = self
+            .review_collapsed_diff_files
+            .get(sha)
+            .cloned()
+            .unwrap_or_default();
+        let visible_lines = review_commit_diff_visible_lines(
+            &info,
+            &patch_lines,
+            &collapsed,
+            usize::from(self.review_diff_scroll),
+            usize::from(self.review_diff_page_height),
+        );
         let lines = add_diff_gutter(
-            lines.as_slice(),
+            visible_lines,
+            render.line_count,
             usize::from(self.review_diff_scroll),
             usize::from(self.review_diff_page_height),
             selected_gutter_line,
@@ -6600,11 +6610,9 @@ impl App {
         }
         let info = self.review_commit_info_cached(sha);
         let patch_lines = self.commit_patch_lines_cached(sha);
-        let (lines, spans) =
-            review_commit_diff_lines_with_spans(&info, &patch_lines, &collapsed, None, None);
         let render = ReviewDiffRender {
-            lines: Arc::new(lines),
-            spans: Arc::new(spans),
+            line_count: review_diff_rendered_line_count(&info, &patch_lines, &collapsed),
+            spans: Arc::new(review_diff_file_spans(&info, &patch_lines, &collapsed)),
             toc_entries: Arc::new(review_diff_toc_entries(&info, &patch_lines, &collapsed)),
             files: Arc::new(diff_file_keys(&patch_lines)),
         };
@@ -7512,25 +7520,13 @@ fn resolve_git_ref(reference: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-fn commit_subject(sha: &str) -> Option<String> {
-    let output = Command::new("git")
-        .args(["show", "-s", "--format=%s", sha])
-        .output()
-        .ok()?;
-    output
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
-        .filter(|subject| !subject.is_empty())
-}
-
 fn short_hash(value: &str) -> &str {
     value.get(..7).unwrap_or(value)
 }
 
 fn review_commit_info(sha: &str) -> ReviewCommitInfo {
     let output = Command::new("git")
-        .args(["show", "-s", "--format=%s%n%an <%ae>%n%ar%n%B", sha])
+        .args(["show", "-s", "--format=%s%n%an <%ae>%n%cr%n%B", sha])
         .output();
     let mut lines = output
         .ok()
@@ -8152,6 +8148,175 @@ fn review_diff_render_cache_key(sha: &str, collapsed_files: &BTreeSet<String>) -
     key
 }
 
+fn review_diff_file_spans(
+    info: &ReviewCommitInfo,
+    patch_lines: &[String],
+    collapsed_files: &BTreeSet<String>,
+) -> Vec<DiffFileSpan> {
+    let mut spans = Vec::new();
+    let mut rendered_line = review_diff_header_height(info);
+    let mut idx = 0;
+    while idx < patch_lines.len() {
+        let Some(file_key) = diff_file_key(&patch_lines[idx]) else {
+            rendered_line += 1;
+            idx += 1;
+            continue;
+        };
+        let next = next_diff_file_index(patch_lines, idx + 1).unwrap_or(patch_lines.len());
+        let start = rendered_line;
+        if collapsed_files.contains(&file_key) {
+            rendered_line += 1;
+        } else {
+            rendered_line += next.saturating_sub(idx);
+        }
+        spans.push(DiffFileSpan {
+            key: file_key,
+            start,
+            end: rendered_line.saturating_sub(1),
+        });
+        idx = next;
+    }
+    spans
+}
+
+fn review_diff_rendered_line_count(
+    info: &ReviewCommitInfo,
+    patch_lines: &[String],
+    collapsed_files: &BTreeSet<String>,
+) -> usize {
+    let mut line_count = review_diff_header_height(info);
+    let mut idx = 0;
+    while idx < patch_lines.len() {
+        let Some(file_key) = diff_file_key(&patch_lines[idx]) else {
+            line_count += 1;
+            idx += 1;
+            continue;
+        };
+        let next = next_diff_file_index(patch_lines, idx + 1).unwrap_or(patch_lines.len());
+        line_count += if collapsed_files.contains(&file_key) {
+            1
+        } else {
+            next.saturating_sub(idx)
+        };
+        idx = next;
+    }
+    line_count
+}
+
+fn review_commit_diff_visible_lines(
+    info: &ReviewCommitInfo,
+    patch_lines: &[String],
+    collapsed_files: &BTreeSet<String>,
+    start_line: usize,
+    height: usize,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let end_line = start_line.saturating_add(height);
+    let mut rendered_line = 0;
+    push_visible_review_diff_line(
+        &mut lines,
+        &mut rendered_line,
+        start_line,
+        end_line,
+        Line::from(Span::styled(
+            info.subject.clone(),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+    );
+    if !info.body.is_empty() {
+        for line in info.body.lines() {
+            push_visible_review_diff_line(
+                &mut lines,
+                &mut rendered_line,
+                start_line,
+                end_line,
+                Line::raw(line.to_string()),
+            );
+        }
+    }
+    push_visible_review_diff_line(
+        &mut lines,
+        &mut rendered_line,
+        start_line,
+        end_line,
+        Line::raw(""),
+    );
+
+    let mut idx = 0;
+    while idx < patch_lines.len() && rendered_line < end_line {
+        let Some(file_key) = diff_file_key(&patch_lines[idx]) else {
+            let line = if rendered_line >= start_line {
+                diff_line_for_file(patch_lines[idx].clone(), None)
+            } else {
+                Line::raw("")
+            };
+            push_visible_review_diff_line(
+                &mut lines,
+                &mut rendered_line,
+                start_line,
+                end_line,
+                line,
+            );
+            idx += 1;
+            continue;
+        };
+
+        let next = next_diff_file_index(patch_lines, idx + 1).unwrap_or(patch_lines.len());
+        if collapsed_files.contains(&file_key) {
+            let line = if rendered_line >= start_line {
+                folded_diff_file_line(&file_key, next.saturating_sub(idx), false)
+            } else {
+                Line::raw("")
+            };
+            push_visible_review_diff_line(
+                &mut lines,
+                &mut rendered_line,
+                start_line,
+                end_line,
+                line,
+            );
+        } else if rendered_line + next.saturating_sub(idx) <= start_line {
+            rendered_line += next.saturating_sub(idx);
+        } else {
+            for line in &patch_lines[idx..next] {
+                if rendered_line >= end_line {
+                    break;
+                }
+                let line = if rendered_line >= start_line {
+                    diff_line_for_file(line.clone(), Some(&file_key))
+                } else {
+                    Line::raw("")
+                };
+                push_visible_review_diff_line(
+                    &mut lines,
+                    &mut rendered_line,
+                    start_line,
+                    end_line,
+                    line,
+                );
+            }
+        }
+        idx = next;
+    }
+    lines
+}
+
+fn push_visible_review_diff_line(
+    lines: &mut Vec<Line<'static>>,
+    rendered_line: &mut usize,
+    start_line: usize,
+    end_line: usize,
+    line: Line<'static>,
+) {
+    if *rendered_line >= start_line && *rendered_line < end_line {
+        lines.push(line);
+    }
+    *rendered_line += 1;
+}
+
+#[cfg(test)]
 fn review_commit_diff_lines_with_spans(
     info: &ReviewCommitInfo,
     patch_lines: &[String],
@@ -8218,6 +8383,7 @@ fn review_commit_diff_lines_with_spans(
     (lines, spans)
 }
 
+#[cfg(test)]
 fn push_review_diff_line(
     lines: &mut Vec<Line<'static>>,
     line: Line<'static>,
@@ -8250,12 +8416,12 @@ fn folded_diff_file_line(file_key: &str, hidden: usize, selected: bool) -> Line<
 }
 
 fn add_diff_gutter(
-    lines: &[Line<'static>],
+    lines: Vec<Line<'static>>,
+    total: usize,
     scroll: usize,
     page_height: usize,
     selected_line: Option<usize>,
 ) -> Vec<Line<'static>> {
-    let total = lines.len();
     if total == 0 {
         return Vec::new();
     }
@@ -8274,14 +8440,12 @@ fn add_diff_gutter(
     };
 
     lines
-        .iter()
+        .into_iter()
         .enumerate()
-        .skip(scroll)
         .take(page_height)
-        .map(|(idx, line)| {
-            let mut line = line.clone();
-            let row = idx.saturating_sub(scroll);
-            let in_view = idx >= scroll && row < page_height;
+        .map(|(row, mut line)| {
+            let idx = scroll.saturating_add(row);
+            let in_view = row < page_height;
             let in_thumb = in_view && row >= thumb_start && row < thumb_start + thumb_height;
             let selected = selected_line == Some(idx);
             let gutter = if selected {
@@ -8692,21 +8856,68 @@ fn review_ticket_line(
     }
 }
 
-fn review_commit_line(sha: &str, subject: &str, status: &CommitReviewStatus) -> Line<'static> {
+fn review_commit_line(
+    idx: usize,
+    total: usize,
+    sha: &str,
+    info: &ReviewCommitInfo,
+    status: &CommitReviewStatus,
+    width: usize,
+) -> Line<'static> {
+    let hash_width = 7;
+    let version_width = 4;
+    let updated_width = 14;
+    let status_width = 12;
+    let fixed_width = hash_width + 1 + version_width + 1 + updated_width + 1 + status_width * 3 + 2;
+    let subject_width = width.saturating_sub(fixed_width).max(12);
+    let version = format!("v{}", total.saturating_sub(idx));
+    let updated = if info.updated.is_empty() {
+        "unknown".to_string()
+    } else {
+        info.updated.clone()
+    };
     let mut spans = vec![
         Span::styled(
             short_hash(sha).to_string(),
             Style::default().fg(Color::Cyan),
         ),
         Span::raw(" "),
-        Span::raw(subject.to_string()),
+        Span::styled(
+            format!("{version:>version_width$}"),
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::raw(" "),
+        Span::raw(fit_display(&info.subject, subject_width)),
+        Span::raw(" "),
+        Span::styled(
+            format!("{:>updated_width$}", fit_display(&updated, updated_width)),
+            Style::default().fg(Color::DarkGray),
+        ),
     ];
     spans.push(Span::raw(" "));
-    push_commit_status(&mut spans, "rv", &status.reviewed, Color::LightBlue);
+    push_commit_status(
+        &mut spans,
+        "rv",
+        &status.reviewed,
+        Color::LightBlue,
+        status_width,
+    );
     spans.push(Span::raw(" "));
-    push_commit_status(&mut spans, "ap", &status.approvals, Color::LightGreen);
+    push_commit_status(
+        &mut spans,
+        "ap",
+        &status.approvals,
+        Color::LightGreen,
+        status_width,
+    );
     spans.push(Span::raw(" "));
-    push_commit_status(&mut spans, "so", &status.signed_off, Color::Yellow);
+    push_commit_status(
+        &mut spans,
+        "so",
+        &status.signed_off,
+        Color::Yellow,
+        status_width,
+    );
     Line::from(spans)
 }
 
@@ -8715,6 +8926,7 @@ fn push_commit_status(
     label: &'static str,
     people: &BTreeSet<String>,
     color: Color,
+    width: usize,
 ) {
     let marker = if people.is_empty() { "-" } else { "+" };
     let detail = if people.is_empty() {
@@ -8729,8 +8941,9 @@ fn push_commit_status(
                 .join(",")
         )
     };
+    let value = fit_display(&format!("{label}{marker}{detail}"), width);
     spans.push(Span::styled(
-        format!("{label}{marker}{detail}"),
+        format!("{value:>width$}"),
         Style::default().fg(color),
     ));
 }
@@ -11025,7 +11238,12 @@ mod tests {
             approvals: BTreeSet::new(),
             signed_off: BTreeSet::from(["signer@example.com".to_string()]),
         };
-        let line = review_commit_line("abcdef123456", "Add parser checks", &status);
+        let info = ReviewCommitInfo {
+            subject: "Add parser checks".to_string(),
+            updated: "7 minutes ago".to_string(),
+            ..ReviewCommitInfo::default()
+        };
+        let line = review_commit_line(0, 3, "abcdef123456", &info, &status, 100);
         let text = line
             .spans
             .iter()
@@ -11033,7 +11251,9 @@ mod tests {
             .collect::<String>();
 
         assert!(text.contains("abcdef1"));
+        assert!(text.contains("  v3"));
         assert!(text.contains("Add parser checks"));
+        assert!(text.contains("7 minutes ago"));
         assert!(text.contains("rv+:reviewer"));
         assert!(text.contains("ap-"));
         assert!(text.contains("so+:signer"));
@@ -11190,6 +11410,36 @@ mod tests {
     }
 
     #[test]
+    fn review_diff_visible_lines_only_returns_requested_window() {
+        let info = ReviewCommitInfo {
+            subject: "Update files".to_string(),
+            ..ReviewCommitInfo::default()
+        };
+        let patch = vec![
+            "diff --git a/src/a.rs b/src/a.rs".to_string(),
+            "@@ -1 +1 @@".to_string(),
+            "-old".to_string(),
+            "+new".to_string(),
+            "diff --git a/src/b.rs b/src/b.rs".to_string(),
+            "@@ -1 +1 @@".to_string(),
+            "+other".to_string(),
+        ];
+
+        let lines = review_commit_diff_visible_lines(&info, &patch, &BTreeSet::new(), 3, 2);
+        let text = lines
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| span.content.as_ref())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(lines.len(), 2);
+        assert!(text.contains("@@ -1 +1 @@"));
+        assert!(text.contains("old"));
+        assert!(!text.contains("new"));
+    }
+
+    #[test]
     fn review_diff_lines_do_not_highlight_selected_content_line() {
         let info = ReviewCommitInfo {
             subject: "Update files".to_string(),
@@ -11212,7 +11462,8 @@ mod tests {
         let lines = (0..10)
             .map(|idx| Line::raw(format!("line {idx}")))
             .collect::<Vec<_>>();
-        let lines = add_diff_gutter(&lines, 4, 4, None);
+        let visible = lines.iter().skip(4).take(4).cloned().collect::<Vec<_>>();
+        let lines = add_diff_gutter(visible, lines.len(), 4, 4, None);
 
         assert_eq!(lines.len(), 4);
         assert_eq!(lines[0].spans[0].content.as_ref(), "│ ");
@@ -11226,7 +11477,8 @@ mod tests {
         let lines = (0..5)
             .map(|idx| Line::raw(format!("line {idx}")))
             .collect::<Vec<_>>();
-        let lines = add_diff_gutter(&lines, 0, 5, Some(2));
+        let len = lines.len();
+        let lines = add_diff_gutter(lines, len, 0, 5, Some(2));
 
         assert_eq!(lines[2].spans[0].content.as_ref(), "▶ ");
         assert_eq!(lines[2].spans[0].style.bg, Some(Color::Rgb(210, 170, 40)));
