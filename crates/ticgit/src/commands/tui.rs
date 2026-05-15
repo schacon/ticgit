@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::{self, Stdout};
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver};
+use std::sync::OnceLock;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -21,6 +22,9 @@ use ratatui::widgets::{
 };
 use ratatui::{Frame, Terminal};
 use serde::Deserialize;
+use syntect::easy::HighlightLines;
+use syntect::highlighting::{Style as SyntectStyle, ThemeSet};
+use syntect::parsing::SyntaxSet;
 use ticgit_lib::{
     keys, query, Comment, Filter, MetaValue, NewTicketOpts, NewWriteupOpts, SortKey, SortOrder,
     Target, Ticket, TicketLifecycle, TicketState, TicketStatus, TicketStore, Writeup,
@@ -2206,10 +2210,19 @@ impl App {
             }
         }
         self.review_diff_scroll = self.review_diff_scroll.min(max_scroll);
+        let selected_gutter_line = selected_file
+            .and_then(|file| {
+                spans
+                    .iter()
+                    .find(|span| span.key == file)
+                    .map(|span| span.start)
+            })
+            .or(selected_line);
         let lines = add_diff_gutter(
             lines,
             usize::from(self.review_diff_scroll),
             usize::from(self.review_diff_page_height),
+            selected_gutter_line,
         );
         let diff = Paragraph::new(lines)
             .block(Block::default().borders(Borders::ALL).title("Commit"))
@@ -7743,11 +7756,7 @@ fn review_commit_diff_lines_with_spans(
             lines.push(folded_diff_file_line(&file_key, hidden, selected));
         } else {
             for line in &patch_lines[idx..next] {
-                let line = if selected_file == Some(file_key.as_str()) && lines.len() == start {
-                    selected_line_style(diff_line_for_file(line.clone(), Some(&file_key)))
-                } else {
-                    diff_line_for_file(line.clone(), Some(&file_key))
-                };
+                let line = diff_line_for_file(line.clone(), Some(&file_key));
                 push_review_diff_line(&mut lines, line, selected_line);
             }
         }
@@ -7767,25 +7776,13 @@ fn push_review_diff_line(
     line: Line<'static>,
     selected_line: Option<usize>,
 ) {
-    let idx = lines.len();
-    if selected_line == Some(idx) {
-        lines.push(selected_line_style(line));
-    } else {
-        lines.push(line);
-    }
-}
-
-fn selected_line_style(line: Line<'static>) -> Line<'static> {
-    line.style(
-        Style::default()
-            .bg(Color::Rgb(210, 170, 40))
-            .fg(Color::Black)
-            .add_modifier(Modifier::BOLD),
-    )
+    let _ = selected_line;
+    lines.push(line);
 }
 
 fn folded_diff_file_line(file_key: &str, hidden: usize, selected: bool) -> Line<'static> {
-    let line = Line::from(vec![
+    let _ = selected;
+    Line::from(vec![
         Span::styled(
             "[+] ",
             Style::default()
@@ -7802,18 +7799,14 @@ fn folded_diff_file_line(file_key: &str, hidden: usize, selected: bool) -> Line<
             format!("  {hidden} lines folded"),
             Style::default().fg(Color::DarkGray),
         ),
-    ]);
-    if selected {
-        selected_line_style(line)
-    } else {
-        line
-    }
+    ])
 }
 
 fn add_diff_gutter(
     lines: Vec<Line<'static>>,
     scroll: usize,
     page_height: usize,
+    selected_line: Option<usize>,
 ) -> Vec<Line<'static>> {
     let total = lines.len();
     if total == 0 {
@@ -7840,8 +7833,20 @@ fn add_diff_gutter(
             let row = idx.saturating_sub(scroll);
             let in_view = idx >= scroll && row < page_height;
             let in_thumb = in_view && row >= thumb_start && row < thumb_start + thumb_height;
-            let gutter = if in_thumb { "█ " } else { "│ " };
-            let style = if in_thumb {
+            let selected = selected_line == Some(idx);
+            let gutter = if selected {
+                "▶ "
+            } else if in_thumb {
+                "█ "
+            } else {
+                "│ "
+            };
+            let style = if selected {
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Rgb(210, 170, 40))
+                    .add_modifier(Modifier::BOLD)
+            } else if in_thumb {
                 Style::default().fg(Color::Yellow)
             } else {
                 Style::default().fg(Color::DarkGray)
@@ -7888,13 +7893,11 @@ fn diff_file_at_scroll(spans: &[DiffFileSpan], scroll: usize) -> Option<String> 
 }
 
 fn diff_line_for_file(line: String, file_key: Option<&str>) -> Line<'static> {
-    let style = if line.starts_with('+') && !line.starts_with("+++") {
-        Style::default().fg(Color::LightGreen)
-    } else if line.starts_with('-') && !line.starts_with("---") {
-        Style::default().fg(Color::LightRed)
-    } else if line.starts_with("@@") {
+    let style = if line.starts_with("@@") {
         Style::default().fg(Color::LightBlue)
     } else if line.starts_with("diff --git") || line.starts_with("index ") {
+        Style::default().fg(Color::DarkGray)
+    } else if line.starts_with("--- ") || line.starts_with("+++ ") {
         Style::default().fg(Color::DarkGray)
     } else {
         Style::default()
@@ -7908,296 +7911,88 @@ fn diff_line_for_file(line: String, file_key: Option<&str>) -> Line<'static> {
         return Line::from(Span::styled(line, style));
     }
 
-    let (prefix, code, base_style) = if let Some(rest) = line.strip_prefix('+') {
-        ("+", rest, Style::default().fg(Color::LightGreen))
+    let (prefix, code, prefix_style, line_style) = if let Some(rest) = line.strip_prefix('+') {
+        (
+            "+",
+            rest,
+            Style::default().fg(Color::LightGreen),
+            Style::default().bg(Color::Rgb(12, 42, 28)),
+        )
     } else if let Some(rest) = line.strip_prefix('-') {
-        ("-", rest, Style::default().fg(Color::LightRed))
+        (
+            "-",
+            rest,
+            Style::default().fg(Color::LightRed),
+            Style::default().bg(Color::Rgb(52, 20, 24)),
+        )
     } else {
-        ("", line.as_str(), Style::default())
+        ("", line.as_str(), Style::default(), Style::default())
     };
     let mut spans = Vec::new();
     if !prefix.is_empty() {
         spans.push(Span::styled(
             prefix.to_string(),
-            base_style.add_modifier(Modifier::BOLD),
+            prefix_style.add_modifier(Modifier::BOLD),
         ));
     }
-    spans.extend(syntax_highlight_code(code, file_key, base_style));
-    Line::from(spans)
+    spans.extend(syntax_highlight_code(code, file_key));
+    Line::from(spans).style(line_style)
 }
 
-fn syntax_highlight_code(
-    code: &str,
-    file_key: Option<&str>,
-    base_style: Style,
-) -> Vec<Span<'static>> {
-    let language = file_key.and_then(diff_language_for_file);
-    let mut spans = Vec::new();
-    let mut idx = 0;
-    let bytes = code.as_bytes();
-    while idx < code.len() {
-        let rest = &code[idx..];
-        if let Some(comment_prefix) = comment_prefix_at(rest, language) {
-            spans.push(Span::styled(
-                rest.to_string(),
-                Style::default()
-                    .fg(Color::DarkGray)
-                    .add_modifier(Modifier::ITALIC),
-            ));
-            idx += comment_prefix.len().max(rest.len());
-        } else if matches!(bytes[idx], b'\'' | b'"' | b'`') {
-            let quote = bytes[idx] as char;
-            let end = quoted_token_end(rest, quote);
-            spans.push(Span::styled(
-                rest[..end].to_string(),
-                Style::default().fg(Color::Yellow),
-            ));
-            idx += end;
-        } else if bytes[idx].is_ascii_digit() {
-            let end = rest
-                .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '.'))
-                .unwrap_or(rest.len());
-            spans.push(Span::styled(
-                rest[..end].to_string(),
-                Style::default().fg(Color::Cyan),
-            ));
-            idx += end;
-        } else if is_ident_start(bytes[idx]) {
-            let end = rest
-                .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
-                .unwrap_or(rest.len());
-            let token = &rest[..end];
-            let style = if is_code_keyword(token, language) {
-                Style::default()
-                    .fg(Color::Magenta)
-                    .add_modifier(Modifier::BOLD)
-            } else if is_type_like_token(token) {
-                Style::default().fg(Color::LightBlue)
-            } else {
-                base_style
-            };
-            spans.push(Span::styled(token.to_string(), style));
-            idx += end;
-        } else {
-            let ch = rest.chars().next().unwrap_or_default();
-            let len = ch.len_utf8();
-            let style = if "{}[]();,.<>:=*&|!?".contains(ch) {
-                Style::default().fg(Color::DarkGray)
-            } else {
-                base_style
-            };
-            spans.push(Span::styled(ch.to_string(), style));
-            idx += len;
-        }
+fn syntax_highlight_code(code: &str, file_key: Option<&str>) -> Vec<Span<'static>> {
+    let assets = syntax_assets();
+    let syntax = file_key
+        .and_then(|file| assets.syntax_set.find_syntax_for_file(file).ok().flatten())
+        .unwrap_or_else(|| assets.syntax_set.find_syntax_plain_text());
+    let mut highlighter = HighlightLines::new(syntax, &assets.theme);
+    match highlighter.highlight_line(code, &assets.syntax_set) {
+        Ok(regions) => regions
+            .into_iter()
+            .map(|(style, text)| Span::styled(text.to_string(), syntect_style(style)))
+            .collect(),
+        Err(_) => vec![Span::raw(code.to_string())],
     }
-    spans
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DiffLanguage {
-    Rust,
-    JsLike,
-    Shell,
-    Python,
-    Other,
+struct SyntaxAssets {
+    syntax_set: SyntaxSet,
+    theme: syntect::highlighting::Theme,
 }
 
-fn diff_language_for_file(file_key: &str) -> Option<DiffLanguage> {
-    let ext = file_key.rsplit('.').next()?;
-    Some(match ext {
-        "rs" => DiffLanguage::Rust,
-        "js" | "jsx" | "ts" | "tsx" | "css" | "scss" | "json" => DiffLanguage::JsLike,
-        "sh" | "bash" | "zsh" | "fish" => DiffLanguage::Shell,
-        "py" => DiffLanguage::Python,
-        _ => DiffLanguage::Other,
+fn syntax_assets() -> &'static SyntaxAssets {
+    static ASSETS: OnceLock<SyntaxAssets> = OnceLock::new();
+    ASSETS.get_or_init(|| {
+        let syntax_set = SyntaxSet::load_defaults_newlines();
+        let theme_set = ThemeSet::load_defaults();
+        let theme = theme_set
+            .themes
+            .get("base16-ocean.dark")
+            .or_else(|| theme_set.themes.values().next())
+            .cloned()
+            .unwrap_or_default();
+        SyntaxAssets { syntax_set, theme }
     })
 }
 
-fn comment_prefix_at(rest: &str, language: Option<DiffLanguage>) -> Option<&'static str> {
-    if rest.starts_with("//")
-        && !matches!(language, Some(DiffLanguage::Shell | DiffLanguage::Python))
+fn syntect_style(style: SyntectStyle) -> Style {
+    let mut tui_style = Style::default().fg(Color::Rgb(
+        style.foreground.r,
+        style.foreground.g,
+        style.foreground.b,
+    ));
+    if style
+        .font_style
+        .contains(syntect::highlighting::FontStyle::BOLD)
     {
-        Some("//")
-    } else if rest.starts_with('#')
-        && matches!(language, Some(DiffLanguage::Shell | DiffLanguage::Python))
+        tui_style = tui_style.add_modifier(Modifier::BOLD);
+    }
+    if style
+        .font_style
+        .contains(syntect::highlighting::FontStyle::ITALIC)
     {
-        Some("#")
-    } else {
-        None
+        tui_style = tui_style.add_modifier(Modifier::ITALIC);
     }
-}
-
-fn quoted_token_end(rest: &str, quote: char) -> usize {
-    let mut escaped = false;
-    for (idx, ch) in rest.char_indices().skip(1) {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if ch == '\\' {
-            escaped = true;
-            continue;
-        }
-        if ch == quote {
-            return idx + ch.len_utf8();
-        }
-    }
-    rest.len()
-}
-
-fn is_ident_start(byte: u8) -> bool {
-    byte.is_ascii_alphabetic() || byte == b'_'
-}
-
-fn is_code_keyword(token: &str, language: Option<DiffLanguage>) -> bool {
-    match language.unwrap_or(DiffLanguage::Other) {
-        DiffLanguage::Rust => matches!(
-            token,
-            "as" | "async"
-                | "await"
-                | "break"
-                | "const"
-                | "continue"
-                | "crate"
-                | "dyn"
-                | "else"
-                | "enum"
-                | "false"
-                | "fn"
-                | "for"
-                | "if"
-                | "impl"
-                | "in"
-                | "let"
-                | "loop"
-                | "match"
-                | "mod"
-                | "move"
-                | "mut"
-                | "pub"
-                | "ref"
-                | "return"
-                | "self"
-                | "Self"
-                | "static"
-                | "struct"
-                | "super"
-                | "trait"
-                | "true"
-                | "type"
-                | "unsafe"
-                | "use"
-                | "where"
-                | "while"
-        ),
-        DiffLanguage::JsLike => matches!(
-            token,
-            "await"
-                | "break"
-                | "case"
-                | "catch"
-                | "class"
-                | "const"
-                | "continue"
-                | "default"
-                | "else"
-                | "export"
-                | "extends"
-                | "false"
-                | "finally"
-                | "for"
-                | "from"
-                | "function"
-                | "if"
-                | "import"
-                | "interface"
-                | "let"
-                | "new"
-                | "null"
-                | "return"
-                | "switch"
-                | "true"
-                | "try"
-                | "type"
-                | "undefined"
-                | "while"
-        ),
-        DiffLanguage::Shell => matches!(
-            token,
-            "case"
-                | "do"
-                | "done"
-                | "elif"
-                | "else"
-                | "esac"
-                | "fi"
-                | "for"
-                | "function"
-                | "if"
-                | "in"
-                | "then"
-                | "while"
-        ),
-        DiffLanguage::Python => matches!(
-            token,
-            "and"
-                | "as"
-                | "async"
-                | "await"
-                | "break"
-                | "class"
-                | "continue"
-                | "def"
-                | "elif"
-                | "else"
-                | "except"
-                | "False"
-                | "finally"
-                | "for"
-                | "from"
-                | "if"
-                | "import"
-                | "in"
-                | "is"
-                | "lambda"
-                | "None"
-                | "not"
-                | "or"
-                | "pass"
-                | "return"
-                | "True"
-                | "try"
-                | "while"
-                | "with"
-                | "yield"
-        ),
-        DiffLanguage::Other => matches!(
-            token,
-            "class"
-                | "const"
-                | "def"
-                | "else"
-                | "false"
-                | "fn"
-                | "for"
-                | "function"
-                | "if"
-                | "import"
-                | "let"
-                | "return"
-                | "struct"
-                | "true"
-                | "type"
-                | "while"
-        ),
-    }
-}
-
-fn is_type_like_token(token: &str) -> bool {
-    token
-        .chars()
-        .next()
-        .is_some_and(|ch| ch.is_ascii_uppercase())
+    tui_style
 }
 
 fn ticket_list_line(
@@ -10790,7 +10585,7 @@ mod tests {
     }
 
     #[test]
-    fn review_diff_lines_highlight_selected_unfolded_line() {
+    fn review_diff_lines_do_not_highlight_selected_content_line() {
         let info = ReviewCommitInfo {
             subject: "Update files".to_string(),
             ..ReviewCommitInfo::default()
@@ -10804,8 +10599,7 @@ mod tests {
             review_commit_diff_lines_with_spans(&info, &patch, &BTreeSet::new(), None, Some(3)).0;
 
         assert_eq!(lines[3].spans[0].content.as_ref(), "@@ -1 +1 @@");
-        assert_eq!(lines[3].style.bg, Some(Color::Rgb(210, 170, 40)));
-        assert_eq!(lines[3].style.fg, Some(Color::Black));
+        assert_eq!(lines[3].style.bg, None);
     }
 
     #[test]
@@ -10813,7 +10607,7 @@ mod tests {
         let lines = (0..10)
             .map(|idx| Line::raw(format!("line {idx}")))
             .collect::<Vec<_>>();
-        let lines = add_diff_gutter(lines, 4, 4);
+        let lines = add_diff_gutter(lines, 4, 4, None);
 
         assert_eq!(lines[4].spans[0].content.as_ref(), "│ ");
         assert_eq!(lines[5].spans[0].content.as_ref(), "│ ");
@@ -10821,24 +10615,34 @@ mod tests {
     }
 
     #[test]
-    fn diff_lines_syntax_highlight_code_tokens() {
+    fn diff_gutter_marks_selected_line() {
+        let lines = (0..5)
+            .map(|idx| Line::raw(format!("line {idx}")))
+            .collect::<Vec<_>>();
+        let lines = add_diff_gutter(lines, 0, 5, Some(2));
+
+        assert_eq!(lines[2].spans[0].content.as_ref(), "▶ ");
+        assert_eq!(lines[2].spans[0].style.bg, Some(Color::Rgb(210, 170, 40)));
+    }
+
+    #[test]
+    fn diff_lines_use_syntect_and_background_additions() {
         let line = diff_line_for_file(
             "+let value = \"hello\" // comment".to_string(),
             Some("src/main.rs"),
         );
 
-        assert!(line
-            .spans
-            .iter()
-            .any(|span| span.content.as_ref() == "let" && span.style.fg == Some(Color::Magenta)));
-        assert!(line.spans.iter().any(
-            |span| span.content.as_ref() == "\"hello\"" && span.style.fg == Some(Color::Yellow)
-        ));
-        assert!(line
-            .spans
-            .iter()
-            .any(|span| span.content.as_ref() == "// comment"
-                && span.style.fg == Some(Color::DarkGray)));
+        assert_eq!(line.style.bg, Some(Color::Rgb(12, 42, 28)));
+        assert!(line.spans.len() > 3);
+        assert!(line.spans.iter().any(|span| span.content.as_ref() == "let"));
+        assert!(line.spans.iter().any(|span| span.style.fg.is_some()));
+    }
+
+    #[test]
+    fn diff_lines_background_removals() {
+        let line = diff_line_for_file("-let value = 1".to_string(), Some("src/main.rs"));
+
+        assert_eq!(line.style.bg, Some(Color::Rgb(52, 20, 24)));
     }
 
     #[test]
