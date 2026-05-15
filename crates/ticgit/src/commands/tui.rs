@@ -357,6 +357,7 @@ struct ReviewCommitInfo {
     author: String,
     updated: String,
     shortstat: String,
+    change_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1962,12 +1963,20 @@ impl App {
                 Style::default().fg(Color::DarkGray),
             )));
         } else {
-            let total = commits.len();
             let width = usize::from(area.width).saturating_sub(2);
-            for (idx, sha) in commits.iter().enumerate() {
-                let info = self.review_commit_info_cached(sha);
-                let status = self.commit_review_status_cached(sha);
-                lines.push(review_commit_line(idx, total, sha, &info, &status, width));
+            let commit_data = commits
+                .iter()
+                .map(|sha| {
+                    (
+                        sha.clone(),
+                        self.review_commit_info_cached(sha),
+                        self.commit_review_status_cached(sha),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let versions = review_commit_versions(&commit_data);
+            for ((sha, info, status), version) in commit_data.iter().zip(versions) {
+                lines.push(review_commit_line(version, sha, info, status, width));
             }
         }
 
@@ -2043,7 +2052,7 @@ impl App {
             rows_area[1],
         );
 
-        let total = commits.len();
+        let versions = review_commit_versions(&commit_data);
         let items = if commits.is_empty() {
             vec![ListItem::new(Line::from(Span::styled(
                 "No review revisions recorded yet. Run `ti review update`.",
@@ -2052,11 +2061,10 @@ impl App {
         } else {
             commit_data
                 .iter()
-                .enumerate()
-                .map(|(idx, (sha, info, status))| {
+                .zip(versions.iter())
+                .map(|((sha, info, status), version)| {
                     ListItem::new(review_commit_table_line(
-                        idx,
-                        total,
+                        *version,
                         sha,
                         review,
                         info,
@@ -7526,7 +7534,7 @@ fn short_hash(value: &str) -> &str {
 
 fn review_commit_info(sha: &str) -> ReviewCommitInfo {
     let output = Command::new("git")
-        .args(["show", "-s", "--format=%s%n%an <%ae>%n%cr%n%B", sha])
+        .args(["show", "-s", "--format=%s%n%an <%ae>%n%ct%n%B", sha])
         .output();
     let mut lines = output
         .ok()
@@ -7541,7 +7549,12 @@ fn review_commit_info(sha: &str) -> ReviewCommitInfo {
         .cloned()
         .unwrap_or_else(|| short_hash(sha).to_string());
     let author = lines.get(1).cloned().unwrap_or_default();
-    let updated = lines.get(2).cloned().unwrap_or_default();
+    let updated = lines
+        .get(2)
+        .and_then(|timestamp| timestamp.parse::<i64>().ok())
+        .and_then(|timestamp| OffsetDateTime::from_unix_timestamp(timestamp).ok())
+        .map(|timestamp| relative_time(timestamp, OffsetDateTime::now_utc()))
+        .unwrap_or_default();
     let body = if lines.len() > 3 {
         lines
             .drain(3..)
@@ -7558,7 +7571,22 @@ fn review_commit_info(sha: &str) -> ReviewCommitInfo {
         author,
         updated,
         shortstat: commit_shortstat(sha),
+        change_id: commit_change_id(sha),
     }
+}
+
+fn commit_change_id(sha: &str) -> Option<String> {
+    let output = Command::new("git")
+        .args(["cat-file", "-p", sha])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .take_while(|line| !line.is_empty())
+        .find_map(|line| line.strip_prefix("change-id ").map(str::to_string))
 }
 
 fn commit_shortstat(sha: &str) -> String {
@@ -7820,8 +7848,7 @@ fn review_commit_table_header(width: usize) -> Line<'static> {
 }
 
 fn review_commit_table_line(
-    idx: usize,
-    total: usize,
+    version: usize,
     sha: &str,
     review: &TicketReview,
     info: &ReviewCommitInfo,
@@ -7833,7 +7860,7 @@ fn review_commit_table_line(
     let mut columns = vec![
         (status_label.0, status_label.1, 18),
         (
-            format!("v{}", total.saturating_sub(idx)),
+            format!("v{version}"),
             Style::default().fg(Color::DarkGray),
             5,
         ),
@@ -8011,6 +8038,24 @@ fn review_commit_data_approval_count(
         })
         .count();
     (approved, commit_data.len())
+}
+
+fn review_commit_versions(
+    commit_data: &[(String, ReviewCommitInfo, CommitReviewStatus)],
+) -> Vec<usize> {
+    let mut counts = HashMap::new();
+    let mut versions = vec![1; commit_data.len()];
+    for (idx, (sha, info, _)) in commit_data.iter().enumerate().rev() {
+        let key = info
+            .change_id
+            .as_deref()
+            .unwrap_or(sha.as_str())
+            .to_string();
+        let count = counts.entry(key).or_insert(0usize);
+        *count += 1;
+        versions[idx] = *count;
+    }
+    versions
 }
 
 fn review_commit_status_line(status: &CommitReviewStatus) -> Line<'static> {
@@ -8857,8 +8902,7 @@ fn review_ticket_line(
 }
 
 fn review_commit_line(
-    idx: usize,
-    total: usize,
+    version: usize,
     sha: &str,
     info: &ReviewCommitInfo,
     status: &CommitReviewStatus,
@@ -8870,7 +8914,7 @@ fn review_commit_line(
     let status_width = 12;
     let fixed_width = hash_width + 1 + version_width + 1 + updated_width + 1 + status_width * 3 + 2;
     let subject_width = width.saturating_sub(fixed_width).max(12);
-    let version = format!("v{}", total.saturating_sub(idx));
+    let version = format!("v{version}");
     let updated = if info.updated.is_empty() {
         "unknown".to_string()
     } else {
@@ -11240,10 +11284,10 @@ mod tests {
         };
         let info = ReviewCommitInfo {
             subject: "Add parser checks".to_string(),
-            updated: "7 minutes ago".to_string(),
+            updated: "7m".to_string(),
             ..ReviewCommitInfo::default()
         };
-        let line = review_commit_line(0, 3, "abcdef123456", &info, &status, 100);
+        let line = review_commit_line(3, "abcdef123456", &info, &status, 100);
         let text = line
             .spans
             .iter()
@@ -11253,10 +11297,42 @@ mod tests {
         assert!(text.contains("abcdef1"));
         assert!(text.contains("  v3"));
         assert!(text.contains("Add parser checks"));
-        assert!(text.contains("7 minutes ago"));
+        assert!(text.contains("7m"));
         assert!(text.contains("rv+:reviewer"));
         assert!(text.contains("ap-"));
         assert!(text.contains("so+:signer"));
+    }
+
+    #[test]
+    fn review_commit_versions_count_change_id_history() {
+        let commit_data = vec![
+            (
+                "new-a".to_string(),
+                ReviewCommitInfo {
+                    change_id: Some("change-a".to_string()),
+                    ..ReviewCommitInfo::default()
+                },
+                CommitReviewStatus::default(),
+            ),
+            (
+                "only-b".to_string(),
+                ReviewCommitInfo {
+                    change_id: Some("change-b".to_string()),
+                    ..ReviewCommitInfo::default()
+                },
+                CommitReviewStatus::default(),
+            ),
+            (
+                "old-a".to_string(),
+                ReviewCommitInfo {
+                    change_id: Some("change-a".to_string()),
+                    ..ReviewCommitInfo::default()
+                },
+                CommitReviewStatus::default(),
+            ),
+        ];
+
+        assert_eq!(review_commit_versions(&commit_data), vec![2, 1, 1]);
     }
 
     #[test]
