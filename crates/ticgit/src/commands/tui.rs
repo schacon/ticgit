@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -194,6 +194,9 @@ struct App {
     review_diff_file_state: ListState,
     review_diff_toc_open: bool,
     review_diff_toc_state: ListState,
+    review_commit_pane_focus: ReviewCommitPaneFocus,
+    review_discussion_scroll: u16,
+    review_discussion_page_height: u16,
     list_state: ListState,
     writeup_state: ListState,
     review_state: ListState,
@@ -273,6 +276,14 @@ enum ReviewMode {
     Summary,
     Commits,
     Commit,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum ReviewCommitPaneFocus {
+    Toc,
+    #[default]
+    Diff,
+    Comments,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -498,6 +509,9 @@ impl App {
             review_diff_file_state: ListState::default(),
             review_diff_toc_open: false,
             review_diff_toc_state: ListState::default(),
+            review_commit_pane_focus: ReviewCommitPaneFocus::Diff,
+            review_discussion_scroll: 0,
+            review_discussion_page_height: 20,
             list_state: ListState::default(),
             writeup_state: ListState::default(),
             review_state: ListState::default(),
@@ -2156,12 +2170,22 @@ impl App {
         let Some(sha) = self.selected_review_commit_sha(&review) else {
             return;
         };
+        self.sync_review_commit_pane_focus();
+        let (commit_position, commit_total) = self
+            .selected_review_commit_position(&review)
+            .unwrap_or((1, 1));
         let vertical = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(3), Constraint::Min(0)])
             .split(area);
-        let top = Paragraph::new(review_commit_meta_line(&ticket, &review, &sha))
-            .block(Block::default().borders(Borders::ALL).title("Review"));
+        let top = Paragraph::new(review_commit_meta_line(
+            &ticket,
+            &review,
+            &sha,
+            commit_position,
+            commit_total,
+        ))
+        .block(Block::default().borders(Borders::ALL).title("Review"));
         frame.render_widget(top, vertical[0]);
 
         let panes = Layout::default()
@@ -2173,15 +2197,42 @@ impl App {
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(32), Constraint::Percentage(68)])
                 .split(panes[0]);
-            self.draw_review_diff_toc(frame, diff_panes[0], &sha);
-            self.draw_review_commit_diff(frame, diff_panes[1], &sha);
+            self.draw_review_diff_toc(
+                frame,
+                diff_panes[0],
+                &sha,
+                self.review_commit_pane_focus == ReviewCommitPaneFocus::Toc,
+            );
+            self.draw_review_commit_diff(
+                frame,
+                diff_panes[1],
+                &sha,
+                self.review_commit_pane_focus == ReviewCommitPaneFocus::Diff,
+            );
         } else {
-            self.draw_review_commit_diff(frame, panes[0], &sha);
+            self.draw_review_commit_diff(
+                frame,
+                panes[0],
+                &sha,
+                self.review_commit_pane_focus == ReviewCommitPaneFocus::Diff,
+            );
         }
-        self.draw_review_commit_discussion(frame, panes[1], &review, &sha);
+        self.draw_review_commit_discussion(
+            frame,
+            panes[1],
+            &review,
+            &sha,
+            self.review_commit_pane_focus == ReviewCommitPaneFocus::Comments,
+        );
     }
 
-    fn draw_review_diff_toc(&mut self, frame: &mut Frame<'_>, area: Rect, sha: &str) {
+    fn draw_review_diff_toc(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        sha: &str,
+        focused: bool,
+    ) {
         let entries = self.review_diff_render_cached(sha).toc_entries;
         self.sync_review_diff_toc_selection_for(entries.len());
         let width = usize::from(area.width).saturating_sub(2);
@@ -2208,7 +2259,11 @@ impl App {
                 .collect()
         };
         let list = List::new(items)
-            .block(Block::default().borders(Borders::ALL).title("Contents"))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(review_pane_title("Contents", focused)),
+            )
             .highlight_style(
                 Style::default()
                     .bg(Color::Rgb(0, 0, 95))
@@ -2220,7 +2275,13 @@ impl App {
         frame.render_stateful_widget(list, area, &mut self.review_diff_toc_state);
     }
 
-    fn draw_review_commit_diff(&mut self, frame: &mut Frame<'_>, area: Rect, sha: &str) {
+    fn draw_review_commit_diff(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        sha: &str,
+        focused: bool,
+    ) {
         self.review_diff_page_height = area.height.saturating_sub(2).max(1);
         let render = self.review_diff_render_cached(sha);
         let files = render.files;
@@ -2301,18 +2362,24 @@ impl App {
             selected_gutter_line,
         );
         let diff = Paragraph::new(lines)
-            .block(Block::default().borders(Borders::ALL).title("Commit"))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(review_pane_title("Commit", focused)),
+            )
             .wrap(Wrap { trim: false });
         frame.render_widget(diff, area);
     }
 
     fn draw_review_commit_discussion(
-        &self,
+        &mut self,
         frame: &mut Frame<'_>,
         area: Rect,
         review: &TicketReview,
         sha: &str,
+        focused: bool,
     ) {
+        self.review_discussion_page_height = area.height.saturating_sub(2).max(1);
         let messages = review_messages_for_commit(review, sha);
         let mut lines = Vec::new();
         if messages.is_empty() {
@@ -2329,9 +2396,20 @@ impl App {
                 lines.push(Line::raw(""));
             }
         }
+        let max_scroll = lines
+            .len()
+            .saturating_sub(usize::from(self.review_discussion_page_height));
+        self.review_discussion_scroll = self
+            .review_discussion_scroll
+            .min(max_scroll.min(usize::from(u16::MAX)) as u16);
         let discussion = Paragraph::new(lines)
-            .block(Block::default().borders(Borders::ALL).title("Discussion"))
-            .wrap(Wrap { trim: false });
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(review_pane_title("Discussion", focused)),
+            )
+            .wrap(Wrap { trim: false })
+            .scroll((self.review_discussion_scroll, 0));
         frame.render_widget(discussion, area);
     }
 
@@ -3452,13 +3530,18 @@ impl App {
                 help_section(&mut lines, "Reviews");
                 if self.review_mode == ReviewMode::Commit {
                     lines.push(help_columns(
-                        ("j/k", "scroll diff"),
-                        Some(("Up/Down", "scroll diff")),
+                        ("h/l", "focus pane"),
+                        Some(("j/k", "scroll pane")),
                     ));
                     lines.push(help_columns(
-                        ("h/l", "previous/next commit"),
+                        ("o/p", "previous/next commit"),
                         Some(("Space", "page down")),
                     ));
+                    lines.push(help_columns(
+                        ("Ctrl-D", "page down"),
+                        Some(("Ctrl-U", "page up")),
+                    ));
+                    lines.push(help_columns(("Ctrl-1..4", "jump commit"), None));
                     lines.push(help_columns(
                         ("f", "fold current file"),
                         Some(("F", "fold all files")),
@@ -3800,8 +3883,20 @@ impl App {
                 }
                 false
             }
+            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if self.active_tab == TuiTab::Reviews && self.review_mode == ReviewMode::Commit {
+                    self.scroll_review_commit_pane_page(1);
+                }
+                false
+            }
             KeyCode::Char('d') => {
                 self.handle_dashboard_key();
+                false
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if self.active_tab == TuiTab::Reviews && self.review_mode == ReviewMode::Commit {
+                    self.scroll_review_commit_pane_page(-1);
+                }
                 false
             }
             KeyCode::Char('u') => {
@@ -3813,6 +3908,21 @@ impl App {
             KeyCode::Char('U') => {
                 if self.active_tab == TuiTab::Issues {
                     self.toggle_subissue_visibility()?;
+                }
+                false
+            }
+            KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3') | KeyCode::Char('4')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                if self.active_tab == TuiTab::Reviews && self.review_mode == ReviewMode::Commit {
+                    let index = match key.code {
+                        KeyCode::Char('1') => 0,
+                        KeyCode::Char('2') => 1,
+                        KeyCode::Char('3') => 2,
+                        KeyCode::Char('4') => 3,
+                        _ => 0,
+                    };
+                    self.select_review_commit(index);
                 }
                 false
             }
@@ -3838,7 +3948,7 @@ impl App {
                 } else if self.active_tab == TuiTab::Reviews
                     && self.review_mode == ReviewMode::Commit
                 {
-                    self.scroll_review_diff(1);
+                    self.scroll_review_commit_pane(1);
                 } else if self.active_tab == TuiTab::Reviews
                     && self.review_mode == ReviewMode::Commits
                 {
@@ -3867,7 +3977,7 @@ impl App {
                 } else if self.active_tab == TuiTab::Reviews
                     && self.review_mode == ReviewMode::Commit
                 {
-                    self.scroll_review_diff(-1);
+                    self.scroll_review_commit_pane(-1);
                 } else if self.active_tab == TuiTab::Reviews
                     && self.review_mode == ReviewMode::Commits
                 {
@@ -3892,7 +4002,7 @@ impl App {
             }
             KeyCode::Right | KeyCode::Char('l') => {
                 if self.active_tab == TuiTab::Reviews && self.review_mode == ReviewMode::Commit {
-                    self.next_review_commit();
+                    self.focus_next_review_commit_pane();
                 } else if self.active_tab == TuiTab::Writeups && self.writeup_detail.is_some() {
                     self.focus_next_writeup_pane();
                 } else if self.active_tab == TuiTab::Issues
@@ -3905,7 +4015,7 @@ impl App {
             }
             KeyCode::Left | KeyCode::Char('h') => {
                 if self.active_tab == TuiTab::Reviews && self.review_mode == ReviewMode::Commit {
-                    self.previous_review_commit();
+                    self.focus_previous_review_commit_pane();
                 } else if self.active_tab == TuiTab::Writeups && self.writeup_detail.is_some() {
                     self.focus_previous_writeup_pane();
                 } else if self.active_tab == TuiTab::Issues
@@ -3918,7 +4028,7 @@ impl App {
             }
             KeyCode::Char(' ') => {
                 if self.active_tab == TuiTab::Reviews && self.review_mode == ReviewMode::Commit {
-                    self.scroll_review_diff_page();
+                    self.scroll_review_commit_pane_page(1);
                 }
                 false
             }
@@ -3926,6 +4036,7 @@ impl App {
                 if self.active_tab == TuiTab::Reviews
                     && self.review_mode == ReviewMode::Commit
                     && self.review_diff_toc_open
+                    && self.review_commit_pane_focus == ReviewCommitPaneFocus::Toc
                 {
                     self.jump_to_selected_review_diff_toc_entry();
                 } else if self.active_tab == TuiTab::Reviews && self.review_detail.is_some() {
@@ -3990,7 +4101,9 @@ impl App {
                 false
             }
             KeyCode::Char('p') => {
-                if self.active_tab == TuiTab::Writeups {
+                if self.active_tab == TuiTab::Reviews && self.review_mode == ReviewMode::Commit {
+                    self.next_review_commit();
+                } else if self.active_tab == TuiTab::Writeups {
                     self.begin_input(InputKind::Priority);
                 } else {
                     self.begin_input(InputKind::Priority);
@@ -4006,7 +4119,9 @@ impl App {
                 false
             }
             KeyCode::Char('o') => {
-                if self.active_tab == TuiTab::Issues {
+                if self.active_tab == TuiTab::Reviews && self.review_mode == ReviewMode::Commit {
+                    self.previous_review_commit();
+                } else if self.active_tab == TuiTab::Issues {
                     self.begin_order();
                 } else {
                     self.set_selected_writeup_status(WriteupStatus::Open)?;
@@ -4017,7 +4132,7 @@ impl App {
                 if self.active_tab == TuiTab::Reviews
                     && matches!(self.review_mode, ReviewMode::Commits | ReviewMode::Commit)
                 {
-                    self.approve_selected_review_commit()?;
+                    self.approve_selected_review_commit_in_editor(terminal)?;
                 } else if self.active_tab == TuiTab::Writeups {
                     self.toggle_writeup_scope();
                 }
@@ -4843,7 +4958,11 @@ impl App {
         };
         let prompt = review_message_prompt(message_type, &ticket, &review, &sha, location.as_ref());
         suspend_terminal(terminal)?;
-        let body = editor::capture(&prompt);
+        let body = if let Some(initial) = default_review_message_body(message_type) {
+            editor::capture_with_initial(&prompt, initial)
+        } else {
+            editor::capture(&prompt)
+        };
         resume_terminal(terminal)?;
 
         let Some(body) = body? else {
@@ -4883,11 +5002,32 @@ impl App {
         Ok(())
     }
 
-    fn approve_selected_review_commit(&mut self) -> Result<()> {
+    fn approve_selected_review_commit_in_editor(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) -> Result<()> {
         let Some((ticket, review, sha, _)) = self.selected_review_action_target() else {
             self.status = Some("Open a review commit first.".to_string());
             return Ok(());
         };
+        let prompt = review_message_prompt("approval", &ticket, &review, &sha, None);
+        suspend_terminal(terminal)?;
+        let body = editor::capture_with_initial(
+            &prompt,
+            default_review_message_body("approval").unwrap_or("Approved"),
+        );
+        resume_terminal(terminal)?;
+
+        let Some(body) = body? else {
+            self.status = Some("Cancelled.".to_string());
+            return Ok(());
+        };
+        let body = body.trim();
+        if body.is_empty() {
+            self.status = Some("Cancelled.".to_string());
+            return Ok(());
+        }
+
         let email = self.store.email().to_string();
         let commit_target = self.store.session().target(&Target::commit(&sha)?);
         commit_target.set_add("review:approvals", &email)?;
@@ -4896,7 +5036,7 @@ impl App {
             &review.branch_id,
             ReviewMessageView {
                 author: email,
-                body: "Approved".to_string(),
+                body: body.to_string(),
                 message_type: "approval".to_string(),
                 commit: Some(sha.clone()),
                 path: None,
@@ -6126,9 +6266,18 @@ impl App {
             return;
         }
         let selected = self.review_commit_state.selected().unwrap_or(0);
-        self.review_commit_state.select(Some((selected + 1) % len));
+        self.select_review_commit((selected + 1) % len);
+    }
+
+    fn select_review_commit(&mut self, idx: usize) {
+        let len = self.review_commit_count();
+        if len == 0 || idx >= len {
+            return;
+        }
+        self.review_commit_state.select(Some(idx));
         self.review_diff_scroll = 0;
         self.review_diff_line_focus = 0;
+        self.review_discussion_scroll = 0;
         self.review_diff_file_state.select(None);
         self.review_diff_toc_state.select(None);
     }
@@ -6141,22 +6290,102 @@ impl App {
         }
         let selected = self.review_commit_state.selected().unwrap_or(0);
         let previous = selected.checked_sub(1).unwrap_or_else(|| len - 1);
-        self.review_commit_state.select(Some(previous));
-        self.review_diff_scroll = 0;
-        self.review_diff_line_focus = 0;
-        self.review_diff_file_state.select(None);
-        self.review_diff_toc_state.select(None);
+        self.select_review_commit(previous);
+    }
+
+    fn selected_review_commit_position(&self, review: &TicketReview) -> Option<(usize, usize)> {
+        let len = review_commits(review).len();
+        if len == 0 {
+            return None;
+        }
+        Some((
+            self.review_commit_state
+                .selected()
+                .unwrap_or(0)
+                .min(len - 1)
+                + 1,
+            len,
+        ))
+    }
+
+    fn sync_review_commit_pane_focus(&mut self) {
+        if !self.review_diff_toc_open && self.review_commit_pane_focus == ReviewCommitPaneFocus::Toc
+        {
+            self.review_commit_pane_focus = ReviewCommitPaneFocus::Diff;
+        }
+    }
+
+    fn focus_next_review_commit_pane(&mut self) {
+        self.sync_review_commit_pane_focus();
+        self.review_commit_pane_focus =
+            match (self.review_diff_toc_open, self.review_commit_pane_focus) {
+                (true, ReviewCommitPaneFocus::Toc) => ReviewCommitPaneFocus::Diff,
+                (true, ReviewCommitPaneFocus::Diff) => ReviewCommitPaneFocus::Comments,
+                (true, ReviewCommitPaneFocus::Comments) => ReviewCommitPaneFocus::Toc,
+                (false, ReviewCommitPaneFocus::Diff) => ReviewCommitPaneFocus::Comments,
+                (false, ReviewCommitPaneFocus::Comments) | (false, ReviewCommitPaneFocus::Toc) => {
+                    ReviewCommitPaneFocus::Diff
+                }
+            };
+    }
+
+    fn focus_previous_review_commit_pane(&mut self) {
+        self.sync_review_commit_pane_focus();
+        self.review_commit_pane_focus =
+            match (self.review_diff_toc_open, self.review_commit_pane_focus) {
+                (true, ReviewCommitPaneFocus::Toc) => ReviewCommitPaneFocus::Comments,
+                (true, ReviewCommitPaneFocus::Diff) => ReviewCommitPaneFocus::Toc,
+                (true, ReviewCommitPaneFocus::Comments) => ReviewCommitPaneFocus::Diff,
+                (false, ReviewCommitPaneFocus::Diff) => ReviewCommitPaneFocus::Comments,
+                (false, ReviewCommitPaneFocus::Comments) | (false, ReviewCommitPaneFocus::Toc) => {
+                    ReviewCommitPaneFocus::Diff
+                }
+            };
+    }
+
+    fn scroll_review_commit_pane(&mut self, delta: i16) {
+        self.sync_review_commit_pane_focus();
+        match self.review_commit_pane_focus {
+            ReviewCommitPaneFocus::Toc => {
+                if delta.is_negative() {
+                    self.previous_review_diff_toc_entry();
+                } else {
+                    self.next_review_diff_toc_entry();
+                }
+            }
+            ReviewCommitPaneFocus::Diff => self.scroll_review_diff(delta),
+            ReviewCommitPaneFocus::Comments => self.scroll_review_discussion(delta),
+        }
+    }
+
+    fn scroll_review_commit_pane_page(&mut self, direction: i16) {
+        self.sync_review_commit_pane_focus();
+        match self.review_commit_pane_focus {
+            ReviewCommitPaneFocus::Toc => self.scroll_review_diff_toc_page(direction),
+            ReviewCommitPaneFocus::Diff => self.scroll_review_diff_page(direction),
+            ReviewCommitPaneFocus::Comments => self.scroll_review_discussion_page(direction),
+        }
+    }
+
+    fn scroll_review_discussion(&mut self, delta: i16) {
+        self.review_discussion_scroll = if delta.is_negative() {
+            self.review_discussion_scroll
+                .saturating_sub(delta.unsigned_abs())
+        } else {
+            self.review_discussion_scroll.saturating_add(delta as u16)
+        };
+    }
+
+    fn scroll_review_discussion_page(&mut self, direction: i16) {
+        let amount = self.review_discussion_page_height.saturating_sub(1).max(1);
+        self.review_discussion_scroll = if direction.is_negative() {
+            self.review_discussion_scroll.saturating_sub(amount)
+        } else {
+            self.review_discussion_scroll.saturating_add(amount)
+        };
     }
 
     fn scroll_review_diff(&mut self, delta: i16) {
-        if self.review_diff_toc_open {
-            if delta.is_negative() {
-                self.previous_review_diff_toc_entry();
-            } else {
-                self.next_review_diff_toc_entry();
-            }
-            return;
-        }
         if self.current_review_diff_has_folded_files() {
             if delta.is_negative() {
                 self.previous_review_diff_file();
@@ -6173,13 +6402,16 @@ impl App {
         };
     }
 
-    fn scroll_review_diff_page(&mut self) {
-        if self.review_diff_toc_open || self.current_review_diff_has_folded_files() {
+    fn scroll_review_diff_page(&mut self, direction: i16) {
+        if self.current_review_diff_has_folded_files() {
             return;
         }
-        self.review_diff_line_focus = self
-            .review_diff_line_focus
-            .saturating_add(self.review_diff_page_height.saturating_sub(1).max(1));
+        let amount = self.review_diff_page_height.saturating_sub(1).max(1);
+        self.review_diff_line_focus = if direction.is_negative() {
+            self.review_diff_line_focus.saturating_sub(amount)
+        } else {
+            self.review_diff_line_focus.saturating_add(amount)
+        };
     }
 
     fn current_review_commit_sha(&self) -> Option<String> {
@@ -6190,6 +6422,9 @@ impl App {
     fn toggle_review_diff_toc(&mut self) {
         if self.review_diff_toc_open {
             self.review_diff_toc_open = false;
+            if self.review_commit_pane_focus == ReviewCommitPaneFocus::Toc {
+                self.review_commit_pane_focus = ReviewCommitPaneFocus::Diff;
+            }
             return;
         }
         let Some(sha) = self.current_review_commit_sha() else {
@@ -6201,6 +6436,7 @@ impl App {
             return;
         }
         self.review_diff_toc_open = true;
+        self.review_commit_pane_focus = ReviewCommitPaneFocus::Toc;
         self.sync_review_diff_toc_selection_for(entries.len());
     }
 
@@ -6239,6 +6475,22 @@ impl App {
         self.review_diff_toc_state.select(Some(previous));
     }
 
+    fn scroll_review_diff_toc_page(&mut self, direction: i16) {
+        let len = self.current_review_diff_toc_entries().len();
+        if len == 0 {
+            self.review_diff_toc_state.select(None);
+            return;
+        }
+        let selected = self.review_diff_toc_state.selected().unwrap_or(0);
+        let amount = usize::from(self.review_diff_page_height.saturating_sub(1).max(1));
+        let next = if direction.is_negative() {
+            selected.saturating_sub(amount)
+        } else {
+            selected.saturating_add(amount).min(len - 1)
+        };
+        self.review_diff_toc_state.select(Some(next));
+    }
+
     fn current_review_diff_toc_entries(&mut self) -> Vec<DiffTocEntry> {
         let Some(sha) = self.current_review_commit_sha() else {
             return Vec::new();
@@ -6261,6 +6513,7 @@ impl App {
         };
         self.review_diff_line_focus = entry.target_line.min(usize::from(u16::MAX)) as u16;
         self.review_diff_scroll = self.review_diff_line_focus;
+        self.review_commit_pane_focus = ReviewCommitPaneFocus::Diff;
     }
 
     fn toggle_current_review_file_diff(&mut self) {
@@ -6400,6 +6653,8 @@ impl App {
                     self.review_mode = ReviewMode::Commit;
                     self.review_diff_scroll = 0;
                     self.review_diff_line_focus = 0;
+                    self.review_discussion_scroll = 0;
+                    self.review_commit_pane_focus = ReviewCommitPaneFocus::Diff;
                     self.review_diff_file_state.select(None);
                     self.review_diff_toc_open = false;
                     self.review_diff_toc_state.select(None);
@@ -8106,6 +8361,8 @@ fn review_message_prompt(
 ) -> String {
     let action = if message_type == "changes-requested" {
         "Request changes"
+    } else if message_type == "approval" {
+        "Approve"
     } else {
         "Review comment"
     };
@@ -8120,6 +8377,14 @@ fn review_message_prompt(
     }
     lines.push("Lines starting with # are ignored.".to_string());
     lines.join("\n")
+}
+
+fn default_review_message_body(message_type: &str) -> Option<&'static str> {
+    match message_type {
+        "approval" => Some("Approved"),
+        "changes-requested" => Some("Changes requested"),
+        _ => None,
+    }
 }
 
 fn review_message_header_line(message: &ReviewMessageView) -> Line<'static> {
@@ -8152,7 +8417,13 @@ fn review_message_style(message_type: &str) -> Style {
     Style::default().fg(color).add_modifier(Modifier::BOLD)
 }
 
-fn review_commit_meta_line(ticket: &Ticket, review: &TicketReview, sha: &str) -> Line<'static> {
+fn review_commit_meta_line(
+    ticket: &Ticket,
+    review: &TicketReview,
+    sha: &str,
+    position: usize,
+    total: usize,
+) -> Line<'static> {
     Line::from(vec![
         Span::styled(
             review.title.clone(),
@@ -8172,7 +8443,22 @@ fn review_commit_meta_line(ticket: &Ticket, review: &TicketReview, sha: &str) ->
             short_hash(sha).to_string(),
             Style::default().fg(Color::Yellow),
         ),
+        Span::raw("  "),
+        Span::styled(
+            format!("{position}/{total}"),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
     ])
+}
+
+fn review_pane_title(title: &str, focused: bool) -> String {
+    if focused {
+        format!("[{title}]")
+    } else {
+        title.to_string()
+    }
 }
 
 #[cfg(test)]
