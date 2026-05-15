@@ -48,6 +48,7 @@ use crate::commands;
 \x1b[1;36mViews & Import:\x1b[0m
   views      Manage saved views (save, delete, list)
   writeup    Capture rough notes and promote them to tickets
+  review     Manage local code review metadata
   stats      Show a ticket stats dashboard
   import     Import tickets from external systems (e.g. GitHub)
 
@@ -192,6 +193,9 @@ pub enum Command {
     /// Capture rough notes and promote them to tickets.
     Writeup(commands::writeup::Args),
 
+    /// Manage local code review metadata.
+    Review(commands::review::Args),
+
     /// Show a ticket stats dashboard.
     Stats(commands::stats::Args),
 
@@ -269,6 +273,7 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
         Some(Command::Comment(args)) => commands::comment::run(args),
         Some(Command::Views(args)) => commands::view::run(args),
         Some(Command::Writeup(args)) => commands::writeup::run(args),
+        Some(Command::Review(args)) => commands::review::run(args),
         Some(Command::Users(args)) => commands::users::run(args),
         Some(Command::Sync(args)) => commands::sync::run_sync(args),
         Some(Command::Pull(args)) => commands::pull::run(args),

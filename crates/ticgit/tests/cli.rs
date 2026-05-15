@@ -69,6 +69,89 @@ fn create_ticket(repo: &TestRepo, title: &str) -> String {
     String::from_utf8(output).unwrap().trim().to_string()
 }
 
+#[test]
+fn review_cli_records_branch_review_flow() {
+    let repo = TestRepo::new();
+    let ticket_id = create_ticket(&repo, "Code review tooling");
+
+    repo.ti()
+        .args([
+            "review",
+            "new",
+            "--branch",
+            "main",
+            "--ticket",
+            &ticket_id,
+            "--reviewer",
+            "alice@example.com",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Created review main@"))
+        .stdout(predicate::str::contains("Code review tooling"));
+
+    repo.ti()
+        .args(["review", "list", "--status", "open"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("main"))
+        .stdout(predicate::str::contains("open"))
+        .stdout(predicate::str::contains("Code review tooling"));
+
+    repo.ti()
+        .args(["review", "add-reviewer", "bob@example.com"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Added reviewer bob@example.com"));
+
+    repo.ti()
+        .args([
+            "review",
+            "comment",
+            "--path",
+            "src/parser.rs",
+            "--line",
+            "42",
+            "needs bounds checking",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Added comment"));
+
+    repo.ti()
+        .args(["review", "request-changes", "needs error handling"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Requested changes"));
+
+    repo.ti()
+        .args(["review", "approve", "--comment", "looks good"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Approved main@"));
+
+    let head = git_output(repo.dir.path(), &["rev-parse", "HEAD"]);
+    repo.ti()
+        .args(["review", "integrate", &head])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Integrated main@"));
+
+    repo.ti()
+        .args(["review", "show"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Status: merged"))
+        .stdout(predicate::str::contains("Tickets:"))
+        .stdout(predicate::str::contains("alice@example.com"))
+        .stdout(predicate::str::contains("bob@example.com"))
+        .stdout(predicate::str::contains("[comment]"))
+        .stdout(predicate::str::contains("src/parser.rs:42"))
+        .stdout(predicate::str::contains("[changes-requested]"))
+        .stdout(predicate::str::contains("[approval]"))
+        .stdout(predicate::str::contains("looks good"));
+}
+
 #[cfg(unix)]
 fn editor_script(repo: &TestRepo, contents: &str) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
