@@ -7458,7 +7458,7 @@ fn writeup_detail_lines(
     lines.push(Line::raw(""));
     let body_start = lines.len();
     if let Some(version) = writeup.versions.last() {
-        lines.extend(version.body.lines().map(|line| Line::raw(line.to_string())));
+        lines.extend(markdown_body_lines(&version.body));
         let headings = parse_markdown_headings(&version.body)
             .into_iter()
             .map(|heading| MarkdownHeading {
@@ -7501,6 +7501,172 @@ fn writeup_stats_display(stats: WriteupBodyStats) -> String {
     )
 }
 
+fn markdown_body_lines(body: &str) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let mut in_fence = false;
+    for line in body.lines() {
+        let trimmed_start = line.trim_start();
+        if trimmed_start.starts_with("```") || trimmed_start.starts_with("~~~") {
+            in_fence = !in_fence;
+            lines.push(Line::from(Span::styled(
+                line.to_string(),
+                Style::default().fg(Color::DarkGray),
+            )));
+            continue;
+        }
+        if in_fence {
+            lines.push(Line::from(Span::styled(
+                line.to_string(),
+                Style::default().fg(Color::Green),
+            )));
+        } else {
+            lines.push(markdown_line(line));
+        }
+    }
+    lines
+}
+
+fn markdown_line(line: &str) -> Line<'static> {
+    let leading = line.len().saturating_sub(line.trim_start().len());
+    let trimmed_start = line.trim_start();
+    if let Some((level, title)) = markdown_heading(trimmed_start) {
+        let color = markdown_heading_color(level);
+        let mut spans = Vec::new();
+        if leading > 0 {
+            spans.push(Span::raw(" ".repeat(leading)));
+        }
+        spans.push(Span::styled(
+            title,
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ));
+        return Line::from(spans);
+    }
+
+    if is_markdown_rule(trimmed_start) {
+        return Line::from(Span::styled(
+            "─".repeat(trimmed_start.chars().count().max(3)),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+
+    if let Some(rest) = trimmed_start.strip_prefix(">") {
+        let mut spans = Vec::new();
+        if leading > 0 {
+            spans.push(Span::raw(" ".repeat(leading)));
+        }
+        spans.push(Span::styled(">", Style::default().fg(Color::DarkGray)));
+        spans.extend(markdown_inline_spans(
+            rest.trim_start(),
+            Style::default()
+                .fg(Color::Gray)
+                .add_modifier(Modifier::ITALIC),
+        ));
+        return Line::from(spans);
+    }
+
+    if let Some((marker, rest)) = markdown_list_marker(trimmed_start) {
+        let mut spans = Vec::new();
+        if leading > 0 {
+            spans.push(Span::raw(" ".repeat(leading)));
+        }
+        spans.push(Span::styled(marker, Style::default().fg(Color::Yellow)));
+        spans.push(Span::raw(" "));
+        spans.extend(markdown_inline_spans(rest, Style::default()));
+        return Line::from(spans);
+    }
+
+    Line::from(markdown_inline_spans(line, Style::default()))
+}
+
+fn markdown_heading(line: &str) -> Option<(usize, String)> {
+    let hashes = line.chars().take_while(|ch| *ch == '#').count();
+    if !(1..=6).contains(&hashes) {
+        return None;
+    }
+    let after_hashes = &line[hashes..];
+    if !after_hashes.chars().next().is_some_and(char::is_whitespace) {
+        return None;
+    }
+    let title = after_hashes.trim().trim_end_matches('#').trim().to_string();
+    (!title.is_empty()).then_some((hashes, title))
+}
+
+fn markdown_heading_color(level: usize) -> Color {
+    match level {
+        1 => Color::Cyan,
+        2 => Color::LightCyan,
+        3 => Color::Yellow,
+        4 => Color::LightYellow,
+        5 => Color::Magenta,
+        _ => Color::Gray,
+    }
+}
+
+fn is_markdown_rule(line: &str) -> bool {
+    let mut chars = line.chars();
+    let Some(marker @ ('-' | '_' | '*')) = chars.next() else {
+        return false;
+    };
+    let mut count = 1;
+    for ch in chars {
+        if ch.is_whitespace() {
+            continue;
+        }
+        if ch != marker {
+            return false;
+        }
+        count += 1;
+    }
+    count >= 3
+}
+
+fn markdown_list_marker(line: &str) -> Option<(String, &str)> {
+    for marker in ["- ", "* ", "+ "] {
+        if let Some(rest) = line.strip_prefix(marker) {
+            return Some((marker.trim().to_string(), rest));
+        }
+    }
+    let marker_end = line.find(". ")?;
+    if marker_end == 0 || !line[..marker_end].chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    Some((line[..=marker_end].to_string(), &line[marker_end + 2..]))
+}
+
+fn markdown_inline_spans(text: &str, base_style: Style) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        let next = ["**", "__", "`"]
+            .iter()
+            .filter_map(|marker| rest.find(marker).map(|idx| (idx, *marker)))
+            .min_by_key(|(idx, _)| *idx);
+        let Some((idx, marker)) = next else {
+            spans.push(Span::styled(rest.to_string(), base_style));
+            break;
+        };
+        if idx > 0 {
+            spans.push(Span::styled(rest[..idx].to_string(), base_style));
+        }
+        let marker_len = marker.len();
+        let after_marker = &rest[idx + marker_len..];
+        if let Some(end) = after_marker.find(marker) {
+            let content = &after_marker[..end];
+            let style = if marker == "`" {
+                Style::default().fg(Color::Yellow).bg(Color::DarkGray)
+            } else {
+                base_style.add_modifier(Modifier::BOLD)
+            };
+            spans.push(Span::styled(content.to_string(), style));
+            rest = &after_marker[end + marker_len..];
+        } else {
+            spans.push(Span::styled(marker.to_string(), base_style));
+            rest = after_marker;
+        }
+    }
+    spans
+}
+
 fn parse_markdown_headings(body: &str) -> Vec<MarkdownHeading> {
     let mut headings = Vec::new();
     let mut in_fence = false;
@@ -7513,16 +7679,7 @@ fn parse_markdown_headings(body: &str) -> Vec<MarkdownHeading> {
         if in_fence {
             continue;
         }
-        let hashes = trimmed_start.chars().take_while(|ch| *ch == '#').count();
-        if !(1..=6).contains(&hashes) {
-            continue;
-        }
-        let after_hashes = &trimmed_start[hashes..];
-        if !after_hashes.chars().next().is_some_and(char::is_whitespace) {
-            continue;
-        }
-        let title = after_hashes.trim().trim_end_matches('#').trim().to_string();
-        if !title.is_empty() {
+        if let Some((hashes, title)) = markdown_heading(trimmed_start) {
             headings.push(MarkdownHeading {
                 level: hashes,
                 title,
@@ -8103,6 +8260,36 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn markdown_line_styles_headers() {
+        let line = markdown_line("## Details ##");
+
+        assert_eq!(line.spans[0].content.as_ref(), "Details");
+        assert_eq!(line.spans[0].style.fg, Some(Color::LightCyan));
+        assert!(line.spans[0].style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn markdown_line_styles_bold_and_code_spans() {
+        let line = markdown_line("Use **bold** and `code` here");
+
+        assert_eq!(line.spans[1].content.as_ref(), "bold");
+        assert!(line.spans[1].style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(line.spans[3].content.as_ref(), "code");
+        assert_eq!(line.spans[3].style.fg, Some(Color::Yellow));
+        assert_eq!(line.spans[3].style.bg, Some(Color::DarkGray));
+    }
+
+    #[test]
+    fn markdown_body_lines_style_fenced_code_without_headings() {
+        let lines = markdown_body_lines("```md\n# not heading\n```\n# Heading");
+
+        assert_eq!(lines[1].spans[0].content.as_ref(), "# not heading");
+        assert_eq!(lines[1].spans[0].style.fg, Some(Color::Green));
+        assert_eq!(lines[3].spans[0].content.as_ref(), "Heading");
+        assert_eq!(lines[3].spans[0].style.fg, Some(Color::Cyan));
     }
 
     #[test]
