@@ -182,6 +182,9 @@ struct App {
     review_commit_cache: HashMap<String, ReviewCommitInfo>,
     review_status_cache: HashMap<String, CommitReviewStatus>,
     review_patch_cache: HashMap<String, Vec<String>>,
+    review_diff_scroll: u16,
+    review_diff_page_height: u16,
+    review_collapsed_diff_files: HashMap<String, BTreeSet<String>>,
     list_state: ListState,
     writeup_state: ListState,
     review_state: ListState,
@@ -466,6 +469,9 @@ impl App {
             review_commit_cache: HashMap::new(),
             review_status_cache: HashMap::new(),
             review_patch_cache: HashMap::new(),
+            review_diff_scroll: 0,
+            review_diff_page_height: 20,
+            review_collapsed_diff_files: HashMap::new(),
             list_state: ListState::default(),
             writeup_state: ListState::default(),
             review_state: ListState::default(),
@@ -1238,44 +1244,73 @@ impl App {
                         (true, ReviewMode::Commits) => "commit",
                         (true, ReviewMode::Commit) => "commit",
                     };
-                    vec![
-                        MenuHint {
-                            key: "Tab",
-                            desc: "issues",
-                        },
-                        MenuHint {
-                            key: "j/k",
-                            desc: "reviews",
-                        },
-                        MenuHint {
-                            key: "Enter",
-                            desc: enter_hint,
-                        },
-                        MenuHint {
-                            key: "+/-",
-                            desc: "resize",
-                        },
-                        MenuHint {
-                            key: "Esc",
-                            desc: "close",
-                        },
-                        MenuHint {
-                            key: "/",
-                            desc: "search",
-                        },
-                        MenuHint {
-                            key: "g",
-                            desc: "filter tags",
-                        },
-                        MenuHint {
-                            key: "r",
-                            desc: "refresh",
-                        },
-                        MenuHint {
-                            key: "q",
-                            desc: "quit",
-                        },
-                    ]
+                    if self.review_mode == ReviewMode::Commit {
+                        vec![
+                            MenuHint {
+                                key: "j/k",
+                                desc: "scroll",
+                            },
+                            MenuHint {
+                                key: "h/l",
+                                desc: "commit",
+                            },
+                            MenuHint {
+                                key: "Space",
+                                desc: "page",
+                            },
+                            MenuHint {
+                                key: "f/F",
+                                desc: "fold",
+                            },
+                            MenuHint {
+                                key: "Esc",
+                                desc: "commits",
+                            },
+                            MenuHint {
+                                key: "q",
+                                desc: "quit",
+                            },
+                        ]
+                    } else {
+                        vec![
+                            MenuHint {
+                                key: "Tab",
+                                desc: "issues",
+                            },
+                            MenuHint {
+                                key: "j/k",
+                                desc: "reviews",
+                            },
+                            MenuHint {
+                                key: "Enter",
+                                desc: enter_hint,
+                            },
+                            MenuHint {
+                                key: "+/-",
+                                desc: "resize",
+                            },
+                            MenuHint {
+                                key: "Esc",
+                                desc: "close",
+                            },
+                            MenuHint {
+                                key: "/",
+                                desc: "search",
+                            },
+                            MenuHint {
+                                key: "g",
+                                desc: "filter tags",
+                            },
+                            MenuHint {
+                                key: "r",
+                                desc: "refresh",
+                            },
+                            MenuHint {
+                                key: "q",
+                                desc: "quit",
+                            },
+                        ]
+                    }
                 } else if self.view == ViewMode::Board && self.detail.is_none() {
                     vec![
                         MenuHint {
@@ -2101,26 +2136,24 @@ impl App {
     }
 
     fn draw_review_commit_diff(&mut self, frame: &mut Frame<'_>, area: Rect, sha: &str) {
+        self.review_diff_page_height = area.height.saturating_sub(2).max(1);
         let info = self.review_commit_info_cached(sha);
-        let mut lines = Vec::new();
-        lines.push(Line::from(Span::styled(
-            info.subject,
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )));
-        if !info.body.is_empty() {
-            for line in info.body.lines() {
-                lines.push(Line::raw(line.to_string()));
-            }
-        }
-        lines.push(Line::raw(""));
-        for line in self.commit_patch_lines_cached(sha).into_iter().take(400) {
-            lines.push(diff_line(line));
-        }
+        let patch_lines = self.commit_patch_lines_cached(sha);
+        let collapsed = self
+            .review_collapsed_diff_files
+            .get(sha)
+            .cloned()
+            .unwrap_or_default();
+        let lines = review_commit_diff_lines(&info, &patch_lines, &collapsed);
+        let max_scroll = lines
+            .len()
+            .saturating_sub(usize::from(self.review_diff_page_height));
+        let max_scroll = max_scroll.min(usize::from(u16::MAX)) as u16;
+        self.review_diff_scroll = self.review_diff_scroll.min(max_scroll);
         let diff = Paragraph::new(lines)
             .block(Block::default().borders(Borders::ALL).title("Commit"))
-            .wrap(Wrap { trim: false });
+            .wrap(Wrap { trim: false })
+            .scroll((self.review_diff_scroll, 0));
         frame.render_widget(diff, area);
     }
 
@@ -3268,14 +3301,30 @@ impl App {
             }
             Mode::Normal if self.active_tab == TuiTab::Reviews => {
                 help_section(&mut lines, "Reviews");
-                lines.push(help_columns(
-                    ("Tab", "issues tab"),
-                    Some(("j/k", "move reviews")),
-                ));
-                lines.push(help_columns(
-                    ("Enter", "details/commit"),
-                    Some(("Esc", "back/close")),
-                ));
+                if self.review_mode == ReviewMode::Commit {
+                    lines.push(help_columns(
+                        ("j/k", "scroll diff"),
+                        Some(("Up/Down", "scroll diff")),
+                    ));
+                    lines.push(help_columns(
+                        ("h/l", "previous/next commit"),
+                        Some(("Space", "page down")),
+                    ));
+                    lines.push(help_columns(
+                        ("f", "fold current file"),
+                        Some(("F", "fold all files")),
+                    ));
+                    lines.push(help_columns(("Esc", "commit list"), Some(("r", "refresh"))));
+                } else {
+                    lines.push(help_columns(
+                        ("Tab", "issues tab"),
+                        Some(("j/k", "move reviews")),
+                    ));
+                    lines.push(help_columns(
+                        ("Enter", "details/commit"),
+                        Some(("Esc", "back/close")),
+                    ));
+                }
                 lines.push(help_columns(
                     ("/", "search text"),
                     Some(("g", "tag picker")),
@@ -3541,6 +3590,18 @@ impl App {
                 }
                 false
             }
+            KeyCode::Char('f') => {
+                if self.active_tab == TuiTab::Reviews && self.review_mode == ReviewMode::Commit {
+                    self.toggle_current_review_file_diff();
+                }
+                false
+            }
+            KeyCode::Char('F') => {
+                if self.active_tab == TuiTab::Reviews && self.review_mode == ReviewMode::Commit {
+                    self.toggle_all_review_file_diffs();
+                }
+                false
+            }
             KeyCode::Char('v') => {
                 if self.active_tab == TuiTab::Writeups && self.writeup_detail.is_some() {
                     self.begin_versions();
@@ -3603,7 +3664,11 @@ impl App {
                 if self.comments_mode {
                     self.next_comment();
                 } else if self.active_tab == TuiTab::Reviews
-                    && matches!(self.review_mode, ReviewMode::Commits | ReviewMode::Commit)
+                    && self.review_mode == ReviewMode::Commit
+                {
+                    self.scroll_review_diff(1);
+                } else if self.active_tab == TuiTab::Reviews
+                    && self.review_mode == ReviewMode::Commits
                 {
                     self.next_review_commit();
                 } else if self.active_tab == TuiTab::Writeups
@@ -3628,7 +3693,11 @@ impl App {
                 if self.comments_mode {
                     self.previous_comment();
                 } else if self.active_tab == TuiTab::Reviews
-                    && matches!(self.review_mode, ReviewMode::Commits | ReviewMode::Commit)
+                    && self.review_mode == ReviewMode::Commit
+                {
+                    self.scroll_review_diff(-1);
+                } else if self.active_tab == TuiTab::Reviews
+                    && self.review_mode == ReviewMode::Commits
                 {
                     self.previous_review_commit();
                 } else if self.active_tab == TuiTab::Writeups
@@ -3650,7 +3719,9 @@ impl App {
                 false
             }
             KeyCode::Right | KeyCode::Char('l') => {
-                if self.active_tab == TuiTab::Writeups && self.writeup_detail.is_some() {
+                if self.active_tab == TuiTab::Reviews && self.review_mode == ReviewMode::Commit {
+                    self.next_review_commit();
+                } else if self.active_tab == TuiTab::Writeups && self.writeup_detail.is_some() {
                     self.focus_next_writeup_pane();
                 } else if self.active_tab == TuiTab::Issues
                     && self.view == ViewMode::Board
@@ -3661,13 +3732,21 @@ impl App {
                 false
             }
             KeyCode::Left | KeyCode::Char('h') => {
-                if self.active_tab == TuiTab::Writeups && self.writeup_detail.is_some() {
+                if self.active_tab == TuiTab::Reviews && self.review_mode == ReviewMode::Commit {
+                    self.previous_review_commit();
+                } else if self.active_tab == TuiTab::Writeups && self.writeup_detail.is_some() {
                     self.focus_previous_writeup_pane();
                 } else if self.active_tab == TuiTab::Issues
                     && self.view == ViewMode::Board
                     && self.detail.is_none()
                 {
                     self.previous_board_column();
+                }
+                false
+            }
+            KeyCode::Char(' ') => {
+                if self.active_tab == TuiTab::Reviews && self.review_mode == ReviewMode::Commit {
+                    self.scroll_review_diff_page();
                 }
                 false
             }
@@ -5704,6 +5783,7 @@ impl App {
         }
         let selected = self.review_commit_state.selected().unwrap_or(0);
         self.review_commit_state.select(Some((selected + 1) % len));
+        self.review_diff_scroll = 0;
     }
 
     fn previous_review_commit(&mut self) {
@@ -5715,6 +5795,77 @@ impl App {
         let selected = self.review_commit_state.selected().unwrap_or(0);
         let previous = selected.checked_sub(1).unwrap_or_else(|| len - 1);
         self.review_commit_state.select(Some(previous));
+        self.review_diff_scroll = 0;
+    }
+
+    fn scroll_review_diff(&mut self, delta: i16) {
+        self.review_diff_scroll = if delta.is_negative() {
+            self.review_diff_scroll.saturating_sub(delta.unsigned_abs())
+        } else {
+            self.review_diff_scroll.saturating_add(delta as u16)
+        };
+    }
+
+    fn scroll_review_diff_page(&mut self) {
+        self.review_diff_scroll = self
+            .review_diff_scroll
+            .saturating_add(self.review_diff_page_height.max(1));
+    }
+
+    fn current_review_commit_sha(&self) -> Option<String> {
+        let (_, review) = self.selected_review_context_owned()?;
+        self.selected_review_commit_sha(&review)
+    }
+
+    fn toggle_current_review_file_diff(&mut self) {
+        let Some(sha) = self.current_review_commit_sha() else {
+            return;
+        };
+        let Some(file) = self.review_file_at_scroll(&sha) else {
+            self.status = Some("No diff file at this scroll position.".to_string());
+            return;
+        };
+        let collapsed = self.review_collapsed_diff_files.entry(sha).or_default();
+        if collapsed.remove(&file) {
+            self.status = Some(format!("Expanded {file}."));
+        } else {
+            collapsed.insert(file.clone());
+            self.status = Some(format!("Folded {file}."));
+        }
+    }
+
+    fn toggle_all_review_file_diffs(&mut self) {
+        let Some(sha) = self.current_review_commit_sha() else {
+            return;
+        };
+        let files = diff_file_keys(&self.commit_patch_lines_cached(&sha));
+        if files.is_empty() {
+            self.status = Some("No files in this diff.".to_string());
+            return;
+        }
+        let collapsed = self.review_collapsed_diff_files.entry(sha).or_default();
+        let all_collapsed = files.iter().all(|file| collapsed.contains(file));
+        if all_collapsed {
+            for file in &files {
+                collapsed.remove(file);
+            }
+            self.status = Some("Expanded all files.".to_string());
+        } else {
+            collapsed.extend(files);
+            self.status = Some("Folded all files.".to_string());
+        }
+    }
+
+    fn review_file_at_scroll(&mut self, sha: &str) -> Option<String> {
+        let info = self.review_commit_info_cached(sha);
+        let patch_lines = self.commit_patch_lines_cached(sha);
+        let collapsed = self
+            .review_collapsed_diff_files
+            .get(sha)
+            .cloned()
+            .unwrap_or_default();
+        let spans = review_diff_file_spans(&info, &patch_lines, &collapsed);
+        diff_file_at_scroll(&spans, usize::from(self.review_diff_scroll))
     }
 
     fn toggle_review_mode(&mut self) {
@@ -5732,6 +5883,7 @@ impl App {
                     self.status = Some("No commit selected.".to_string());
                 } else {
                     self.review_mode = ReviewMode::Commit;
+                    self.review_diff_scroll = 0;
                 }
             }
             ReviewMode::Commit => {
@@ -6921,6 +7073,13 @@ fn commit_patch_lines(sha: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DiffFileSpan {
+    key: String,
+    start: usize,
+    end: usize,
+}
+
 fn review_messages_for_commit<'a>(
     review: &'a TicketReview,
     sha: &str,
@@ -7367,6 +7526,125 @@ fn review_commit_meta_line(ticket: &Ticket, review: &TicketReview, sha: &str) ->
             Style::default().fg(Color::Yellow),
         ),
     ])
+}
+
+fn review_commit_diff_lines(
+    info: &ReviewCommitInfo,
+    patch_lines: &[String],
+    collapsed_files: &BTreeSet<String>,
+) -> Vec<Line<'static>> {
+    review_commit_diff_lines_with_spans(info, patch_lines, collapsed_files).0
+}
+
+fn review_diff_file_spans(
+    info: &ReviewCommitInfo,
+    patch_lines: &[String],
+    collapsed_files: &BTreeSet<String>,
+) -> Vec<DiffFileSpan> {
+    review_commit_diff_lines_with_spans(info, patch_lines, collapsed_files).1
+}
+
+fn review_commit_diff_lines_with_spans(
+    info: &ReviewCommitInfo,
+    patch_lines: &[String],
+    collapsed_files: &BTreeSet<String>,
+) -> (Vec<Line<'static>>, Vec<DiffFileSpan>) {
+    let mut lines = Vec::new();
+    let mut spans = Vec::new();
+    lines.push(Line::from(Span::styled(
+        info.subject.clone(),
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    )));
+    if !info.body.is_empty() {
+        for line in info.body.lines() {
+            lines.push(Line::raw(line.to_string()));
+        }
+    }
+    lines.push(Line::raw(""));
+
+    let mut idx = 0;
+    while idx < patch_lines.len() {
+        let Some(file_key) = diff_file_key(&patch_lines[idx]) else {
+            lines.push(diff_line(patch_lines[idx].clone()));
+            idx += 1;
+            continue;
+        };
+
+        let next = patch_lines
+            .iter()
+            .enumerate()
+            .skip(idx + 1)
+            .find_map(|(line_idx, line)| diff_file_key(line).map(|_| line_idx))
+            .unwrap_or(patch_lines.len());
+        let start = lines.len();
+        if collapsed_files.contains(&file_key) {
+            let mut shown = 0usize;
+            for line in &patch_lines[idx..next] {
+                if shown == 0
+                    || line.starts_with("index ")
+                    || line.starts_with("--- ")
+                    || line.starts_with("+++ ")
+                {
+                    lines.push(diff_line(line.clone()));
+                    shown += 1;
+                }
+            }
+            let hidden = next.saturating_sub(idx).saturating_sub(shown);
+            lines.push(Line::from(Span::styled(
+                format!("... folded {hidden} diff lines for {file_key}"),
+                Style::default().fg(Color::DarkGray),
+            )));
+        } else {
+            for line in &patch_lines[idx..next] {
+                lines.push(diff_line(line.clone()));
+            }
+        }
+        spans.push(DiffFileSpan {
+            key: file_key,
+            start,
+            end: lines.len().saturating_sub(1),
+        });
+        idx = next;
+    }
+
+    (lines, spans)
+}
+
+fn diff_file_keys(patch_lines: &[String]) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut files = Vec::new();
+    for line in patch_lines {
+        if let Some(key) = diff_file_key(line) {
+            if seen.insert(key.clone()) {
+                files.push(key);
+            }
+        }
+    }
+    files
+}
+
+fn diff_file_key(line: &str) -> Option<String> {
+    let rest = line.strip_prefix("diff --git ")?;
+    let mut parts = rest.split_whitespace();
+    let _old = parts.next()?;
+    let new = parts.next()?;
+    Some(
+        new.strip_prefix("b/")
+            .unwrap_or(new)
+            .trim_matches('"')
+            .to_string(),
+    )
+}
+
+fn diff_file_at_scroll(spans: &[DiffFileSpan], scroll: usize) -> Option<String> {
+    spans
+        .iter()
+        .find(|span| span.start <= scroll && scroll <= span.end)
+        .or_else(|| spans.iter().rev().find(|span| span.start <= scroll))
+        .or_else(|| spans.first())
+        .map(|span| span.key.clone())
 }
 
 fn diff_line(line: String) -> Line<'static> {
@@ -9923,6 +10201,53 @@ mod tests {
         assert!(text.contains("Ticket: 000"));
         assert!(text.contains("Status: open"));
         assert!(text.contains("Head: abcdef1"));
+    }
+
+    #[test]
+    fn review_diff_file_keys_keep_patch_order() {
+        let patch = vec![
+            "diff --git a/src/a.rs b/src/a.rs".to_string(),
+            "@@ -1 +1 @@".to_string(),
+            "diff --git a/src/b.rs b/src/b.rs".to_string(),
+            "@@ -1 +1 @@".to_string(),
+            "diff --git a/src/a.rs b/src/a.rs".to_string(),
+        ];
+
+        assert_eq!(
+            diff_file_keys(&patch),
+            vec!["src/a.rs".to_string(), "src/b.rs".to_string()]
+        );
+    }
+
+    #[test]
+    fn review_diff_lines_can_fold_individual_files() {
+        let info = ReviewCommitInfo {
+            subject: "Update files".to_string(),
+            ..ReviewCommitInfo::default()
+        };
+        let patch = vec![
+            "diff --git a/src/a.rs b/src/a.rs".to_string(),
+            "index 111..222 100644".to_string(),
+            "--- a/src/a.rs".to_string(),
+            "+++ b/src/a.rs".to_string(),
+            "@@ -1 +1 @@".to_string(),
+            "-old".to_string(),
+            "+new".to_string(),
+            "diff --git a/src/b.rs b/src/b.rs".to_string(),
+            "@@ -1 +1 @@".to_string(),
+            "+other".to_string(),
+        ];
+        let collapsed = BTreeSet::from(["src/a.rs".to_string()]);
+        let text = review_commit_diff_lines(&info, &patch, &collapsed)
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| span.content.as_ref())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(text.contains("folded 3 diff lines for src/a.rs"));
+        assert!(!text.contains("-old"));
+        assert!(text.contains("+other"));
     }
 
     #[test]
