@@ -20,6 +20,7 @@ use ratatui::widgets::{
     Block, Borders, Clear, Gauge, HighlightSpacing, List, ListItem, ListState, Paragraph, Wrap,
 };
 use ratatui::{Frame, Terminal};
+use serde::Deserialize;
 use ticgit_lib::{
     keys, query, Comment, Filter, MetaValue, NewTicketOpts, NewWriteupOpts, SortKey, SortOrder,
     Target, Ticket, TicketLifecycle, TicketState, TicketStatus, TicketStore, Writeup,
@@ -205,6 +206,7 @@ struct App {
     tag_picker_state: ListState,
     manage_tag_state: ListState,
     link_issue_state: ListState,
+    review_commit_state: ListState,
     writeup_toc_state: ListState,
     version_state: ListState,
     order_state: ListState,
@@ -215,6 +217,7 @@ struct App {
     detail: Option<usize>,
     writeup_detail: Option<usize>,
     review_detail: Option<usize>,
+    review_mode: ReviewMode,
     writeup_detail_focus: WriteupPaneFocus,
     writeup_detail_scroll: u16,
     writeup_toc_open: bool,
@@ -247,6 +250,14 @@ enum WriteupPaneFocus {
     List,
     Detail,
     Toc,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum ReviewMode {
+    #[default]
+    Summary,
+    Commits,
+    Commit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -300,6 +311,18 @@ struct TicketReview {
     status: String,
     head_sha: Option<String>,
     revisions: Vec<String>,
+    messages: Vec<ReviewMessageView>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+struct ReviewMessageView {
+    author: String,
+    body: String,
+    #[serde(rename = "type")]
+    message_type: String,
+    commit: Option<String>,
+    path: Option<String>,
+    lines: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -307,6 +330,15 @@ struct CommitReviewStatus {
     reviewed: BTreeSet<String>,
     approvals: BTreeSet<String>,
     signed_off: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct ReviewCommitInfo {
+    subject: String,
+    body: String,
+    author: String,
+    updated: String,
+    shortstat: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -455,6 +487,7 @@ impl App {
             tag_picker_state: ListState::default(),
             manage_tag_state: ListState::default(),
             link_issue_state: ListState::default(),
+            review_commit_state: ListState::default(),
             writeup_toc_state: ListState::default(),
             version_state: ListState::default(),
             order_state: ListState::default(),
@@ -465,6 +498,7 @@ impl App {
             detail: None,
             writeup_detail: None,
             review_detail: None,
+            review_mode: ReviewMode::Summary,
             writeup_detail_focus: WriteupPaneFocus::List,
             writeup_detail_scroll: 0,
             writeup_toc_open: false,
@@ -633,7 +667,10 @@ impl App {
                 .split(outer[0]);
             self.draw_writeup_list(frame, panes[0]);
             self.draw_writeup_detail(frame, panes[1]);
-        } else if self.active_tab == TuiTab::Reviews && self.review_detail.is_some() {
+        } else if self.active_tab == TuiTab::Reviews
+            && self.review_detail.is_some()
+            && self.review_mode == ReviewMode::Summary
+        {
             let list_width = 100_u16.saturating_sub(self.detail_width_percent);
             let panes = Layout::default()
                 .direction(Direction::Horizontal)
@@ -644,6 +681,12 @@ impl App {
                 .split(outer[0]);
             self.draw_review_list(frame, panes[0]);
             self.draw_review_detail(frame, panes[1]);
+        } else if self.active_tab == TuiTab::Reviews && self.review_detail.is_some() {
+            match self.review_mode {
+                ReviewMode::Summary => {}
+                ReviewMode::Commits => self.draw_review_commit_list_mode(frame, outer[0]),
+                ReviewMode::Commit => self.draw_review_commit_mode(frame, outer[0]),
+            }
         } else {
             match self.active_tab {
                 TuiTab::Issues => match self.view {
@@ -1183,6 +1226,11 @@ impl App {
                         },
                     ]
                 } else if self.active_tab == TuiTab::Reviews {
+                    let view_hint = match self.review_mode {
+                        ReviewMode::Summary => "commits",
+                        ReviewMode::Commits => "commit",
+                        ReviewMode::Commit => "list",
+                    };
                     vec![
                         MenuHint {
                             key: "Tab",
@@ -1195,6 +1243,10 @@ impl App {
                         MenuHint {
                             key: "Enter",
                             desc: "details",
+                        },
+                        MenuHint {
+                            key: "v",
+                            desc: view_hint,
                         },
                         MenuHint {
                             key: "+/-",
@@ -1856,6 +1908,221 @@ impl App {
             .block(Block::default().borders(Borders::ALL).title("Review"))
             .wrap(Wrap { trim: false });
         frame.render_widget(detail, area);
+    }
+
+    fn draw_review_commit_list_mode(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        let Some((ticket, review)) = self.selected_review_context_owned() else {
+            return;
+        };
+        let panes = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(62), Constraint::Percentage(38)])
+            .split(area);
+        self.draw_review_commit_table(frame, panes[0], &ticket, &review);
+        self.draw_review_commit_preview(frame, panes[1], &ticket, &review);
+    }
+
+    fn draw_review_commit_table(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        ticket: &Ticket,
+        review: &TicketReview,
+    ) {
+        let commits = review_commits(review);
+        self.sync_review_commit_selection_for(commits.len());
+        let title = format!(
+            "{}  {}  ({})",
+            review.title,
+            ticket.short_id(),
+            review_branch_label(review)
+        );
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(tabs_title(self.active_tab, &title));
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        let rows_area = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(0)])
+            .split(inner);
+        frame.render_widget(
+            Paragraph::new(review_commit_table_header(usize::from(rows_area[0].width))),
+            rows_area[0],
+        );
+
+        let total = commits.len();
+        let items = if commits.is_empty() {
+            vec![ListItem::new(Line::from(Span::styled(
+                "No review revisions recorded yet. Run `ti review update`.",
+                Style::default().fg(Color::DarkGray),
+            )))]
+        } else {
+            commits
+                .iter()
+                .enumerate()
+                .map(|(idx, sha)| {
+                    ListItem::new(review_commit_table_line(
+                        idx,
+                        total,
+                        sha,
+                        review,
+                        &commit_review_status(&self.store, sha),
+                        usize::from(rows_area[1].width)
+                            .saturating_sub(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL)),
+                    ))
+                })
+                .collect()
+        };
+        let list = List::new(items)
+            .highlight_style(
+                Style::default()
+                    .bg(Color::Rgb(0, 0, 95))
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol(HIGHLIGHT_SYMBOL)
+            .highlight_spacing(HighlightSpacing::Always);
+        frame.render_stateful_widget(list, rows_area[1], &mut self.review_commit_state);
+    }
+
+    fn draw_review_commit_preview(
+        &self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        _ticket: &Ticket,
+        review: &TicketReview,
+    ) {
+        let Some(sha) = self.selected_review_commit_sha(review) else {
+            let empty = Paragraph::new("No commit selected.")
+                .block(Block::default().borders(Borders::ALL).title("Preview"));
+            frame.render_widget(empty, area);
+            return;
+        };
+        let info = review_commit_info(&sha);
+        let status = commit_review_status(&self.store, &sha);
+        let mut lines = vec![
+            Line::from(vec![
+                Span::styled(
+                    short_hash(&sha).to_string(),
+                    Style::default().fg(Color::Cyan),
+                ),
+                Span::raw(" "),
+                Span::styled(
+                    info.subject.clone(),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            field_line("Author", &info.author),
+            field_line("Updated", &info.updated),
+            review_commit_status_line(&status),
+        ];
+        if !info.shortstat.is_empty() {
+            lines.push(field_line("Changes", &info.shortstat));
+        }
+        if !info.body.is_empty() {
+            lines.push(Line::raw(""));
+            for line in info.body.lines().take(12) {
+                lines.push(Line::raw(line.to_string()));
+            }
+        }
+        let messages = review_messages_for_commit(review, &sha);
+        if !messages.is_empty() {
+            lines.push(Line::raw(""));
+            lines.push(Line::from(Span::styled(
+                "Review messages",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            for message in messages.iter().take(5) {
+                lines.push(review_message_line(
+                    message,
+                    usize::from(area.width).saturating_sub(2),
+                ));
+            }
+        }
+        let preview = Paragraph::new(lines)
+            .block(Block::default().borders(Borders::ALL).title("Preview"))
+            .wrap(Wrap { trim: false });
+        frame.render_widget(preview, area);
+    }
+
+    fn draw_review_commit_mode(&self, frame: &mut Frame<'_>, area: Rect) {
+        let Some((ticket, review)) = self.selected_review_context_owned() else {
+            return;
+        };
+        let Some(sha) = self.selected_review_commit_sha(&review) else {
+            return;
+        };
+        let vertical = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Min(0)])
+            .split(area);
+        let top = Paragraph::new(review_commit_meta_line(&ticket, &review, &sha))
+            .block(Block::default().borders(Borders::ALL).title("Review"));
+        frame.render_widget(top, vertical[0]);
+
+        let panes = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
+            .split(vertical[1]);
+        self.draw_review_commit_diff(frame, panes[0], &sha);
+        self.draw_review_commit_discussion(frame, panes[1], &review, &sha);
+    }
+
+    fn draw_review_commit_diff(&self, frame: &mut Frame<'_>, area: Rect, sha: &str) {
+        let info = review_commit_info(sha);
+        let mut lines = Vec::new();
+        lines.push(Line::from(Span::styled(
+            info.subject,
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )));
+        if !info.body.is_empty() {
+            for line in info.body.lines() {
+                lines.push(Line::raw(line.to_string()));
+            }
+        }
+        lines.push(Line::raw(""));
+        for line in commit_patch_lines(sha).into_iter().take(400) {
+            lines.push(diff_line(line));
+        }
+        let diff = Paragraph::new(lines)
+            .block(Block::default().borders(Borders::ALL).title("Commit"))
+            .wrap(Wrap { trim: false });
+        frame.render_widget(diff, area);
+    }
+
+    fn draw_review_commit_discussion(
+        &self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        review: &TicketReview,
+        sha: &str,
+    ) {
+        let messages = review_messages_for_commit(review, sha);
+        let mut lines = Vec::new();
+        if messages.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "No review comments on this commit.",
+                Style::default().fg(Color::DarkGray),
+            )));
+        } else {
+            for message in messages {
+                lines.push(review_message_header_line(message));
+                for line in message.body.lines() {
+                    lines.push(Line::raw(line.to_string()));
+                }
+                lines.push(Line::raw(""));
+            }
+        }
+        let discussion = Paragraph::new(lines)
+            .block(Block::default().borders(Borders::ALL).title("Discussion"))
+            .wrap(Wrap { trim: false });
+        frame.render_widget(discussion, area);
     }
 
     fn draw_writeup_detail(&mut self, frame: &mut Frame<'_>, area: Rect) {
@@ -2979,7 +3246,11 @@ impl App {
                 ));
                 lines.push(help_columns(
                     ("Enter", "details"),
-                    Some(("Esc", "close detail")),
+                    Some(("v", "review mode")),
+                ));
+                lines.push(help_columns(
+                    ("v in review", "commit mode"),
+                    Some(("Esc", "back/close")),
                 ));
                 lines.push(help_columns(
                     ("/", "search text"),
@@ -3181,6 +3452,16 @@ impl App {
                 if self.comments_mode {
                     self.comments_mode = false;
                     false
+                } else if self.active_tab == TuiTab::Reviews
+                    && self.review_mode == ReviewMode::Commit
+                {
+                    self.review_mode = ReviewMode::Commits;
+                    false
+                } else if self.active_tab == TuiTab::Reviews
+                    && self.review_mode == ReviewMode::Commits
+                {
+                    self.review_mode = ReviewMode::Summary;
+                    false
                 } else if self.active_tab == TuiTab::Writeups
                     && self.writeup_detail_focus == WriteupPaneFocus::Toc
                 {
@@ -3195,6 +3476,8 @@ impl App {
                     false
                 } else if self.active_tab == TuiTab::Reviews && self.review_detail.is_some() {
                     self.review_detail = None;
+                    self.review_mode = ReviewMode::Summary;
+                    self.review_commit_state.select(None);
                     false
                 } else if self.detail.is_some() {
                     self.detail = None;
@@ -3237,6 +3520,8 @@ impl App {
             KeyCode::Char('v') => {
                 if self.active_tab == TuiTab::Writeups && self.writeup_detail.is_some() {
                     self.begin_versions();
+                } else if self.active_tab == TuiTab::Reviews && self.review_detail.is_some() {
+                    self.toggle_review_mode();
                 } else if self.active_tab == TuiTab::Issues {
                     self.begin_saved_views();
                 }
@@ -3295,6 +3580,10 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') => {
                 if self.comments_mode {
                     self.next_comment();
+                } else if self.active_tab == TuiTab::Reviews
+                    && matches!(self.review_mode, ReviewMode::Commits | ReviewMode::Commit)
+                {
+                    self.next_review_commit();
                 } else if self.active_tab == TuiTab::Writeups
                     && self.writeup_detail_focus == WriteupPaneFocus::Detail
                 {
@@ -3316,6 +3605,10 @@ impl App {
             KeyCode::Up | KeyCode::Char('k') => {
                 if self.comments_mode {
                     self.previous_comment();
+                } else if self.active_tab == TuiTab::Reviews
+                    && matches!(self.review_mode, ReviewMode::Commits | ReviewMode::Commit)
+                {
+                    self.previous_review_commit();
                 } else if self.active_tab == TuiTab::Writeups
                     && self.writeup_detail_focus == WriteupPaneFocus::Detail
                 {
@@ -5368,6 +5661,59 @@ impl App {
         self.sync_open_review_detail();
     }
 
+    fn review_commit_count(&self) -> usize {
+        self.review_detail
+            .and_then(|idx| self.all_tickets.get(idx))
+            .and_then(|ticket| self.ticket_reviews.get(&ticket.id))
+            .map(review_commits)
+            .map(|commits| commits.len())
+            .unwrap_or_default()
+    }
+
+    fn next_review_commit(&mut self) {
+        let len = self.review_commit_count();
+        if len == 0 {
+            self.review_commit_state.select(None);
+            return;
+        }
+        let selected = self.review_commit_state.selected().unwrap_or(0);
+        self.review_commit_state.select(Some((selected + 1) % len));
+    }
+
+    fn previous_review_commit(&mut self) {
+        let len = self.review_commit_count();
+        if len == 0 {
+            self.review_commit_state.select(None);
+            return;
+        }
+        let selected = self.review_commit_state.selected().unwrap_or(0);
+        let previous = selected.checked_sub(1).unwrap_or_else(|| len - 1);
+        self.review_commit_state.select(Some(previous));
+    }
+
+    fn toggle_review_mode(&mut self) {
+        match self.review_mode {
+            ReviewMode::Summary => {
+                if self.review_commit_count() == 0 {
+                    self.status = Some("No review commits recorded yet.".to_string());
+                } else {
+                    self.review_mode = ReviewMode::Commits;
+                    self.sync_review_commit_selection_for(self.review_commit_count());
+                }
+            }
+            ReviewMode::Commits => {
+                if self.review_commit_count() == 0 {
+                    self.status = Some("No commit selected.".to_string());
+                } else {
+                    self.review_mode = ReviewMode::Commit;
+                }
+            }
+            ReviewMode::Commit => {
+                self.review_mode = ReviewMode::Commits;
+            }
+        }
+    }
+
     fn previous_writeup(&mut self) {
         if self.visible_writeups.is_empty() {
             return;
@@ -5697,6 +6043,10 @@ impl App {
             .and_then(|selected| indices.get(selected))
             .copied()
         {
+            if self.review_detail != Some(idx) {
+                self.review_mode = ReviewMode::Summary;
+                self.review_commit_state.select(None);
+            }
             self.review_detail = Some(idx);
             self.select_review_ticket_by_index(idx);
         }
@@ -5736,6 +6086,10 @@ impl App {
     fn sync_review_selection(&mut self) {
         let indices = self.review_ticket_indices();
         self.review_detail = self.review_detail.filter(|idx| indices.contains(idx));
+        if self.review_detail.is_none() {
+            self.review_mode = ReviewMode::Summary;
+            self.review_commit_state.select(None);
+        }
         if indices.is_empty() {
             self.review_state.select(None);
         } else {
@@ -5745,6 +6099,19 @@ impl App {
                 .unwrap_or(0)
                 .min(indices.len() - 1);
             self.review_state.select(Some(selected));
+        }
+    }
+
+    fn sync_review_commit_selection_for(&mut self, len: usize) {
+        if len == 0 {
+            self.review_commit_state.select(None);
+        } else {
+            let selected = self
+                .review_commit_state
+                .selected()
+                .unwrap_or(0)
+                .min(len - 1);
+            self.review_commit_state.select(Some(selected));
         }
     }
 
@@ -5766,6 +6133,23 @@ impl App {
         if self.review_detail.is_some() {
             self.review_detail = Some(idx);
         }
+    }
+
+    fn selected_review_context_owned(&self) -> Option<(Ticket, TicketReview)> {
+        let ticket = self
+            .review_detail
+            .and_then(|idx| self.all_tickets.get(idx))?;
+        let review = self.ticket_reviews.get(&ticket.id)?;
+        Some((ticket.clone(), review.clone()))
+    }
+
+    fn selected_review_commit_sha(&self, review: &TicketReview) -> Option<String> {
+        let commits = review_commits(review);
+        self.review_commit_state
+            .selected()
+            .and_then(|idx| commits.get(idx))
+            .cloned()
+            .or_else(|| commits.first().cloned())
     }
 
     fn board_column_tickets(&self, column: usize) -> Vec<&usize> {
@@ -6296,6 +6680,12 @@ fn load_review_metadata(store: &TicketStore, branch_id: &str) -> TicketReview {
         .into_iter()
         .map(|entry| entry.value)
         .collect();
+    let messages = target
+        .list_entries("review:messages")
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|entry| serde_json::from_str::<ReviewMessageView>(&entry.value).ok())
+        .collect();
     TicketReview {
         branch_id: branch_id.to_string(),
         branch_name,
@@ -6303,6 +6693,7 @@ fn load_review_metadata(store: &TicketStore, branch_id: &str) -> TicketReview {
         status,
         head_sha,
         revisions,
+        messages,
     }
 }
 
@@ -6314,6 +6705,7 @@ fn ticket_code_review(branch_name: &str) -> TicketReview {
         status: "open".to_string(),
         head_sha: resolve_git_ref(branch_name).ok(),
         revisions: Vec::new(),
+        messages: Vec::new(),
     }
 }
 
@@ -6393,6 +6785,378 @@ fn commit_subject(sha: &str) -> Option<String> {
 
 fn short_hash(value: &str) -> &str {
     value.get(..7).unwrap_or(value)
+}
+
+fn review_commit_info(sha: &str) -> ReviewCommitInfo {
+    let output = Command::new("git")
+        .args(["show", "-s", "--format=%s%n%an <%ae>%n%ar%n%B", sha])
+        .output();
+    let mut lines = output
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).to_string())
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let subject = lines
+        .first()
+        .cloned()
+        .unwrap_or_else(|| short_hash(sha).to_string());
+    let author = lines.get(1).cloned().unwrap_or_default();
+    let updated = lines.get(2).cloned().unwrap_or_default();
+    let body = if lines.len() > 3 {
+        lines
+            .drain(3..)
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim()
+            .to_string()
+    } else {
+        String::new()
+    };
+    ReviewCommitInfo {
+        subject,
+        body,
+        author,
+        updated,
+        shortstat: commit_shortstat(sha),
+    }
+}
+
+fn commit_shortstat(sha: &str) -> String {
+    let output = Command::new("git")
+        .args(["show", "--shortstat", "--format=", sha])
+        .output();
+    output
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .unwrap_or_default()
+}
+
+fn commit_patch_lines(sha: &str) -> Vec<String> {
+    let output = Command::new("git")
+        .args([
+            "show",
+            "--format=",
+            "--patch",
+            "--find-renames",
+            "--color=never",
+            sha,
+        ])
+        .output();
+    output
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn review_messages_for_commit<'a>(
+    review: &'a TicketReview,
+    sha: &str,
+) -> Vec<&'a ReviewMessageView> {
+    review
+        .messages
+        .iter()
+        .filter(|message| message.commit.as_deref() == Some(sha))
+        .collect()
+}
+
+fn review_commit_table_header(width: usize) -> Line<'static> {
+    let labels = [
+        ("Status", 18),
+        ("Ver.", 5),
+        ("Name", 30),
+        ("Changes", 12),
+        ("Updated", 12),
+        ("Author", 14),
+        ("Reviewers", 16),
+    ];
+    let mut spans = Vec::new();
+    let mut used = 0;
+    for (idx, (label, column_width)) in labels.iter().enumerate() {
+        if idx > 0 {
+            spans.push(Span::raw(" "));
+            used += 1;
+        }
+        let remaining = width.saturating_sub(used);
+        if remaining == 0 {
+            break;
+        }
+        let column_width = (*column_width).min(remaining);
+        spans.push(Span::styled(
+            fit_display(label, column_width),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ));
+        used += column_width;
+    }
+    Line::from(spans)
+}
+
+fn review_commit_table_line(
+    idx: usize,
+    total: usize,
+    sha: &str,
+    review: &TicketReview,
+    status: &CommitReviewStatus,
+    width: usize,
+) -> Line<'static> {
+    let info = review_commit_info(sha);
+    let messages = review_messages_for_commit(review, sha);
+    let status_label = review_commit_verdict(review, sha, status);
+    let mut columns = vec![
+        (status_label.0, status_label.1, 18),
+        (
+            format!("v{}", total.saturating_sub(idx)),
+            Style::default().fg(Color::DarkGray),
+            5,
+        ),
+        (
+            info.subject,
+            Style::default().add_modifier(Modifier::BOLD),
+            30,
+        ),
+        (
+            review_changes_display(&info.shortstat),
+            Style::default().fg(Color::LightGreen),
+            12,
+        ),
+        (info.updated, Style::default().fg(Color::DarkGray), 12),
+        (
+            short_author_display(&info.author),
+            Style::default().fg(Color::Cyan),
+            14,
+        ),
+        (
+            review_people_display(status, messages.as_slice()),
+            Style::default().fg(Color::LightGreen),
+            16,
+        ),
+    ];
+    let mut spans = Vec::new();
+    let mut used = 0;
+    for (idx, (value, style, column_width)) in columns.drain(..).enumerate() {
+        if idx > 0 {
+            spans.push(Span::raw(" "));
+            used += 1;
+        }
+        let remaining = width.saturating_sub(used);
+        if remaining == 0 {
+            break;
+        }
+        let column_width = column_width.min(remaining);
+        spans.push(Span::styled(fit_display(&value, column_width), style));
+        used += column_width;
+    }
+    Line::from(spans)
+}
+
+fn review_commit_verdict(
+    review: &TicketReview,
+    sha: &str,
+    status: &CommitReviewStatus,
+) -> (String, Style) {
+    let messages = review_messages_for_commit(review, sha);
+    if messages
+        .iter()
+        .rev()
+        .any(|message| message.message_type == "changes-requested")
+    {
+        return (
+            "Changes requested".to_string(),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
+    }
+    if !status.approvals.is_empty()
+        || messages
+            .iter()
+            .rev()
+            .any(|message| message.message_type == "approval")
+    {
+        return (
+            "Approved".to_string(),
+            Style::default()
+                .fg(Color::LightGreen)
+                .add_modifier(Modifier::BOLD),
+        );
+    }
+    if !status.reviewed.is_empty() {
+        return (
+            "Reviewed".to_string(),
+            Style::default().fg(Color::LightBlue),
+        );
+    }
+    ("Pending".to_string(), Style::default().fg(Color::DarkGray))
+}
+
+fn review_changes_display(shortstat: &str) -> String {
+    if shortstat.is_empty() {
+        return String::new();
+    }
+    let insertions = shortstat
+        .split(',')
+        .find_map(|part| {
+            part.trim()
+                .strip_suffix(" insertions(+)")
+                .or_else(|| part.trim().strip_suffix(" insertion(+)"))
+        })
+        .map(str::trim)
+        .unwrap_or("0");
+    let deletions = shortstat
+        .split(',')
+        .find_map(|part| {
+            part.trim()
+                .strip_suffix(" deletions(-)")
+                .or_else(|| part.trim().strip_suffix(" deletion(-)"))
+        })
+        .map(str::trim)
+        .unwrap_or("0");
+    format!("+{insertions} -{deletions}")
+}
+
+fn short_author_display(author: &str) -> String {
+    author
+        .split('<')
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| truncate_display(value, 13))
+        .unwrap_or_default()
+}
+
+fn review_people_display(status: &CommitReviewStatus, messages: &[&ReviewMessageView]) -> String {
+    let mut people = status.approvals.clone();
+    for message in messages {
+        if message.message_type == "approval" {
+            people.insert(message.author.clone());
+        }
+    }
+    if people.is_empty() {
+        return "-".to_string();
+    }
+    people
+        .iter()
+        .map(|person| short_assignee(person))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn review_commit_status_line(status: &CommitReviewStatus) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            format!("{:<10}", "Status"),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" : ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!(
+                "reviewed {}  approved {}  signed-off {}",
+                status.reviewed.len(),
+                status.approvals.len(),
+                status.signed_off.len()
+            ),
+            Style::default().fg(Color::Cyan),
+        ),
+    ])
+}
+
+fn review_message_line(message: &ReviewMessageView, width: usize) -> Line<'static> {
+    let prefix = format!(
+        "[{}] {}",
+        message.message_type,
+        comment_author_display(&message.author)
+    );
+    let prefix_width = UnicodeWidthStr::width(prefix.as_str()) + 2;
+    let body = truncate_display(
+        &flatten_display(&message.body),
+        width.saturating_sub(prefix_width),
+    );
+    Line::from(vec![
+        Span::styled(prefix, review_message_style(&message.message_type)),
+        Span::raw("  "),
+        Span::raw(body),
+    ])
+}
+
+fn review_message_header_line(message: &ReviewMessageView) -> Line<'static> {
+    let location = match (message.path.as_deref(), message.lines.as_deref()) {
+        (Some(path), Some(lines)) => format!(" {path}:{lines}"),
+        (Some(path), None) => format!(" {path}"),
+        _ => String::new(),
+    };
+    Line::from(vec![
+        Span::styled(
+            format!("[{}]", message.message_type),
+            review_message_style(&message.message_type),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            comment_author_display(&message.author),
+            Style::default().fg(Color::Cyan),
+        ),
+        Span::styled(location, Style::default().fg(Color::DarkGray)),
+    ])
+}
+
+fn review_message_style(message_type: &str) -> Style {
+    let color = match message_type {
+        "approval" => Color::LightGreen,
+        "changes-requested" => Color::Yellow,
+        "resolved" => Color::DarkGray,
+        _ => Color::LightBlue,
+    };
+    Style::default().fg(color).add_modifier(Modifier::BOLD)
+}
+
+fn review_commit_meta_line(ticket: &Ticket, review: &TicketReview, sha: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            review.title.clone(),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        Span::styled(ticket.short_id(), Style::default().fg(Color::DarkGray)),
+        Span::raw("  "),
+        Span::styled(
+            review_branch_label(review),
+            Style::default().fg(Color::LightBlue),
+        ),
+        Span::raw("  "),
+        Span::styled(
+            short_hash(sha).to_string(),
+            Style::default().fg(Color::Yellow),
+        ),
+    ])
+}
+
+fn diff_line(line: String) -> Line<'static> {
+    let style = if line.starts_with('+') && !line.starts_with("+++") {
+        Style::default().fg(Color::LightGreen)
+    } else if line.starts_with('-') && !line.starts_with("---") {
+        Style::default().fg(Color::LightRed)
+    } else if line.starts_with("@@") {
+        Style::default().fg(Color::LightBlue)
+    } else if line.starts_with("diff --git") || line.starts_with("index ") {
+        Style::default().fg(Color::DarkGray)
+    } else {
+        Style::default()
+    };
+    Line::from(Span::styled(line, style))
 }
 
 fn ticket_list_line(
@@ -8850,6 +9614,47 @@ mod tests {
         assert_eq!(
             review_commits(&review),
             vec!["1111111".to_string(), "2222222".to_string()]
+        );
+    }
+
+    #[test]
+    fn review_messages_filter_by_commit() {
+        let review = TicketReview {
+            messages: vec![
+                ReviewMessageView {
+                    author: "alice@example.com".to_string(),
+                    body: "check this".to_string(),
+                    message_type: "comment".to_string(),
+                    commit: Some("abc123".to_string()),
+                    path: Some("src/lib.rs".to_string()),
+                    lines: Some("42".to_string()),
+                },
+                ReviewMessageView {
+                    author: "bob@example.com".to_string(),
+                    body: "other".to_string(),
+                    message_type: "comment".to_string(),
+                    commit: Some("def456".to_string()),
+                    path: None,
+                    lines: None,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let messages = review_messages_for_commit(&review, "abc123");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].author, "alice@example.com");
+    }
+
+    #[test]
+    fn review_changes_display_extracts_insertions_and_deletions() {
+        assert_eq!(
+            review_changes_display("3 files changed, 102 insertions(+), 2 deletions(-)"),
+            "+102 -2"
+        );
+        assert_eq!(
+            review_changes_display("1 file changed, 7 insertions(+)"),
+            "+7 -0"
         );
     }
 
