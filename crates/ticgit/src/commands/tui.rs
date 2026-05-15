@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::{self, Stdout};
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -186,6 +186,7 @@ struct App {
     review_commit_cache: HashMap<String, ReviewCommitInfo>,
     review_status_cache: HashMap<String, CommitReviewStatus>,
     review_patch_cache: HashMap<String, Vec<String>>,
+    review_diff_render_cache: HashMap<String, ReviewDiffRender>,
     review_diff_scroll: u16,
     review_diff_page_height: u16,
     review_diff_line_focus: u16,
@@ -358,6 +359,14 @@ struct ReviewCommitInfo {
     shortstat: String,
 }
 
+#[derive(Debug, Clone)]
+struct ReviewDiffRender {
+    lines: Arc<Vec<Line<'static>>>,
+    spans: Arc<Vec<DiffFileSpan>>,
+    toc_entries: Arc<Vec<DiffTocEntry>>,
+    files: Arc<Vec<String>>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
     Normal,
@@ -480,6 +489,7 @@ impl App {
             review_commit_cache: HashMap::new(),
             review_status_cache: HashMap::new(),
             review_patch_cache: HashMap::new(),
+            review_diff_render_cache: HashMap::new(),
             review_diff_scroll: 0,
             review_diff_page_height: 20,
             review_diff_line_focus: 0,
@@ -2168,14 +2178,7 @@ impl App {
     }
 
     fn draw_review_diff_toc(&mut self, frame: &mut Frame<'_>, area: Rect, sha: &str) {
-        let info = self.review_commit_info_cached(sha);
-        let patch_lines = self.commit_patch_lines_cached(sha);
-        let collapsed = self
-            .review_collapsed_diff_files
-            .get(sha)
-            .cloned()
-            .unwrap_or_default();
-        let entries = review_diff_toc_entries(&info, &patch_lines, &collapsed);
+        let entries = self.review_diff_render_cached(sha).toc_entries;
         self.sync_review_diff_toc_selection_for(entries.len());
         let width = usize::from(area.width).saturating_sub(2);
         let items = if entries.is_empty() {
@@ -2215,15 +2218,12 @@ impl App {
 
     fn draw_review_commit_diff(&mut self, frame: &mut Frame<'_>, area: Rect, sha: &str) {
         self.review_diff_page_height = area.height.saturating_sub(2).max(1);
-        let info = self.review_commit_info_cached(sha);
-        let patch_lines = self.commit_patch_lines_cached(sha);
-        let collapsed = self
+        let render = self.review_diff_render_cached(sha);
+        let files = render.files;
+        let folding_active = self
             .review_collapsed_diff_files
             .get(sha)
-            .cloned()
-            .unwrap_or_default();
-        let files = diff_file_keys(&patch_lines);
-        let folding_active = !collapsed.is_empty();
+            .is_some_and(|files| !files.is_empty());
         if folding_active {
             self.sync_review_diff_file_selection_for(files.len());
         }
@@ -2237,25 +2237,13 @@ impl App {
         };
         let mut selected_line =
             (!folding_active).then_some(usize::from(self.review_diff_line_focus));
-        let (mut lines, mut spans) = review_commit_diff_lines_with_spans(
-            &info,
-            &patch_lines,
-            &collapsed,
-            selected_file,
-            selected_line,
-        );
+        let lines = render.lines;
+        let spans = render.spans;
         if let Some(line) = selected_line {
             let max_line = lines.len().saturating_sub(1);
             if line > max_line {
                 self.review_diff_line_focus = max_line.min(usize::from(u16::MAX)) as u16;
                 selected_line = Some(max_line);
-                (lines, spans) = review_commit_diff_lines_with_spans(
-                    &info,
-                    &patch_lines,
-                    &collapsed,
-                    selected_file,
-                    selected_line,
-                );
             }
         }
         let max_scroll = lines
@@ -2289,15 +2277,14 @@ impl App {
             })
             .or(selected_line);
         let lines = add_diff_gutter(
-            lines,
+            lines.as_slice(),
             usize::from(self.review_diff_scroll),
             usize::from(self.review_diff_page_height),
             selected_gutter_line,
         );
         let diff = Paragraph::new(lines)
             .block(Block::default().borders(Borders::ALL).title("Commit"))
-            .wrap(Wrap { trim: false })
-            .scroll((self.review_diff_scroll, 0));
+            .wrap(Wrap { trim: false });
         frame.render_widget(diff, area);
     }
 
@@ -6190,14 +6177,7 @@ impl App {
         let Some(sha) = self.current_review_commit_sha() else {
             return;
         };
-        let info = self.review_commit_info_cached(&sha);
-        let patch_lines = self.commit_patch_lines_cached(&sha);
-        let collapsed = self
-            .review_collapsed_diff_files
-            .get(&sha)
-            .cloned()
-            .unwrap_or_default();
-        let entries = review_diff_toc_entries(&info, &patch_lines, &collapsed);
+        let entries = self.review_diff_render_cached(&sha).toc_entries;
         if entries.is_empty() {
             self.status = Some("No files or hunks in this diff.".to_string());
             return;
@@ -6245,14 +6225,10 @@ impl App {
         let Some(sha) = self.current_review_commit_sha() else {
             return Vec::new();
         };
-        let info = self.review_commit_info_cached(&sha);
-        let patch_lines = self.commit_patch_lines_cached(&sha);
-        let collapsed = self
-            .review_collapsed_diff_files
-            .get(&sha)
-            .cloned()
-            .unwrap_or_default();
-        review_diff_toc_entries(&info, &patch_lines, &collapsed)
+        self.review_diff_render_cached(&sha)
+            .toc_entries
+            .as_ref()
+            .clone()
     }
 
     fn jump_to_selected_review_diff_toc_entry(&mut self) {
@@ -6277,7 +6253,7 @@ impl App {
             self.status = Some("No diff file at this scroll position.".to_string());
             return;
         };
-        let files = diff_file_keys(&self.commit_patch_lines_cached(&sha));
+        let files = self.review_diff_render_cached(&sha).files;
         let collapsed = self.review_collapsed_diff_files.entry(sha).or_default();
         if collapsed.remove(&file) {
             self.review_diff_line_focus = self.review_diff_scroll;
@@ -6295,7 +6271,7 @@ impl App {
         let Some(sha) = self.current_review_commit_sha() else {
             return;
         };
-        let files = diff_file_keys(&self.commit_patch_lines_cached(&sha));
+        let files = self.review_diff_render_cached(&sha).files;
         if files.is_empty() {
             self.status = Some("No files in this diff.".to_string());
             return;
@@ -6303,21 +6279,22 @@ impl App {
         let collapsed = self.review_collapsed_diff_files.entry(sha).or_default();
         let all_collapsed = files.iter().all(|file| collapsed.contains(file));
         if all_collapsed {
-            for file in &files {
+            for file in files.iter() {
                 collapsed.remove(file);
             }
             self.review_diff_file_state.select(None);
             self.status = Some("Expanded all files.".to_string());
         } else {
             let file_count = files.len();
-            collapsed.extend(files);
+            collapsed.extend(files.iter().cloned());
             self.sync_review_diff_file_selection_for(file_count);
             self.status = Some("Folded all files.".to_string());
         }
     }
 
     fn selected_review_diff_file(&mut self, sha: &str) -> Option<String> {
-        let files = diff_file_keys(&self.commit_patch_lines_cached(sha));
+        let render = self.review_diff_render_cached(sha);
+        let files = &render.files;
         let collapsed = self
             .review_collapsed_diff_files
             .get(sha)
@@ -6332,10 +6309,10 @@ impl App {
                 .cloned();
         }
 
-        let info = self.review_commit_info_cached(sha);
-        let patch_lines = self.commit_patch_lines_cached(sha);
-        let spans = review_diff_file_spans(&info, &patch_lines, &collapsed);
-        diff_file_at_scroll(&spans, usize::from(self.review_diff_line_focus))
+        diff_file_at_scroll(
+            render.spans.as_slice(),
+            usize::from(self.review_diff_line_focus),
+        )
     }
 
     fn current_review_diff_has_folded_files(&mut self) -> bool {
@@ -6364,7 +6341,7 @@ impl App {
         let Some(sha) = self.current_review_commit_sha() else {
             return;
         };
-        let len = diff_file_keys(&self.commit_patch_lines_cached(&sha)).len();
+        let len = self.review_diff_render_cached(&sha).files.len();
         if len == 0 {
             self.review_diff_file_state.select(None);
             return;
@@ -6378,7 +6355,7 @@ impl App {
         let Some(sha) = self.current_review_commit_sha() else {
             return;
         };
-        let len = diff_file_keys(&self.commit_patch_lines_cached(&sha)).len();
+        let len = self.review_diff_render_cached(&sha).files.len();
         if len == 0 {
             self.review_diff_file_state.select(None);
             return;
@@ -6611,10 +6588,35 @@ impl App {
         lines
     }
 
+    fn review_diff_render_cached(&mut self, sha: &str) -> ReviewDiffRender {
+        let collapsed = self
+            .review_collapsed_diff_files
+            .get(sha)
+            .cloned()
+            .unwrap_or_default();
+        let key = review_diff_render_cache_key(sha, &collapsed);
+        if let Some(render) = self.review_diff_render_cache.get(&key) {
+            return render.clone();
+        }
+        let info = self.review_commit_info_cached(sha);
+        let patch_lines = self.commit_patch_lines_cached(sha);
+        let (lines, spans) =
+            review_commit_diff_lines_with_spans(&info, &patch_lines, &collapsed, None, None);
+        let render = ReviewDiffRender {
+            lines: Arc::new(lines),
+            spans: Arc::new(spans),
+            toc_entries: Arc::new(review_diff_toc_entries(&info, &patch_lines, &collapsed)),
+            files: Arc::new(diff_file_keys(&patch_lines)),
+        };
+        self.review_diff_render_cache.insert(key, render.clone());
+        render
+    }
+
     fn clear_review_caches(&mut self) {
         self.review_commit_cache.clear();
         self.review_status_cache.clear();
         self.review_patch_cache.clear();
+        self.review_diff_render_cache.clear();
     }
 
     fn refresh_data(&mut self) -> Result<()> {
@@ -7927,6 +7929,15 @@ fn review_changes_display(shortstat: &str) -> String {
     if shortstat.is_empty() {
         return String::new();
     }
+    let files = shortstat
+        .split(',')
+        .find_map(|part| {
+            part.trim()
+                .strip_suffix(" files changed")
+                .or_else(|| part.trim().strip_suffix(" file changed"))
+        })
+        .map(str::trim)
+        .unwrap_or("0");
     let insertions = shortstat
         .split(',')
         .find_map(|part| {
@@ -7945,7 +7956,7 @@ fn review_changes_display(shortstat: &str) -> String {
         })
         .map(str::trim)
         .unwrap_or("0");
-    format!("+{insertions} -{deletions}")
+    format!("{files}f +{insertions} -{deletions}")
 }
 
 fn short_author_display(author: &str) -> String {
@@ -8132,12 +8143,13 @@ fn review_commit_diff_lines(
     review_commit_diff_lines_with_spans(info, patch_lines, collapsed_files, None, None).0
 }
 
-fn review_diff_file_spans(
-    info: &ReviewCommitInfo,
-    patch_lines: &[String],
-    collapsed_files: &BTreeSet<String>,
-) -> Vec<DiffFileSpan> {
-    review_commit_diff_lines_with_spans(info, patch_lines, collapsed_files, None, None).1
+fn review_diff_render_cache_key(sha: &str, collapsed_files: &BTreeSet<String>) -> String {
+    let mut key = String::from(sha);
+    for file in collapsed_files {
+        key.push('\0');
+        key.push_str(file);
+    }
+    key
 }
 
 fn review_commit_diff_lines_with_spans(
@@ -8238,14 +8250,14 @@ fn folded_diff_file_line(file_key: &str, hidden: usize, selected: bool) -> Line<
 }
 
 fn add_diff_gutter(
-    lines: Vec<Line<'static>>,
+    lines: &[Line<'static>],
     scroll: usize,
     page_height: usize,
     selected_line: Option<usize>,
 ) -> Vec<Line<'static>> {
     let total = lines.len();
     if total == 0 {
-        return lines;
+        return Vec::new();
     }
     let page_height = page_height.max(1);
     let thumb_height = if total <= page_height {
@@ -8262,9 +8274,12 @@ fn add_diff_gutter(
     };
 
     lines
-        .into_iter()
+        .iter()
         .enumerate()
-        .map(|(idx, mut line)| {
+        .skip(scroll)
+        .take(page_height)
+        .map(|(idx, line)| {
+            let mut line = line.clone();
             let row = idx.saturating_sub(scroll);
             let in_view = idx >= scroll && row < page_height;
             let in_thumb = in_view && row >= thumb_start && row < thumb_start + thumb_height;
@@ -11076,11 +11091,11 @@ mod tests {
     fn review_changes_display_extracts_insertions_and_deletions() {
         assert_eq!(
             review_changes_display("3 files changed, 102 insertions(+), 2 deletions(-)"),
-            "+102 -2"
+            "3f +102 -2"
         );
         assert_eq!(
             review_changes_display("1 file changed, 7 insertions(+)"),
-            "+7 -0"
+            "1f +7 -0"
         );
     }
 
@@ -11197,11 +11212,13 @@ mod tests {
         let lines = (0..10)
             .map(|idx| Line::raw(format!("line {idx}")))
             .collect::<Vec<_>>();
-        let lines = add_diff_gutter(lines, 4, 4, None);
+        let lines = add_diff_gutter(&lines, 4, 4, None);
 
-        assert_eq!(lines[4].spans[0].content.as_ref(), "│ ");
-        assert_eq!(lines[5].spans[0].content.as_ref(), "│ ");
-        assert_eq!(lines[6].spans[0].content.as_ref(), "█ ");
+        assert_eq!(lines.len(), 4);
+        assert_eq!(lines[0].spans[0].content.as_ref(), "│ ");
+        assert_eq!(lines[1].spans[0].content.as_ref(), "│ ");
+        assert_eq!(lines[2].spans[0].content.as_ref(), "█ ");
+        assert_eq!(lines[0].spans[1].content.as_ref(), "line 4");
     }
 
     #[test]
@@ -11209,7 +11226,7 @@ mod tests {
         let lines = (0..5)
             .map(|idx| Line::raw(format!("line {idx}")))
             .collect::<Vec<_>>();
-        let lines = add_diff_gutter(lines, 0, 5, Some(2));
+        let lines = add_diff_gutter(&lines, 0, 5, Some(2));
 
         assert_eq!(lines[2].spans[0].content.as_ref(), "▶ ");
         assert_eq!(lines[2].spans[0].style.bg, Some(Color::Rgb(210, 170, 40)));
