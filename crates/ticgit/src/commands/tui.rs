@@ -1945,11 +1945,24 @@ impl App {
 
         let rows_area = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(0)])
+            .constraints([
+                Constraint::Length(review_summary_height(inner.height)),
+                Constraint::Length(1),
+                Constraint::Min(0),
+            ])
             .split(inner);
         frame.render_widget(
-            Paragraph::new(review_commit_table_header(usize::from(rows_area[0].width))),
+            Paragraph::new(review_branch_summary_lines(
+                ticket,
+                review,
+                usize::from(rows_area[0].width),
+            ))
+            .wrap(Wrap { trim: false }),
             rows_area[0],
+        );
+        frame.render_widget(
+            Paragraph::new(review_commit_table_header(usize::from(rows_area[1].width))),
+            rows_area[1],
         );
 
         let total = commits.len();
@@ -1969,7 +1982,7 @@ impl App {
                         sha,
                         review,
                         &commit_review_status(&self.store, sha),
-                        usize::from(rows_area[1].width)
+                        usize::from(rows_area[2].width)
                             .saturating_sub(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL)),
                     ))
                 })
@@ -1984,7 +1997,7 @@ impl App {
             )
             .highlight_symbol(HIGHLIGHT_SYMBOL)
             .highlight_spacing(HighlightSpacing::Always);
-        frame.render_stateful_widget(list, rows_area[1], &mut self.review_commit_state);
+        frame.render_stateful_widget(list, rows_area[2], &mut self.review_commit_state);
     }
 
     fn draw_review_commit_preview(
@@ -6869,6 +6882,164 @@ fn review_messages_for_commit<'a>(
         .collect()
 }
 
+fn review_summary_height(area_height: u16) -> u16 {
+    if area_height >= 10 {
+        7
+    } else {
+        area_height.saturating_sub(2).clamp(0, 5)
+    }
+}
+
+fn review_branch_summary_lines(
+    ticket: &Ticket,
+    review: &TicketReview,
+    width: usize,
+) -> Vec<Line<'static>> {
+    if width == 0 {
+        return Vec::new();
+    }
+    let commits = review_commits(review);
+    let infos = commits
+        .iter()
+        .map(|sha| review_commit_info(sha))
+        .collect::<Vec<_>>();
+    let authors = review_authors_display(&infos);
+    let updated = infos
+        .first()
+        .map(|info| info.updated.clone())
+        .filter(|updated| !updated.is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
+    let status = if review.status.is_empty() {
+        "open"
+    } else {
+        review.status.as_str()
+    };
+    let version = commits.len().max(1);
+    let title = truncate_display(&review.title, width);
+    let branch = truncate_display(&review_branch_label(review), width);
+    let description = ticket
+        .description
+        .as_deref()
+        .and_then(first_non_empty_line)
+        .unwrap_or(&ticket.title);
+
+    vec![
+        Line::from(Span::styled(
+            title,
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(vec![
+            Span::styled("Branch: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(branch, Style::default().fg(Color::LightBlue)),
+            Span::raw("  "),
+            Span::styled("Ticket: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(ticket.short_id(), Style::default().fg(Color::Yellow)),
+        ]),
+        review_summary_metrics_line(
+            [
+                ("Status", status.to_string(), review_status_style(status)),
+                (
+                    "Commits",
+                    review_commit_meter(commits.len()),
+                    Style::default().fg(Color::LightGreen),
+                ),
+                (
+                    "Updated",
+                    updated,
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .add_modifier(Modifier::DIM),
+                ),
+            ],
+            width,
+        ),
+        review_summary_metrics_line(
+            [
+                ("Authors", authors, Style::default().fg(Color::Cyan)),
+                (
+                    "Version",
+                    version.to_string(),
+                    Style::default().fg(Color::Magenta),
+                ),
+                (
+                    "Head",
+                    review
+                        .head_sha
+                        .as_deref()
+                        .map(short_hash)
+                        .unwrap_or("-")
+                        .to_string(),
+                    Style::default().fg(Color::Yellow),
+                ),
+            ],
+            width,
+        ),
+        Line::from(Span::raw(truncate_display(description, width))),
+        Line::raw(""),
+        Line::from(Span::styled(
+            "v opens selected commit, Esc returns to review summary",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ]
+}
+
+fn review_summary_metrics_line<const N: usize>(
+    metrics: [(&str, String, Style); N],
+    width: usize,
+) -> Line<'static> {
+    let mut spans = Vec::new();
+    let mut used = 0;
+    for (idx, (label, value, style)) in metrics.into_iter().enumerate() {
+        if idx > 0 {
+            if used + 2 > width {
+                break;
+            }
+            spans.push(Span::raw("  "));
+            used += 2;
+        }
+        let label_text = format!("{label}: ");
+        let label_width = UnicodeWidthStr::width(label_text.as_str());
+        if used + label_width >= width {
+            break;
+        }
+        spans.push(Span::styled(
+            label_text,
+            Style::default().fg(Color::DarkGray),
+        ));
+        used += label_width;
+
+        let value_width = width.saturating_sub(used);
+        let value = truncate_display(&value, value_width);
+        used += UnicodeWidthStr::width(value.as_str());
+        spans.push(Span::styled(value, style));
+    }
+    Line::from(spans)
+}
+
+fn review_commit_meter(count: usize) -> String {
+    let filled = count.min(12);
+    let empty = 12usize.saturating_sub(filled);
+    format!(
+        "{} {}",
+        count,
+        format!("{}{}", "█".repeat(filled), "░".repeat(empty))
+    )
+}
+
+fn review_authors_display(infos: &[ReviewCommitInfo]) -> String {
+    let authors = infos
+        .iter()
+        .map(|info| short_author_display(&info.author))
+        .filter(|author| !author.is_empty())
+        .collect::<BTreeSet<_>>();
+    if authors.is_empty() {
+        return "-".to_string();
+    }
+    truncate_display(&authors.into_iter().collect::<Vec<_>>().join(","), 24)
+}
+
 fn review_commit_table_header(width: usize) -> Line<'static> {
     let labels = [
         ("Status", 18),
@@ -9656,6 +9827,38 @@ mod tests {
             review_changes_display("1 file changed, 7 insertions(+)"),
             "+7 -0"
         );
+    }
+
+    #[test]
+    fn review_commit_meter_caps_visual_width() {
+        assert_eq!(review_commit_meter(3), "3 ███░░░░░░░░░");
+        assert_eq!(review_commit_meter(15), "15 ████████████");
+    }
+
+    #[test]
+    fn review_branch_summary_includes_core_metadata() {
+        let ticket = test_ticket(uuid::Uuid::from_u128(1), None, &[]);
+        let review = TicketReview {
+            branch_id: "review-cli@123".to_string(),
+            branch_name: Some("review-cli".to_string()),
+            title: "Review CLI".to_string(),
+            status: "open".to_string(),
+            head_sha: Some("abcdef123456".to_string()),
+            revisions: vec!["abcdef123456".to_string()],
+            messages: Vec::new(),
+        };
+
+        let text = review_branch_summary_lines(&ticket, &review, 120)
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(text.contains("Review CLI"));
+        assert!(text.contains("Branch: review-cli (review-cli@123)"));
+        assert!(text.contains("Ticket: 000"));
+        assert!(text.contains("Status: open"));
+        assert!(text.contains("Head: abcdef1"));
     }
 
     #[test]
