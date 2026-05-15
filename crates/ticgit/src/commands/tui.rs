@@ -184,7 +184,9 @@ struct App {
     review_patch_cache: HashMap<String, Vec<String>>,
     review_diff_scroll: u16,
     review_diff_page_height: u16,
+    review_diff_line_focus: u16,
     review_collapsed_diff_files: HashMap<String, BTreeSet<String>>,
+    review_diff_file_state: ListState,
     list_state: ListState,
     writeup_state: ListState,
     review_state: ListState,
@@ -471,7 +473,9 @@ impl App {
             review_patch_cache: HashMap::new(),
             review_diff_scroll: 0,
             review_diff_page_height: 20,
+            review_diff_line_focus: 0,
             review_collapsed_diff_files: HashMap::new(),
+            review_diff_file_state: ListState::default(),
             list_state: ListState::default(),
             writeup_state: ListState::default(),
             review_state: ListState::default(),
@@ -2144,7 +2148,58 @@ impl App {
             .get(sha)
             .cloned()
             .unwrap_or_default();
-        let lines = review_commit_diff_lines(&info, &patch_lines, &collapsed);
+        let files = diff_file_keys(&patch_lines);
+        let folding_active = !collapsed.is_empty();
+        if folding_active {
+            self.sync_review_diff_file_selection_for(files.len());
+        }
+        let selected_file = if folding_active {
+            self.review_diff_file_state
+                .selected()
+                .and_then(|idx| files.get(idx))
+                .map(String::as_str)
+        } else {
+            None
+        };
+        let mut selected_line =
+            (!folding_active).then_some(usize::from(self.review_diff_line_focus));
+        let (mut lines, mut spans) = review_commit_diff_lines_with_spans(
+            &info,
+            &patch_lines,
+            &collapsed,
+            selected_file,
+            selected_line,
+        );
+        if let Some(line) = selected_line {
+            let max_line = lines.len().saturating_sub(1);
+            if line > max_line {
+                self.review_diff_line_focus = max_line.min(usize::from(u16::MAX)) as u16;
+                selected_line = Some(max_line);
+                (lines, spans) = review_commit_diff_lines_with_spans(
+                    &info,
+                    &patch_lines,
+                    &collapsed,
+                    selected_file,
+                    selected_line,
+                );
+            }
+        }
+        if let Some(selected_file) = selected_file {
+            if let Some(span) = spans.iter().find(|span| span.key == selected_file) {
+                self.review_diff_scroll = span.start.min(usize::from(u16::MAX)) as u16;
+            }
+        } else if let Some(line) = selected_line {
+            let visible_start = usize::from(self.review_diff_scroll);
+            let visible_end = visible_start + usize::from(self.review_diff_page_height);
+            if line < visible_start {
+                self.review_diff_scroll = line.min(usize::from(u16::MAX)) as u16;
+            } else if line >= visible_end {
+                let scroll = line
+                    .saturating_sub(usize::from(self.review_diff_page_height))
+                    .saturating_add(1);
+                self.review_diff_scroll = scroll.min(usize::from(u16::MAX)) as u16;
+            }
+        }
         let max_scroll = lines
             .len()
             .saturating_sub(usize::from(self.review_diff_page_height));
@@ -5784,6 +5839,8 @@ impl App {
         let selected = self.review_commit_state.selected().unwrap_or(0);
         self.review_commit_state.select(Some((selected + 1) % len));
         self.review_diff_scroll = 0;
+        self.review_diff_line_focus = 0;
+        self.review_diff_file_state.select(None);
     }
 
     fn previous_review_commit(&mut self) {
@@ -5796,19 +5853,33 @@ impl App {
         let previous = selected.checked_sub(1).unwrap_or_else(|| len - 1);
         self.review_commit_state.select(Some(previous));
         self.review_diff_scroll = 0;
+        self.review_diff_line_focus = 0;
+        self.review_diff_file_state.select(None);
     }
 
     fn scroll_review_diff(&mut self, delta: i16) {
-        self.review_diff_scroll = if delta.is_negative() {
-            self.review_diff_scroll.saturating_sub(delta.unsigned_abs())
+        if self.current_review_diff_has_folded_files() {
+            if delta.is_negative() {
+                self.previous_review_diff_file();
+            } else {
+                self.next_review_diff_file();
+            }
+            return;
+        }
+        self.review_diff_line_focus = if delta.is_negative() {
+            self.review_diff_line_focus
+                .saturating_sub(delta.unsigned_abs())
         } else {
-            self.review_diff_scroll.saturating_add(delta as u16)
+            self.review_diff_line_focus.saturating_add(delta as u16)
         };
     }
 
     fn scroll_review_diff_page(&mut self) {
-        self.review_diff_scroll = self
-            .review_diff_scroll
+        if self.current_review_diff_has_folded_files() {
+            return;
+        }
+        self.review_diff_line_focus = self
+            .review_diff_line_focus
             .saturating_add(self.review_diff_page_height.max(1));
     }
 
@@ -5821,16 +5892,21 @@ impl App {
         let Some(sha) = self.current_review_commit_sha() else {
             return;
         };
-        let Some(file) = self.review_file_at_scroll(&sha) else {
+        let Some(file) = self.selected_review_diff_file(&sha) else {
             self.status = Some("No diff file at this scroll position.".to_string());
             return;
         };
+        let files = diff_file_keys(&self.commit_patch_lines_cached(&sha));
         let collapsed = self.review_collapsed_diff_files.entry(sha).or_default();
         if collapsed.remove(&file) {
+            self.review_diff_line_focus = self.review_diff_scroll;
             self.status = Some(format!("Expanded {file}."));
         } else {
             collapsed.insert(file.clone());
             self.status = Some(format!("Folded {file}."));
+        }
+        if let Some(idx) = files.iter().position(|candidate| candidate == &file) {
+            self.review_diff_file_state.select(Some(idx));
         }
     }
 
@@ -5849,23 +5925,86 @@ impl App {
             for file in &files {
                 collapsed.remove(file);
             }
+            self.review_diff_file_state.select(None);
             self.status = Some("Expanded all files.".to_string());
         } else {
+            let file_count = files.len();
             collapsed.extend(files);
+            self.sync_review_diff_file_selection_for(file_count);
             self.status = Some("Folded all files.".to_string());
         }
     }
 
-    fn review_file_at_scroll(&mut self, sha: &str) -> Option<String> {
-        let info = self.review_commit_info_cached(sha);
-        let patch_lines = self.commit_patch_lines_cached(sha);
+    fn selected_review_diff_file(&mut self, sha: &str) -> Option<String> {
+        let files = diff_file_keys(&self.commit_patch_lines_cached(sha));
         let collapsed = self
             .review_collapsed_diff_files
             .get(sha)
             .cloned()
             .unwrap_or_default();
+        if !collapsed.is_empty() {
+            self.sync_review_diff_file_selection_for(files.len());
+            return self
+                .review_diff_file_state
+                .selected()
+                .and_then(|idx| files.get(idx))
+                .cloned();
+        }
+
+        let info = self.review_commit_info_cached(sha);
+        let patch_lines = self.commit_patch_lines_cached(sha);
         let spans = review_diff_file_spans(&info, &patch_lines, &collapsed);
-        diff_file_at_scroll(&spans, usize::from(self.review_diff_scroll))
+        diff_file_at_scroll(&spans, usize::from(self.review_diff_line_focus))
+    }
+
+    fn current_review_diff_has_folded_files(&mut self) -> bool {
+        let Some(sha) = self.current_review_commit_sha() else {
+            return false;
+        };
+        self.review_collapsed_diff_files
+            .get(&sha)
+            .is_some_and(|files| !files.is_empty())
+    }
+
+    fn sync_review_diff_file_selection_for(&mut self, len: usize) {
+        if len == 0 {
+            self.review_diff_file_state.select(None);
+            return;
+        }
+        let selected = self
+            .review_diff_file_state
+            .selected()
+            .unwrap_or(0)
+            .min(len - 1);
+        self.review_diff_file_state.select(Some(selected));
+    }
+
+    fn next_review_diff_file(&mut self) {
+        let Some(sha) = self.current_review_commit_sha() else {
+            return;
+        };
+        let len = diff_file_keys(&self.commit_patch_lines_cached(&sha)).len();
+        if len == 0 {
+            self.review_diff_file_state.select(None);
+            return;
+        }
+        let selected = self.review_diff_file_state.selected().unwrap_or(0);
+        self.review_diff_file_state
+            .select(Some((selected + 1) % len));
+    }
+
+    fn previous_review_diff_file(&mut self) {
+        let Some(sha) = self.current_review_commit_sha() else {
+            return;
+        };
+        let len = diff_file_keys(&self.commit_patch_lines_cached(&sha)).len();
+        if len == 0 {
+            self.review_diff_file_state.select(None);
+            return;
+        }
+        let selected = self.review_diff_file_state.selected().unwrap_or(0);
+        let previous = selected.checked_sub(1).unwrap_or_else(|| len - 1);
+        self.review_diff_file_state.select(Some(previous));
     }
 
     fn toggle_review_mode(&mut self) {
@@ -5884,6 +6023,8 @@ impl App {
                 } else {
                     self.review_mode = ReviewMode::Commit;
                     self.review_diff_scroll = 0;
+                    self.review_diff_line_focus = 0;
+                    self.review_diff_file_state.select(None);
                 }
             }
             ReviewMode::Commit => {
@@ -7528,12 +7669,13 @@ fn review_commit_meta_line(ticket: &Ticket, review: &TicketReview, sha: &str) ->
     ])
 }
 
+#[cfg(test)]
 fn review_commit_diff_lines(
     info: &ReviewCommitInfo,
     patch_lines: &[String],
     collapsed_files: &BTreeSet<String>,
 ) -> Vec<Line<'static>> {
-    review_commit_diff_lines_with_spans(info, patch_lines, collapsed_files).0
+    review_commit_diff_lines_with_spans(info, patch_lines, collapsed_files, None, None).0
 }
 
 fn review_diff_file_spans(
@@ -7541,33 +7683,43 @@ fn review_diff_file_spans(
     patch_lines: &[String],
     collapsed_files: &BTreeSet<String>,
 ) -> Vec<DiffFileSpan> {
-    review_commit_diff_lines_with_spans(info, patch_lines, collapsed_files).1
+    review_commit_diff_lines_with_spans(info, patch_lines, collapsed_files, None, None).1
 }
 
 fn review_commit_diff_lines_with_spans(
     info: &ReviewCommitInfo,
     patch_lines: &[String],
     collapsed_files: &BTreeSet<String>,
+    selected_file: Option<&str>,
+    selected_line: Option<usize>,
 ) -> (Vec<Line<'static>>, Vec<DiffFileSpan>) {
     let mut lines = Vec::new();
     let mut spans = Vec::new();
-    lines.push(Line::from(Span::styled(
-        info.subject.clone(),
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    )));
+    push_review_diff_line(
+        &mut lines,
+        Line::from(Span::styled(
+            info.subject.clone(),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        selected_line,
+    );
     if !info.body.is_empty() {
         for line in info.body.lines() {
-            lines.push(Line::raw(line.to_string()));
+            push_review_diff_line(&mut lines, Line::raw(line.to_string()), selected_line);
         }
     }
-    lines.push(Line::raw(""));
+    push_review_diff_line(&mut lines, Line::raw(""), selected_line);
 
     let mut idx = 0;
     while idx < patch_lines.len() {
         let Some(file_key) = diff_file_key(&patch_lines[idx]) else {
-            lines.push(diff_line(patch_lines[idx].clone()));
+            push_review_diff_line(
+                &mut lines,
+                diff_line(patch_lines[idx].clone()),
+                selected_line,
+            );
             idx += 1;
             continue;
         };
@@ -7580,25 +7732,17 @@ fn review_commit_diff_lines_with_spans(
             .unwrap_or(patch_lines.len());
         let start = lines.len();
         if collapsed_files.contains(&file_key) {
-            let mut shown = 0usize;
-            for line in &patch_lines[idx..next] {
-                if shown == 0
-                    || line.starts_with("index ")
-                    || line.starts_with("--- ")
-                    || line.starts_with("+++ ")
-                {
-                    lines.push(diff_line(line.clone()));
-                    shown += 1;
-                }
-            }
-            let hidden = next.saturating_sub(idx).saturating_sub(shown);
-            lines.push(Line::from(Span::styled(
-                format!("... folded {hidden} diff lines for {file_key}"),
-                Style::default().fg(Color::DarkGray),
-            )));
+            let hidden = next.saturating_sub(idx);
+            let selected = selected_file == Some(file_key.as_str());
+            lines.push(folded_diff_file_line(&file_key, hidden, selected));
         } else {
             for line in &patch_lines[idx..next] {
-                lines.push(diff_line(line.clone()));
+                let line = if selected_file == Some(file_key.as_str()) && lines.len() == start {
+                    selected_line_style(diff_line(line.clone()))
+                } else {
+                    diff_line(line.clone())
+                };
+                push_review_diff_line(&mut lines, line, selected_line);
             }
         }
         spans.push(DiffFileSpan {
@@ -7610,6 +7754,54 @@ fn review_commit_diff_lines_with_spans(
     }
 
     (lines, spans)
+}
+
+fn push_review_diff_line(
+    lines: &mut Vec<Line<'static>>,
+    line: Line<'static>,
+    selected_line: Option<usize>,
+) {
+    let idx = lines.len();
+    if selected_line == Some(idx) {
+        lines.push(selected_line_style(line));
+    } else {
+        lines.push(line);
+    }
+}
+
+fn selected_line_style(line: Line<'static>) -> Line<'static> {
+    line.style(
+        Style::default()
+            .bg(Color::Rgb(0, 0, 95))
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
+    )
+}
+
+fn folded_diff_file_line(file_key: &str, hidden: usize, selected: bool) -> Line<'static> {
+    let line = Line::from(vec![
+        Span::styled(
+            "[+] ",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            file_key.to_string(),
+            Style::default()
+                .fg(Color::LightBlue)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("  {hidden} lines folded"),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ]);
+    if selected {
+        selected_line_style(line)
+    } else {
+        line
+    }
 }
 
 fn diff_file_keys(patch_lines: &[String]) -> Vec<String> {
@@ -10245,9 +10437,28 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
 
-        assert!(text.contains("folded 3 diff lines for src/a.rs"));
+        assert!(text.contains("[+] \nsrc/a.rs\n  7 lines folded"));
+        assert!(!text.contains("index 111..222"));
         assert!(!text.contains("-old"));
         assert!(text.contains("+other"));
+    }
+
+    #[test]
+    fn review_diff_lines_highlight_selected_unfolded_line() {
+        let info = ReviewCommitInfo {
+            subject: "Update files".to_string(),
+            ..ReviewCommitInfo::default()
+        };
+        let patch = vec![
+            "diff --git a/src/a.rs b/src/a.rs".to_string(),
+            "@@ -1 +1 @@".to_string(),
+            "+new".to_string(),
+        ];
+        let lines =
+            review_commit_diff_lines_with_spans(&info, &patch, &BTreeSet::new(), None, Some(3)).0;
+
+        assert_eq!(lines[3].spans[0].content.as_ref(), "@@ -1 +1 @@");
+        assert_eq!(lines[3].style.bg, Some(Color::Rgb(0, 0, 95)));
     }
 
     #[test]
