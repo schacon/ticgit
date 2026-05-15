@@ -202,6 +202,7 @@ struct App {
     tag_picker_state: ListState,
     manage_tag_state: ListState,
     link_issue_state: ListState,
+    writeup_toc_state: ListState,
     version_state: ListState,
     order_state: ListState,
     column_state: ListState,
@@ -210,6 +211,9 @@ struct App {
     new_ticket: NewTicketDraft,
     detail: Option<usize>,
     writeup_detail: Option<usize>,
+    writeup_detail_focus: WriteupPaneFocus,
+    writeup_detail_scroll: u16,
+    writeup_toc_open: bool,
     detail_width_percent: u16,
     comments_mode: bool,
     comment_state: ListState,
@@ -230,6 +234,14 @@ enum TuiTab {
     Issues,
     Writeups,
     Dashboard,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum WriteupPaneFocus {
+    #[default]
+    List,
+    Detail,
+    Toc,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -259,6 +271,20 @@ struct ViewEntry {
     name: String,
     view: SavedView,
     kind: ViewKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MarkdownHeading {
+    level: usize,
+    title: String,
+    line: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct WriteupBodyStats {
+    words: usize,
+    read_minutes: usize,
+    headings: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -405,6 +431,7 @@ impl App {
             tag_picker_state: ListState::default(),
             manage_tag_state: ListState::default(),
             link_issue_state: ListState::default(),
+            writeup_toc_state: ListState::default(),
             version_state: ListState::default(),
             order_state: ListState::default(),
             column_state: ListState::default(),
@@ -413,6 +440,9 @@ impl App {
             new_ticket: NewTicketDraft::default(),
             detail: None,
             writeup_detail: None,
+            writeup_detail_focus: WriteupPaneFocus::List,
+            writeup_detail_scroll: 0,
+            writeup_toc_open: false,
             detail_width_percent,
             comments_mode: false,
             comment_state: ListState::default(),
@@ -986,6 +1016,66 @@ impl App {
                             desc: "quit",
                         },
                     ]
+                } else if self.active_tab == TuiTab::Writeups && self.writeup_detail.is_some() {
+                    let move_hint = if self.writeup_detail_focus == WriteupPaneFocus::Detail {
+                        MenuHint {
+                            key: "j/k",
+                            desc: "scroll",
+                        }
+                    } else if self.writeup_detail_focus == WriteupPaneFocus::Toc {
+                        MenuHint {
+                            key: "j/k",
+                            desc: "contents",
+                        }
+                    } else {
+                        MenuHint {
+                            key: "j/k",
+                            desc: "writeups",
+                        }
+                    };
+                    vec![
+                        MenuHint {
+                            key: "Tab",
+                            desc: "issues",
+                        },
+                        move_hint,
+                        MenuHint {
+                            key: "h/l",
+                            desc: "pane",
+                        },
+                        MenuHint {
+                            key: "Enter",
+                            desc: "jump/open",
+                        },
+                        MenuHint {
+                            key: "i/u",
+                            desc: "link",
+                        },
+                        MenuHint {
+                            key: "t",
+                            desc: "contents",
+                        },
+                        MenuHint {
+                            key: "v",
+                            desc: "versions",
+                        },
+                        MenuHint {
+                            key: "e",
+                            desc: "edit",
+                        },
+                        MenuHint {
+                            key: "+/-",
+                            desc: "resize",
+                        },
+                        MenuHint {
+                            key: "Esc",
+                            desc: "close",
+                        },
+                        MenuHint {
+                            key: "q",
+                            desc: "quit",
+                        },
+                    ]
                 } else if self.active_tab == TuiTab::Writeups {
                     vec![
                         MenuHint {
@@ -1033,7 +1123,7 @@ impl App {
                             desc: "close/open",
                         },
                         MenuHint {
-                            key: "l/u",
+                            key: "i/u",
                             desc: "link",
                         },
                         MenuHint {
@@ -1362,7 +1452,16 @@ impl App {
         };
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(tabs_title(self.active_tab, &title));
+            .title(tabs_title(self.active_tab, &title))
+            .border_style(
+                if self.writeup_detail.is_some()
+                    && self.writeup_detail_focus == WriteupPaneFocus::List
+                {
+                    Style::default().fg(Color::Cyan)
+                } else {
+                    Style::default()
+                },
+            );
         let row_width = usize::from(block.inner(area).width)
             .saturating_sub(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL));
         let compact = self.writeup_detail.is_some();
@@ -1578,80 +1677,92 @@ impl App {
         frame.render_widget(detail, area);
     }
 
-    fn draw_writeup_detail(&self, frame: &mut Frame<'_>, area: Rect) {
+    fn draw_writeup_detail(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let Some(idx) = self.writeup_detail else {
             return;
         };
         let writeup = &self.writeups[idx];
-        let mut lines = vec![Line::from(Span::styled(
-            writeup.id.to_string(),
-            Style::default().fg(Color::DarkGray),
-        ))];
-        lines.extend(writeup_metadata_lines(
-            writeup,
-            usize::from(area.width).saturating_sub(2),
-        ));
-        if !writeup.tags.is_empty() {
-            lines.push(tags_field_line(&writeup.tags));
-        }
-        if !writeup.tickets.is_empty() {
-            lines.push(Line::raw(""));
-            lines.push(Line::from(Span::styled(
-                "Issues",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            )));
-            for (idx, ticket_id) in writeup.tickets.iter().take(9).enumerate() {
-                let ticket = self.tickets.iter().find(|ticket| ticket.id == *ticket_id);
-                let title = ticket
-                    .map(|ticket| ticket.title.clone())
-                    .unwrap_or_else(|| "missing ticket".to_string());
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        format!("{}", idx + 1),
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw(" "),
-                    Span::styled(
-                        ticket_id.to_string()[..6].to_string(),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                    Span::raw(" "),
-                    Span::raw(title),
-                ]));
-            }
-        }
-        lines.push(Line::raw(""));
-        if let Some(version) = writeup.versions.last() {
-            lines.push(Line::from(Span::styled(
-                writeup.title.clone(),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )));
-            lines.push(Line::raw(""));
-            lines.extend(version.body.lines().map(|line| Line::raw(line.to_string())));
+        let toc_visible = self.writeup_toc_open;
+        let (detail_area, toc_area) = if toc_visible {
+            let toc_width = (area.width / 3).clamp(16, 36);
+            let panes = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Min(12), Constraint::Length(toc_width)])
+                .split(area);
+            (panes[0], Some(panes[1]))
         } else {
-            lines.push(Line::from(Span::styled(
-                writeup.title.clone(),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )));
-            lines.push(Line::raw(""));
-            lines.push(Line::from(Span::styled(
-                "No versions yet. Press e to add one.",
-                Style::default().fg(Color::DarkGray),
-            )));
-        }
+            (area, None)
+        };
+        let (lines, headings) =
+            writeup_detail_lines(writeup, &self.tickets, usize::from(detail_area.width));
+        self.sync_writeup_toc_selection(&headings);
 
         let detail = Paragraph::new(lines)
-            .block(Block::default().borders(Borders::ALL).title("Writeup"))
-            .wrap(Wrap { trim: false });
-        frame.render_widget(detail, area);
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Writeup")
+                    .border_style(if self.writeup_detail_focus == WriteupPaneFocus::Detail {
+                        Style::default().fg(Color::Cyan)
+                    } else {
+                        Style::default()
+                    }),
+            )
+            .wrap(Wrap { trim: false })
+            .scroll((self.writeup_detail_scroll, 0));
+        frame.render_widget(detail, detail_area);
+
+        if let Some(toc_area) = toc_area {
+            self.draw_writeup_toc(frame, toc_area, &headings);
+        }
+    }
+
+    fn draw_writeup_toc(
+        &mut self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        headings: &[MarkdownHeading],
+    ) {
+        let items: Vec<ListItem<'_>> = if headings.is_empty() {
+            vec![ListItem::new(Line::from(Span::styled(
+                "No headings",
+                Style::default().fg(Color::DarkGray),
+            )))]
+        } else {
+            headings
+                .iter()
+                .map(|heading| {
+                    let indent = " ".repeat(heading.level.saturating_sub(1).min(5));
+                    ListItem::new(Line::from(vec![
+                        Span::raw(indent),
+                        Span::raw(truncate_display(
+                            &heading.title,
+                            usize::from(area.width).saturating_sub(4),
+                        )),
+                    ]))
+                })
+                .collect()
+        };
+        let toc = List::new(items)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Contents")
+                    .border_style(if self.writeup_detail_focus == WriteupPaneFocus::Toc {
+                        Style::default().fg(Color::Cyan)
+                    } else {
+                        Style::default()
+                    }),
+            )
+            .highlight_style(
+                Style::default()
+                    .bg(Color::Rgb(0, 0, 95))
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol(HIGHLIGHT_SYMBOL)
+            .highlight_spacing(HighlightSpacing::Always);
+        frame.render_stateful_widget(toc, area, &mut self.writeup_toc_state);
     }
 
     fn draw_comments_list(&mut self, frame: &mut Frame<'_>, area: Rect) {
@@ -2622,6 +2733,32 @@ impl App {
                 ));
                 lines.push(help_columns(("r", "refresh"), None));
             }
+            Mode::Normal
+                if self.active_tab == TuiTab::Writeups && self.writeup_detail.is_some() =>
+            {
+                help_section(&mut lines, "Writeup Detail");
+                lines.push(help_columns(
+                    ("h/l", "switch pane"),
+                    Some(("Esc", "close detail")),
+                ));
+                lines.push(help_columns(
+                    ("j/k", "move or scroll"),
+                    Some(("Up/Down", "move or scroll")),
+                ));
+                lines.push(help_columns(
+                    ("t", "contents"),
+                    Some(("Enter", "jump heading")),
+                ));
+                lines.push(help_columns(
+                    ("i", "link issue"),
+                    Some(("u", "unlink issue")),
+                ));
+                lines.push(help_columns(("e", "edit latest"), Some(("v", "versions"))));
+                lines.push(help_columns(
+                    ("+/-", "resize detail"),
+                    Some(("1-9", "jump issue")),
+                ));
+            }
             Mode::Normal if self.active_tab == TuiTab::Writeups => {
                 help_section(&mut lines, "Writeups");
                 lines.push(help_columns(
@@ -2637,7 +2774,7 @@ impl App {
                     Some(("a", "show all/open")),
                 ));
                 lines.push(help_columns(("c", "close"), Some(("o", "reopen"))));
-                lines.push(help_columns(("p", "promote"), Some(("l", "link issue"))));
+                lines.push(help_columns(("p", "promote"), Some(("i", "link issue"))));
                 lines.push(help_columns(("v", "versions"), Some(("t", "manage tags"))));
                 lines.push(help_columns(("u", "unlink issue"), None));
                 lines.push(help_columns(("1-9", "jump issue"), None));
@@ -2840,8 +2977,17 @@ impl App {
                 if self.comments_mode {
                     self.comments_mode = false;
                     false
+                } else if self.active_tab == TuiTab::Writeups
+                    && self.writeup_detail_focus == WriteupPaneFocus::Toc
+                {
+                    self.writeup_toc_open = false;
+                    self.writeup_detail_focus = WriteupPaneFocus::Detail;
+                    false
                 } else if self.active_tab == TuiTab::Writeups && self.writeup_detail.is_some() {
                     self.writeup_detail = None;
+                    self.writeup_detail_focus = WriteupPaneFocus::List;
+                    self.writeup_detail_scroll = 0;
+                    self.writeup_toc_open = false;
                     false
                 } else if self.detail.is_some() {
                     self.detail = None;
@@ -2869,7 +3015,14 @@ impl App {
                 false
             }
             KeyCode::Char('t') => {
-                self.begin_manage_tags();
+                if self.active_tab == TuiTab::Writeups
+                    && self.writeup_detail.is_some()
+                    && self.writeup_detail_focus != WriteupPaneFocus::List
+                {
+                    self.toggle_writeup_toc();
+                } else {
+                    self.begin_manage_tags();
+                }
                 false
             }
             KeyCode::Char('v') => {
@@ -2933,6 +3086,14 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') => {
                 if self.comments_mode {
                     self.next_comment();
+                } else if self.active_tab == TuiTab::Writeups
+                    && self.writeup_detail_focus == WriteupPaneFocus::Detail
+                {
+                    self.scroll_writeup_detail(1);
+                } else if self.active_tab == TuiTab::Writeups
+                    && self.writeup_detail_focus == WriteupPaneFocus::Toc
+                {
+                    self.next_writeup_heading();
                 } else if self.active_tab == TuiTab::Issues
                     && self.view == ViewMode::Board
                     && self.detail.is_none()
@@ -2946,6 +3107,14 @@ impl App {
             KeyCode::Up | KeyCode::Char('k') => {
                 if self.comments_mode {
                     self.previous_comment();
+                } else if self.active_tab == TuiTab::Writeups
+                    && self.writeup_detail_focus == WriteupPaneFocus::Detail
+                {
+                    self.scroll_writeup_detail(-1);
+                } else if self.active_tab == TuiTab::Writeups
+                    && self.writeup_detail_focus == WriteupPaneFocus::Toc
+                {
+                    self.previous_writeup_heading();
                 } else if self.active_tab == TuiTab::Issues
                     && self.view == ViewMode::Board
                     && self.detail.is_none()
@@ -2958,7 +3127,7 @@ impl App {
             }
             KeyCode::Right | KeyCode::Char('l') => {
                 if self.active_tab == TuiTab::Writeups && self.writeup_detail.is_some() {
-                    self.begin_link_issue_search();
+                    self.focus_next_writeup_pane();
                 } else if self.active_tab == TuiTab::Issues
                     && self.view == ViewMode::Board
                     && self.detail.is_none()
@@ -2968,7 +3137,9 @@ impl App {
                 false
             }
             KeyCode::Left | KeyCode::Char('h') => {
-                if self.active_tab == TuiTab::Issues
+                if self.active_tab == TuiTab::Writeups && self.writeup_detail.is_some() {
+                    self.focus_previous_writeup_pane();
+                } else if self.active_tab == TuiTab::Issues
                     && self.view == ViewMode::Board
                     && self.detail.is_none()
                 {
@@ -2977,7 +3148,13 @@ impl App {
                 false
             }
             KeyCode::Enter => {
-                self.open_selected();
+                if self.active_tab == TuiTab::Writeups
+                    && self.writeup_detail_focus == WriteupPaneFocus::Toc
+                {
+                    self.jump_to_selected_writeup_heading();
+                } else {
+                    self.open_selected();
+                }
                 false
             }
             KeyCode::Char('e') => {
@@ -2989,7 +3166,9 @@ impl App {
                 false
             }
             KeyCode::Char('i') => {
-                if self.active_tab == TuiTab::Issues {
+                if self.active_tab == TuiTab::Writeups && self.writeup_detail.is_some() {
+                    self.begin_link_issue_search();
+                } else if self.active_tab == TuiTab::Issues {
                     self.edit_spec_in_editor(terminal)?;
                 }
                 false
@@ -3933,6 +4112,10 @@ impl App {
         self.view = ViewMode::List;
         self.comments_mode = false;
         self.writeup_detail = Some(idx);
+        self.writeup_detail_focus = WriteupPaneFocus::Detail;
+        self.writeup_detail_scroll = 0;
+        self.writeup_toc_open = false;
+        self.writeup_toc_state.select(None);
         if let Some(visible_pos) = self
             .visible_writeups
             .iter()
@@ -4793,6 +4976,12 @@ impl App {
         self.writeup_detail = self
             .writeup_detail
             .filter(|idx| self.visible_writeups.contains(idx));
+        if self.writeup_detail.is_none() {
+            self.writeup_detail_focus = WriteupPaneFocus::List;
+            self.writeup_detail_scroll = 0;
+            self.writeup_toc_open = false;
+            self.writeup_toc_state.select(None);
+        }
         if self.visible_writeups.is_empty() {
             self.writeup_state.select(None);
         } else {
@@ -4867,6 +5056,127 @@ impl App {
             .unwrap_or_else(|| self.visible_writeups.len().saturating_sub(1));
         self.writeup_state.select(Some(previous));
         self.sync_open_writeup_detail();
+    }
+
+    fn focus_next_writeup_pane(&mut self) {
+        self.writeup_detail_focus = match self.writeup_detail_focus {
+            WriteupPaneFocus::List => WriteupPaneFocus::Detail,
+            WriteupPaneFocus::Detail if self.writeup_toc_open => WriteupPaneFocus::Toc,
+            WriteupPaneFocus::Detail | WriteupPaneFocus::Toc => WriteupPaneFocus::Detail,
+        };
+    }
+
+    fn focus_previous_writeup_pane(&mut self) {
+        self.writeup_detail_focus = match self.writeup_detail_focus {
+            WriteupPaneFocus::Toc => WriteupPaneFocus::Detail,
+            WriteupPaneFocus::Detail => WriteupPaneFocus::List,
+            WriteupPaneFocus::List => WriteupPaneFocus::List,
+        };
+    }
+
+    fn scroll_writeup_detail(&mut self, delta: i16) {
+        self.writeup_detail_scroll = if delta.is_negative() {
+            self.writeup_detail_scroll
+                .saturating_sub(delta.unsigned_abs())
+        } else {
+            self.writeup_detail_scroll.saturating_add(delta as u16)
+        };
+        self.sync_writeup_toc_to_scroll();
+    }
+
+    fn toggle_writeup_toc(&mut self) {
+        if self.writeup_toc_open {
+            self.writeup_toc_open = false;
+            self.writeup_detail_focus = WriteupPaneFocus::Detail;
+            return;
+        }
+        let headings = self.current_writeup_headings();
+        if headings.is_empty() {
+            self.status = Some("No markdown headings in this writeup.".to_string());
+            return;
+        }
+        self.writeup_toc_open = true;
+        self.writeup_detail_focus = WriteupPaneFocus::Toc;
+        self.sync_writeup_toc_selection(&headings);
+    }
+
+    fn current_writeup_headings(&self) -> Vec<MarkdownHeading> {
+        let Some(writeup) = self.writeup_detail.map(|idx| &self.writeups[idx]) else {
+            return Vec::new();
+        };
+        let (_, headings) = writeup_detail_lines(writeup, &[], usize::MAX);
+        headings
+    }
+
+    fn next_writeup_heading(&mut self) {
+        let headings = self.current_writeup_headings();
+        if headings.is_empty() {
+            self.writeup_toc_state.select(None);
+            return;
+        }
+        let selected = self.writeup_toc_state.selected().unwrap_or(0);
+        self.writeup_toc_state
+            .select(Some((selected + 1) % headings.len()));
+    }
+
+    fn previous_writeup_heading(&mut self) {
+        let headings = self.current_writeup_headings();
+        if headings.is_empty() {
+            self.writeup_toc_state.select(None);
+            return;
+        }
+        let selected = self.writeup_toc_state.selected().unwrap_or(0);
+        let previous = selected
+            .checked_sub(1)
+            .unwrap_or_else(|| headings.len().saturating_sub(1));
+        self.writeup_toc_state.select(Some(previous));
+    }
+
+    fn jump_to_selected_writeup_heading(&mut self) {
+        let headings = self.current_writeup_headings();
+        let Some(heading) = self
+            .writeup_toc_state
+            .selected()
+            .and_then(|selected| headings.get(selected))
+        else {
+            self.status = Some("No heading selected.".to_string());
+            return;
+        };
+        self.writeup_detail_scroll = heading.line.min(usize::from(u16::MAX)) as u16;
+        self.writeup_detail_focus = WriteupPaneFocus::Detail;
+    }
+
+    fn sync_writeup_toc_selection(&mut self, headings: &[MarkdownHeading]) {
+        if headings.is_empty() {
+            self.writeup_toc_state.select(None);
+            return;
+        }
+        let selected = self
+            .writeup_toc_state
+            .selected()
+            .unwrap_or(0)
+            .min(headings.len() - 1);
+        self.writeup_toc_state.select(Some(selected));
+    }
+
+    fn sync_writeup_toc_to_scroll(&mut self) {
+        if !self.writeup_toc_open {
+            return;
+        }
+        let headings = self.current_writeup_headings();
+        if headings.is_empty() {
+            self.writeup_toc_state.select(None);
+            return;
+        }
+        let scroll = usize::from(self.writeup_detail_scroll);
+        let selected = headings
+            .iter()
+            .enumerate()
+            .take_while(|(_, heading)| heading.line <= scroll)
+            .map(|(idx, _)| idx)
+            .last()
+            .unwrap_or(0);
+        self.writeup_toc_state.select(Some(selected));
     }
 
     fn resize_detail(&mut self, delta: i16) {
@@ -5029,7 +5339,14 @@ impl App {
 
     fn open_selected_writeup(&mut self) {
         if let Some(idx) = self.selected_writeup_index() {
+            if self.writeup_detail != Some(idx) {
+                self.writeup_detail_scroll = 0;
+                self.writeup_toc_state.select(None);
+            }
             self.writeup_detail = Some(idx);
+            if self.writeup_detail_focus == WriteupPaneFocus::Toc && !self.writeup_toc_open {
+                self.writeup_detail_focus = WriteupPaneFocus::Detail;
+            }
             if let Some(visible_pos) = self
                 .visible_writeups
                 .iter()
@@ -7084,6 +7401,138 @@ fn detail_child_issue_line(value: &str) -> Line<'static> {
     ])
 }
 
+fn writeup_detail_lines(
+    writeup: &Writeup,
+    tickets: &[Ticket],
+    width: usize,
+) -> (Vec<Line<'static>>, Vec<MarkdownHeading>) {
+    let mut lines = vec![Line::from(Span::styled(
+        writeup.id.to_string(),
+        Style::default().fg(Color::DarkGray),
+    ))];
+    lines.extend(writeup_metadata_lines(writeup, width.saturating_sub(2)));
+    if !writeup.tags.is_empty() {
+        lines.push(tags_field_line(&writeup.tags));
+    }
+    if let Some(body) = writeup.latest_body() {
+        let stats = writeup_body_stats(body);
+        lines.push(field_line("Stats", &writeup_stats_display(stats)));
+    }
+    if !writeup.tickets.is_empty() {
+        lines.push(Line::raw(""));
+        lines.push(Line::from(Span::styled(
+            "Issues",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )));
+        for (idx, ticket_id) in writeup.tickets.iter().take(9).enumerate() {
+            let ticket = tickets.iter().find(|ticket| ticket.id == *ticket_id);
+            let title = ticket
+                .map(|ticket| ticket.title.clone())
+                .unwrap_or_else(|| "missing ticket".to_string());
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("{}", idx + 1),
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" "),
+                Span::styled(
+                    ticket_id.to_string()[..6].to_string(),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::raw(" "),
+                Span::raw(title),
+            ]));
+        }
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::from(Span::styled(
+        writeup.title.clone(),
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::raw(""));
+    let body_start = lines.len();
+    if let Some(version) = writeup.versions.last() {
+        lines.extend(version.body.lines().map(|line| Line::raw(line.to_string())));
+        let headings = parse_markdown_headings(&version.body)
+            .into_iter()
+            .map(|heading| MarkdownHeading {
+                line: heading.line + body_start,
+                ..heading
+            })
+            .collect();
+        (lines, headings)
+    } else {
+        lines.push(Line::from(Span::styled(
+            "No versions yet. Press e to add one.",
+            Style::default().fg(Color::DarkGray),
+        )));
+        (lines, Vec::new())
+    }
+}
+
+fn writeup_body_stats(body: &str) -> WriteupBodyStats {
+    let words = body
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .count();
+    WriteupBodyStats {
+        words,
+        read_minutes: words.div_ceil(200).max(usize::from(words > 0)),
+        headings: parse_markdown_headings(body).len(),
+    }
+}
+
+fn writeup_stats_display(stats: WriteupBodyStats) -> String {
+    let word_label = if stats.words == 1 { "word" } else { "words" };
+    let heading_label = if stats.headings == 1 {
+        "heading"
+    } else {
+        "headings"
+    };
+    format!(
+        "{} {word_label}, {} min read, {} {heading_label}",
+        stats.words, stats.read_minutes, stats.headings
+    )
+}
+
+fn parse_markdown_headings(body: &str) -> Vec<MarkdownHeading> {
+    let mut headings = Vec::new();
+    let mut in_fence = false;
+    for (line_idx, line) in body.lines().enumerate() {
+        let trimmed_start = line.trim_start();
+        if trimmed_start.starts_with("```") || trimmed_start.starts_with("~~~") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        let hashes = trimmed_start.chars().take_while(|ch| *ch == '#').count();
+        if !(1..=6).contains(&hashes) {
+            continue;
+        }
+        let after_hashes = &trimmed_start[hashes..];
+        if !after_hashes.chars().next().is_some_and(char::is_whitespace) {
+            continue;
+        }
+        let title = after_hashes.trim().trim_end_matches('#').trim().to_string();
+        if !title.is_empty() {
+            headings.push(MarkdownHeading {
+                level: hashes,
+                title,
+                line: line_idx,
+            });
+        }
+    }
+    headings
+}
+
 #[derive(Clone)]
 struct MetadataField {
     key: &'static str,
@@ -7625,6 +8074,48 @@ mod tests {
         assert_eq!(
             ordered_list_indices(&tickets, &[1, 0, 2], true),
             vec![0, 1, 2]
+        );
+    }
+
+    #[test]
+    fn markdown_headings_ignore_code_fences_and_track_levels() {
+        let headings = parse_markdown_headings(
+            "# Intro\ntext\n```md\n# ignored\n```\n## Details ##\n#### Deep\nnot # heading",
+        );
+
+        assert_eq!(
+            headings,
+            vec![
+                MarkdownHeading {
+                    level: 1,
+                    title: "Intro".to_string(),
+                    line: 0,
+                },
+                MarkdownHeading {
+                    level: 2,
+                    title: "Details".to_string(),
+                    line: 5,
+                },
+                MarkdownHeading {
+                    level: 4,
+                    title: "Deep".to_string(),
+                    line: 6,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn writeup_body_stats_count_words_read_time_and_headings() {
+        let body = "# Intro\none two three\n## Next\nfour";
+
+        assert_eq!(
+            writeup_body_stats(body),
+            WriteupBodyStats {
+                words: 6,
+                read_minutes: 1,
+                headings: 2,
+            }
         );
     }
 
