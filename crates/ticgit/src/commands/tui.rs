@@ -179,6 +179,9 @@ struct App {
     writeups: Vec<Writeup>,
     visible_writeups: Vec<usize>,
     ticket_reviews: HashMap<uuid::Uuid, TicketReview>,
+    review_commit_cache: HashMap<String, ReviewCommitInfo>,
+    review_status_cache: HashMap<String, CommitReviewStatus>,
+    review_patch_cache: HashMap<String, Vec<String>>,
     list_state: ListState,
     writeup_state: ListState,
     review_state: ListState,
@@ -460,6 +463,9 @@ impl App {
             writeups: Vec::new(),
             visible_writeups: Vec::new(),
             ticket_reviews: HashMap::new(),
+            review_commit_cache: HashMap::new(),
+            review_status_cache: HashMap::new(),
+            review_patch_cache: HashMap::new(),
             list_state: ListState::default(),
             writeup_state: ListState::default(),
             review_state: ListState::default(),
@@ -1931,6 +1937,16 @@ impl App {
     ) {
         let commits = review_commits(review);
         self.sync_review_commit_selection_for(commits.len());
+        let commit_data = commits
+            .iter()
+            .map(|sha| {
+                (
+                    sha.clone(),
+                    self.review_commit_info_cached(sha),
+                    self.commit_review_status_cached(sha),
+                )
+            })
+            .collect::<Vec<_>>();
         let title = format!(
             "{}  {}  ({})",
             review.title,
@@ -1955,6 +1971,7 @@ impl App {
             Paragraph::new(review_branch_summary_lines(
                 ticket,
                 review,
+                &commit_data,
                 usize::from(rows_area[0].width),
             ))
             .wrap(Wrap { trim: false }),
@@ -1972,16 +1989,17 @@ impl App {
                 Style::default().fg(Color::DarkGray),
             )))]
         } else {
-            commits
+            commit_data
                 .iter()
                 .enumerate()
-                .map(|(idx, sha)| {
+                .map(|(idx, (sha, info, status))| {
                     ListItem::new(review_commit_table_line(
                         idx,
                         total,
                         sha,
                         review,
-                        &commit_review_status(&self.store, sha),
+                        info,
+                        status,
                         usize::from(rows_area[2].width)
                             .saturating_sub(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL)),
                     ))
@@ -2001,7 +2019,7 @@ impl App {
     }
 
     fn draw_review_commit_preview(
-        &self,
+        &mut self,
         frame: &mut Frame<'_>,
         area: Rect,
         _ticket: &Ticket,
@@ -2013,8 +2031,8 @@ impl App {
             frame.render_widget(empty, area);
             return;
         };
-        let info = review_commit_info(&sha);
-        let status = commit_review_status(&self.store, &sha);
+        let info = self.review_commit_info_cached(&sha);
+        let status = self.commit_review_status_cached(&sha);
         let mut lines = vec![
             Line::from(vec![
                 Span::styled(
@@ -2062,7 +2080,7 @@ impl App {
         frame.render_widget(preview, area);
     }
 
-    fn draw_review_commit_mode(&self, frame: &mut Frame<'_>, area: Rect) {
+    fn draw_review_commit_mode(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let Some((ticket, review)) = self.selected_review_context_owned() else {
             return;
         };
@@ -2085,8 +2103,8 @@ impl App {
         self.draw_review_commit_discussion(frame, panes[1], &review, &sha);
     }
 
-    fn draw_review_commit_diff(&self, frame: &mut Frame<'_>, area: Rect, sha: &str) {
-        let info = review_commit_info(sha);
+    fn draw_review_commit_diff(&mut self, frame: &mut Frame<'_>, area: Rect, sha: &str) {
+        let info = self.review_commit_info_cached(sha);
         let mut lines = Vec::new();
         lines.push(Line::from(Span::styled(
             info.subject,
@@ -2100,7 +2118,7 @@ impl App {
             }
         }
         lines.push(Line::raw(""));
-        for line in commit_patch_lines(sha).into_iter().take(400) {
+        for line in self.commit_patch_lines_cached(sha).into_iter().take(400) {
             lines.push(diff_line(line));
         }
         let diff = Paragraph::new(lines)
@@ -5892,11 +5910,48 @@ impl App {
         state.save()
     }
 
+    fn review_commit_info_cached(&mut self, sha: &str) -> ReviewCommitInfo {
+        if let Some(info) = self.review_commit_cache.get(sha) {
+            return info.clone();
+        }
+        let info = review_commit_info(sha);
+        self.review_commit_cache
+            .insert(sha.to_string(), info.clone());
+        info
+    }
+
+    fn commit_review_status_cached(&mut self, sha: &str) -> CommitReviewStatus {
+        if let Some(status) = self.review_status_cache.get(sha) {
+            return status.clone();
+        }
+        let status = commit_review_status(&self.store, sha);
+        self.review_status_cache
+            .insert(sha.to_string(), status.clone());
+        status
+    }
+
+    fn commit_patch_lines_cached(&mut self, sha: &str) -> Vec<String> {
+        if let Some(lines) = self.review_patch_cache.get(sha) {
+            return lines.clone();
+        }
+        let lines = commit_patch_lines(sha);
+        self.review_patch_cache
+            .insert(sha.to_string(), lines.clone());
+        lines
+    }
+
+    fn clear_review_caches(&mut self) {
+        self.review_commit_cache.clear();
+        self.review_status_cache.clear();
+        self.review_patch_cache.clear();
+    }
+
     fn refresh_data(&mut self) -> Result<()> {
         let selected_id = self.selected_ticket().map(|ticket| ticket.id);
         let selected_writeup_id = self.selected_writeup().map(|writeup| writeup.id);
         let selected_review_id = self.selected_review_ticket().map(|ticket| ticket.id);
         let was_board = self.view == ViewMode::Board && self.detail.is_none();
+        self.clear_review_caches();
         self.reload_all(selected_id, selected_writeup_id)?;
         if let Some(id) = selected_review_id {
             self.select_review_ticket_by_id(id);
@@ -6893,15 +6948,15 @@ fn review_summary_height(area_height: u16) -> u16 {
 fn review_branch_summary_lines(
     ticket: &Ticket,
     review: &TicketReview,
+    commit_data: &[(String, ReviewCommitInfo, CommitReviewStatus)],
     width: usize,
 ) -> Vec<Line<'static>> {
     if width == 0 {
         return Vec::new();
     }
-    let commits = review_commits(review);
-    let infos = commits
+    let infos = commit_data
         .iter()
-        .map(|sha| review_commit_info(sha))
+        .map(|(_, info, _)| info.clone())
         .collect::<Vec<_>>();
     let authors = review_authors_display(&infos);
     let updated = infos
@@ -6914,7 +6969,7 @@ fn review_branch_summary_lines(
     } else {
         review.status.as_str()
     };
-    let version = commits.len().max(1);
+    let version = commit_data.len().max(1);
     let title = truncate_display(&review.title, width);
     let branch = truncate_display(&review_branch_label(review), width);
     let description = ticket
@@ -6942,7 +6997,7 @@ fn review_branch_summary_lines(
                 ("Status", status.to_string(), review_status_style(status)),
                 (
                     "Commits",
-                    review_commit_meter(commits.len()),
+                    review_commit_meter(commit_data.len()),
                     Style::default().fg(Color::LightGreen),
                 ),
                 (
@@ -7078,10 +7133,10 @@ fn review_commit_table_line(
     total: usize,
     sha: &str,
     review: &TicketReview,
+    info: &ReviewCommitInfo,
     status: &CommitReviewStatus,
     width: usize,
 ) -> Line<'static> {
-    let info = review_commit_info(sha);
     let messages = review_messages_for_commit(review, sha);
     let status_label = review_commit_verdict(review, sha, status);
     let mut columns = vec![
@@ -7092,7 +7147,7 @@ fn review_commit_table_line(
             5,
         ),
         (
-            info.subject,
+            info.subject.clone(),
             Style::default().add_modifier(Modifier::BOLD),
             30,
         ),
@@ -7101,7 +7156,11 @@ fn review_commit_table_line(
             Style::default().fg(Color::LightGreen),
             12,
         ),
-        (info.updated, Style::default().fg(Color::DarkGray), 12),
+        (
+            info.updated.clone(),
+            Style::default().fg(Color::DarkGray),
+            12,
+        ),
         (
             short_author_display(&info.author),
             Style::default().fg(Color::Cyan),
@@ -9847,8 +9906,18 @@ mod tests {
             revisions: vec!["abcdef123456".to_string()],
             messages: Vec::new(),
         };
+        let commit_data = vec![(
+            "abcdef123456".to_string(),
+            ReviewCommitInfo {
+                subject: "Add review CLI".to_string(),
+                author: "Test User <test@example.com>".to_string(),
+                updated: "1 hour ago".to_string(),
+                ..ReviewCommitInfo::default()
+            },
+            CommitReviewStatus::default(),
+        )];
 
-        let text = review_branch_summary_lines(&ticket, &review, 120)
+        let text = review_branch_summary_lines(&ticket, &review, &commit_data, 120)
             .iter()
             .flat_map(|line| line.spans.iter())
             .map(|span| span.content.as_ref())
