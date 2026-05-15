@@ -166,9 +166,13 @@ fn run_list(args: ListArgs) -> Result<()> {
             )
         };
         println!(
-            "{} {:<6} {:<6} v{} {}{}",
+            "{} {:<6} {:<3} {:<6} v{} {}{}",
             writeup.short_id(),
             writeup.status.as_str(),
+            writeup
+                .priority
+                .map(|priority| format!("p{priority}"))
+                .unwrap_or_else(|| "-".to_string()),
             writeup.authors.len(),
             writeup.versions.len(),
             writeup.title,
@@ -192,22 +196,40 @@ fn run_edit(args: EditArgs) -> Result<()> {
     let store = open_store()?;
     let id = store.resolve_writeup_id(&args.id)?;
     let current = store.load_writeup(&id)?;
-    let initial = current.latest_body().unwrap_or("");
+    let initial = writeup_edit_body(&current);
     let body = match (args.body, args.file) {
-        (Some(body), None) => body,
+        (Some(body), None) => {
+            store.append_writeup_version(&id, &body)?;
+            let writeup = store.load_writeup(&id)?;
+            println!(
+                "Appended version {} to writeup {}.",
+                writeup.versions.len(),
+                writeup.short_id()
+            );
+            return Ok(());
+        }
         (None, Some(path)) => std::fs::read_to_string(&path)
             .with_context(|| format!("reading writeup body from `{}`", path.display()))?,
-        (None, None) => editor::capture_with_initial("Writeup body", initial)?
+        (None, None) => editor::capture_with_initial("Writeup body", &initial)?
             .context("writeup edit cancelled")?,
         (Some(_), Some(_)) => unreachable!("clap enforces conflicts"),
     };
-    store.append_writeup_version(&id, &body)?;
+    let (title, body) = editor::parse_ticket_edit(&body)?;
+    store.set_writeup_title(&id, &title)?;
+    let appended = body.is_some();
+    if let Some(body) = body {
+        store.append_writeup_version(&id, &body)?;
+    }
     let writeup = store.load_writeup(&id)?;
-    println!(
-        "Appended version {} to writeup {}.",
-        writeup.versions.len(),
-        writeup.short_id()
-    );
+    if appended {
+        println!(
+            "Appended version {} to writeup {}.",
+            writeup.versions.len(),
+            writeup.short_id()
+        );
+    } else {
+        println!("Updated writeup {}.", writeup.short_id());
+    }
     Ok(())
 }
 
@@ -265,6 +287,9 @@ fn print_writeup(writeup: &Writeup, all: bool) -> Result<()> {
     println!("- Id: `{}`", writeup.id);
     println!("- Short id: `{}`", writeup.short_id());
     println!("- Status: `{}`", writeup.status.as_str());
+    if let Some(priority) = writeup.priority {
+        println!("- Priority: `{priority}`");
+    }
     println!(
         "- Created: `{}` by {}",
         writeup.created_at.format(&Rfc3339)?,
@@ -311,6 +336,15 @@ fn print_writeup(writeup: &Writeup, all: bool) -> Result<()> {
         println!("_No versions yet._");
     }
     Ok(())
+}
+
+fn writeup_edit_body(writeup: &Writeup) -> String {
+    let mut body = writeup.title.clone();
+    if let Some(latest_body) = writeup.latest_body() {
+        body.push_str("\n\n");
+        body.push_str(latest_body);
+    }
+    body
 }
 
 fn body_from_args(

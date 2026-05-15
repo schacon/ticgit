@@ -1108,6 +1108,10 @@ impl App {
                         },
                         MenuHint {
                             key: "p",
+                            desc: "priority",
+                        },
+                        MenuHint {
+                            key: "P",
                             desc: "promote",
                         },
                         MenuHint {
@@ -2753,6 +2757,7 @@ impl App {
                     ("i", "link issue"),
                     Some(("u", "unlink issue")),
                 ));
+                lines.push(help_columns(("p", "priority"), Some(("P", "promote"))));
                 lines.push(help_columns(("e", "edit latest"), Some(("v", "versions"))));
                 lines.push(help_columns(
                     ("+/-", "resize detail"),
@@ -2774,9 +2779,12 @@ impl App {
                     Some(("a", "show all/open")),
                 ));
                 lines.push(help_columns(("c", "close"), Some(("o", "reopen"))));
-                lines.push(help_columns(("p", "promote"), Some(("i", "link issue"))));
+                lines.push(help_columns(("p", "priority"), Some(("P", "promote"))));
+                lines.push(help_columns(
+                    ("i", "link issue"),
+                    Some(("u", "unlink issue")),
+                ));
                 lines.push(help_columns(("v", "versions"), Some(("t", "manage tags"))));
-                lines.push(help_columns(("u", "unlink issue"), None));
                 lines.push(help_columns(("1-9", "jump issue"), None));
                 lines.push(help_columns(
                     ("+/-", "resize detail"),
@@ -3195,14 +3203,16 @@ impl App {
             }
             KeyCode::Char('p') => {
                 if self.active_tab == TuiTab::Writeups {
-                    self.promote_selected_writeup()?;
+                    self.begin_input(InputKind::Priority);
                 } else {
                     self.begin_input(InputKind::Priority);
                 }
                 false
             }
             KeyCode::Char('P') => {
-                if self.active_tab == TuiTab::Issues {
+                if self.active_tab == TuiTab::Writeups {
+                    self.promote_selected_writeup()?;
+                } else if self.active_tab == TuiTab::Issues {
                     self.jump_to_parent_issue();
                 }
                 false
@@ -4216,6 +4226,18 @@ impl App {
                 }
                 None
             }
+            InputKind::Priority if self.active_tab == TuiTab::Writeups => {
+                let Some(writeup) = self.selected_writeup() else {
+                    self.status = Some("Select a writeup first.".to_string());
+                    return;
+                };
+                self.input = writeup
+                    .priority
+                    .map(|value| value.to_string())
+                    .unwrap_or_default();
+                self.mode = Mode::Input(kind);
+                return;
+            }
             _ => {
                 let Some(ticket) = self.selected_ticket() else {
                     self.status = Some("Select a ticket first.".to_string());
@@ -4226,7 +4248,10 @@ impl App {
         };
 
         self.input = match kind {
-            InputKind::Priority => String::new(),
+            InputKind::Priority => ticket
+                .and_then(|ticket| ticket.priority)
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
             InputKind::Points => ticket
                 .and_then(|ticket| ticket.points)
                 .map(|value| value.to_string())
@@ -4283,10 +4308,20 @@ impl App {
     }
 
     fn priority_range_display(&self) -> String {
-        let mut priorities = self
-            .visible
-            .iter()
-            .filter_map(|idx| self.tickets[*idx].priority);
+        let mut priorities: Box<dyn Iterator<Item = i64> + '_> =
+            if self.active_tab == TuiTab::Writeups {
+                Box::new(
+                    self.visible_writeups
+                        .iter()
+                        .filter_map(|idx| self.writeups[*idx].priority),
+                )
+            } else {
+                Box::new(
+                    self.visible
+                        .iter()
+                        .filter_map(|idx| self.tickets[*idx].priority),
+                )
+            };
         let Some(first) = priorities.next() else {
             return "No priorities set.".to_string();
         };
@@ -4306,6 +4341,9 @@ impl App {
         };
         if matches!(kind, InputKind::AddTags | InputKind::RemoveTags) {
             return self.submit_tag_input(kind);
+        }
+        if kind == InputKind::Priority && self.active_tab == TuiTab::Writeups {
+            return self.submit_writeup_priority_input();
         }
 
         let Some(ticket) = self.selected_ticket() else {
@@ -4352,6 +4390,28 @@ impl App {
         }
 
         self.reload(preferred_after_reload)?;
+        Ok(true)
+    }
+
+    fn submit_writeup_priority_input(&mut self) -> Result<bool> {
+        let Some(writeup) = self.selected_writeup() else {
+            self.status = Some("Select a writeup first.".to_string());
+            return Ok(false);
+        };
+        let id = writeup.id;
+        let priority = match parse_optional_i64(&self.input, "priority") {
+            Ok(priority) => priority,
+            Err(err) => {
+                self.status = Some(err.to_string());
+                return Ok(false);
+            }
+        };
+        self.store.set_writeup_priority(&id, priority)?;
+        self.status = Some(match priority {
+            Some(value) => format!("Set writeup priority to {value}."),
+            None => "Cleared writeup priority.".to_string(),
+        });
+        self.reload_writeups(Some(id))?;
         Ok(true)
     }
 
@@ -4972,6 +5032,8 @@ impl App {
                 }
             })
             .collect();
+        self.visible_writeups
+            .sort_by(|a, b| compare_tui_writeups(&self.writeups[*a], &self.writeups[*b]));
 
         self.writeup_detail = self
             .writeup_detail
@@ -5768,6 +5830,13 @@ fn compare_tui_tickets(a: &Ticket, b: &Ticket) -> std::cmp::Ordering {
         .then_with(|| a.id.cmp(&b.id))
 }
 
+fn compare_tui_writeups(a: &Writeup, b: &Writeup) -> std::cmp::Ordering {
+    priority_sort_key(a.priority)
+        .cmp(&priority_sort_key(b.priority))
+        .then_with(|| writeup_recent_at(b).cmp(&writeup_recent_at(a)))
+        .then_with(|| a.id.cmp(&b.id))
+}
+
 fn closed_at_for(
     closed_at: &HashMap<uuid::Uuid, OffsetDateTime>,
     ticket: &Ticket,
@@ -6335,6 +6404,16 @@ fn writeup_list_line(writeup: &Writeup, width: usize, compact: bool) -> Line<'st
             Style::default()
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::DIM),
+        ),
+        (
+            fit_display(
+                &writeup
+                    .priority
+                    .map(|priority| format!("p{priority}"))
+                    .unwrap_or_else(|| "-".to_string()),
+                LIST_PRIORITY_WIDTH,
+            ),
+            Style::default().fg(Color::LightMagenta),
         ),
         (
             fit_display(&format!("v{}", writeup.versions.len()), LIST_STATE_WIDTH),
@@ -7413,6 +7492,9 @@ fn writeup_detail_lines(
     lines.extend(writeup_metadata_lines(writeup, width.saturating_sub(2)));
     if !writeup.tags.is_empty() {
         lines.push(tags_field_line(&writeup.tags));
+    }
+    if let Some(priority) = writeup.priority {
+        lines.push(field_line("Priority", &priority.to_string()));
     }
     if let Some(body) = writeup.latest_body() {
         let stats = writeup_body_stats(body);

@@ -39,6 +39,7 @@ pub struct Writeup {
     pub id: Uuid,
     pub title: String,
     pub status: WriteupStatus,
+    pub priority: Option<i64>,
     pub created_at: OffsetDateTime,
     pub created_by: String,
     pub authors: BTreeSet<String>,

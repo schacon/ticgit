@@ -1202,6 +1202,46 @@ fn writeup_workflow_creates_versions_links_and_promotes() {
         .stdout(predicate::str::contains("Rethink sync"));
 }
 
+#[cfg(unix)]
+#[test]
+fn writeup_edit_editor_uses_first_line_as_title() {
+    let repo = TestRepo::new();
+    let output = repo
+        .ti()
+        .args([
+            "writeup",
+            "new",
+            "--title",
+            "Original title",
+            "--body",
+            "Original body",
+            "--id-only",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let writeup = String::from_utf8(output).unwrap().trim().to_string();
+    let writeup_prefix = &writeup[..6];
+    let editor = editor_script(&repo, "Updated title\n\nUpdated body");
+
+    repo.ti()
+        .env("EDITOR", editor)
+        .args(["writeup", "edit", writeup_prefix])
+        .assert()
+        .success();
+
+    repo.ti()
+        .args(["writeup", "show", writeup_prefix])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Writeup: Updated title"))
+        .stdout(predicate::str::contains("Updated body"))
+        .stdout(predicate::str::contains("Updated title\n\nUpdated title").not())
+        .stdout(predicate::str::contains("Original body").not());
+}
+
 #[test]
 fn list_search_filters_title_description_and_comments() {
     let repo = TestRepo::new();

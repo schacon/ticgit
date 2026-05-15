@@ -638,9 +638,13 @@ impl TicketStore {
             }
         }
         out.sort_by(|a, b| {
-            b.created_at
-                .cmp(&a.created_at)
-                .then_with(|| a.title.cmp(&b.title))
+            metadata_priority_sort_key(a.priority)
+                .cmp(&metadata_priority_sort_key(b.priority))
+                .then_with(|| {
+                    b.created_at
+                        .cmp(&a.created_at)
+                        .then_with(|| a.title.cmp(&b.title))
+                })
         });
         Ok(out)
     }
@@ -741,6 +745,21 @@ impl TicketStore {
         Ok(())
     }
 
+    pub fn set_writeup_priority(&self, id: &Uuid, priority: Option<i64>) -> Result<()> {
+        self.load_writeup(id)?;
+        let p = self.project_handle();
+        let key = keys::writeup_field(id, "priority");
+        match priority {
+            Some(n) => {
+                p.set(&key, n.to_string().as_str())?;
+            }
+            None => {
+                p.remove(&key)?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn link_writeup_ticket(&self, writeup_id: &Uuid, ticket_id: &Uuid) -> Result<()> {
         self.load_writeup(writeup_id)?;
         self.load(ticket_id)?;
@@ -783,6 +802,9 @@ impl TicketStore {
         )?;
         if !body.is_empty() {
             self.set_description(&ticket.id, Some(&body))?;
+        }
+        if writeup.priority.is_some() {
+            self.set_priority(&ticket.id, writeup.priority)?;
         }
         self.link_writeup_ticket(writeup_id, &ticket.id)?;
         self.load(&ticket.id)
@@ -1112,6 +1134,7 @@ fn build_writeup(id: Uuid, fields: Vec<(String, MetaValue)>) -> Option<Writeup> 
 
     let mut title: Option<String> = None;
     let mut status = WriteupStatus::Open;
+    let mut priority: Option<i64> = None;
     let mut created_at: Option<OffsetDateTime> = None;
     let mut created_by = String::new();
     let mut authors = BTreeSet::new();
@@ -1125,6 +1148,7 @@ fn build_writeup(id: Uuid, fields: Vec<(String, MetaValue)>) -> Option<Writeup> 
             ("status", MetaValue::String(s)) => {
                 status = WriteupStatus::parse(&s).unwrap_or(WriteupStatus::Open);
             }
+            ("priority", MetaValue::String(s)) => priority = s.parse().ok(),
             ("created-at", MetaValue::String(s)) => {
                 created_at = OffsetDateTime::parse(&s, &Rfc3339).ok();
             }
@@ -1152,6 +1176,7 @@ fn build_writeup(id: Uuid, fields: Vec<(String, MetaValue)>) -> Option<Writeup> 
         id,
         title,
         status,
+        priority,
         created_at,
         created_by,
         authors,
@@ -1224,6 +1249,13 @@ fn decode_writeup_version(raw: &str, fallback_at: OffsetDateTime) -> WriteupVers
         author,
         at,
         body: body.trim_start_matches(['\r', '\n']).to_string(),
+    }
+}
+
+fn metadata_priority_sort_key(priority: Option<i64>) -> (u8, i64) {
+    match priority {
+        Some(value) => (0, value),
+        None => (1, 0),
     }
 }
 
@@ -1431,12 +1463,14 @@ mod tests {
         store
             .set_writeup_status(&writeup.id, WriteupStatus::Closed)
             .unwrap();
+        store.set_writeup_priority(&writeup.id, Some(2)).unwrap();
         store.add_writeup_tag(&writeup.id, "review").unwrap();
         store.remove_writeup_tag(&writeup.id, "design").unwrap();
 
         let loaded = store.load_writeup(&writeup.id).unwrap();
         assert_eq!(loaded.title, "Design note");
         assert_eq!(loaded.status, WriteupStatus::Closed);
+        assert_eq!(loaded.priority, Some(2));
         assert!(!loaded.tags.contains("design"));
         assert!(loaded.tags.contains("review"));
         assert!(loaded.authors.contains(store.email()));
@@ -1447,6 +1481,56 @@ mod tests {
         assert_eq!(
             store.resolve_writeup_id(&writeup.short_id()).unwrap(),
             writeup.id
+        );
+    }
+
+    #[test]
+    fn writeups_sort_by_priority_before_recency() {
+        let (store, _td) = test_store();
+        let old_high = store
+            .create_writeup(
+                "old high",
+                NewWriteupOpts {
+                    created_at: Some(
+                        OffsetDateTime::from_unix_timestamp(1_000).expect("valid timestamp"),
+                    ),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let recent_low = store
+            .create_writeup(
+                "recent low",
+                NewWriteupOpts {
+                    created_at: Some(
+                        OffsetDateTime::from_unix_timestamp(2_000).expect("valid timestamp"),
+                    ),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let no_priority = store
+            .create_writeup(
+                "no priority",
+                NewWriteupOpts {
+                    created_at: Some(
+                        OffsetDateTime::from_unix_timestamp(3_000).expect("valid timestamp"),
+                    ),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        store.set_writeup_priority(&old_high.id, Some(1)).unwrap();
+        store.set_writeup_priority(&recent_low.id, Some(5)).unwrap();
+
+        let writeups = store.list_writeups().unwrap();
+
+        assert_eq!(
+            writeups
+                .iter()
+                .map(|writeup| writeup.id)
+                .collect::<Vec<_>>(),
+            vec![old_high.id, recent_low.id, no_priority.id]
         );
     }
 
@@ -1464,6 +1548,7 @@ mod tests {
                 },
             )
             .unwrap();
+        store.set_writeup_priority(&writeup.id, Some(3)).unwrap();
 
         store.link_writeup_ticket(&writeup.id, &ticket.id).unwrap();
         assert!(store
@@ -1486,6 +1571,7 @@ mod tests {
             promoted.description.as_deref(),
             Some("make this actionable")
         );
+        assert_eq!(promoted.priority, Some(3));
         assert!(promoted.tags.contains("feature"));
         assert!(store
             .load_writeup(&writeup.id)
