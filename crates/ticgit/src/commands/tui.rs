@@ -2184,6 +2184,11 @@ impl App {
                 );
             }
         }
+        let max_scroll = lines
+            .len()
+            .saturating_sub(usize::from(self.review_diff_page_height));
+        let max_scroll = max_scroll.min(usize::from(u16::MAX)) as u16;
+        self.review_diff_scroll = self.review_diff_scroll.min(max_scroll);
         if let Some(selected_file) = selected_file {
             if let Some(span) = spans.iter().find(|span| span.key == selected_file) {
                 self.review_diff_scroll = span.start.min(usize::from(u16::MAX)) as u16;
@@ -2200,11 +2205,12 @@ impl App {
                 self.review_diff_scroll = scroll.min(usize::from(u16::MAX)) as u16;
             }
         }
-        let max_scroll = lines
-            .len()
-            .saturating_sub(usize::from(self.review_diff_page_height));
-        let max_scroll = max_scroll.min(usize::from(u16::MAX)) as u16;
         self.review_diff_scroll = self.review_diff_scroll.min(max_scroll);
+        let lines = add_diff_gutter(
+            lines,
+            usize::from(self.review_diff_scroll),
+            usize::from(self.review_diff_page_height),
+        );
         let diff = Paragraph::new(lines)
             .block(Block::default().borders(Borders::ALL).title("Commit"))
             .wrap(Wrap { trim: false })
@@ -5880,7 +5886,7 @@ impl App {
         }
         self.review_diff_line_focus = self
             .review_diff_line_focus
-            .saturating_add(self.review_diff_page_height.max(1));
+            .saturating_add(self.review_diff_page_height.saturating_sub(1).max(1));
     }
 
     fn current_review_commit_sha(&self) -> Option<String> {
@@ -7717,7 +7723,7 @@ fn review_commit_diff_lines_with_spans(
         let Some(file_key) = diff_file_key(&patch_lines[idx]) else {
             push_review_diff_line(
                 &mut lines,
-                diff_line(patch_lines[idx].clone()),
+                diff_line_for_file(patch_lines[idx].clone(), None),
                 selected_line,
             );
             idx += 1;
@@ -7738,9 +7744,9 @@ fn review_commit_diff_lines_with_spans(
         } else {
             for line in &patch_lines[idx..next] {
                 let line = if selected_file == Some(file_key.as_str()) && lines.len() == start {
-                    selected_line_style(diff_line(line.clone()))
+                    selected_line_style(diff_line_for_file(line.clone(), Some(&file_key)))
                 } else {
-                    diff_line(line.clone())
+                    diff_line_for_file(line.clone(), Some(&file_key))
                 };
                 push_review_diff_line(&mut lines, line, selected_line);
             }
@@ -7772,8 +7778,8 @@ fn push_review_diff_line(
 fn selected_line_style(line: Line<'static>) -> Line<'static> {
     line.style(
         Style::default()
-            .bg(Color::Rgb(0, 0, 95))
-            .fg(Color::White)
+            .bg(Color::Rgb(210, 170, 40))
+            .fg(Color::Black)
             .add_modifier(Modifier::BOLD),
     )
 }
@@ -7802,6 +7808,48 @@ fn folded_diff_file_line(file_key: &str, hidden: usize, selected: bool) -> Line<
     } else {
         line
     }
+}
+
+fn add_diff_gutter(
+    lines: Vec<Line<'static>>,
+    scroll: usize,
+    page_height: usize,
+) -> Vec<Line<'static>> {
+    let total = lines.len();
+    if total == 0 {
+        return lines;
+    }
+    let page_height = page_height.max(1);
+    let thumb_height = if total <= page_height {
+        page_height
+    } else {
+        ((page_height * page_height) / total).clamp(1, page_height)
+    };
+    let thumb_start = if total <= page_height || page_height <= thumb_height {
+        0
+    } else {
+        let max_scroll = total.saturating_sub(page_height).max(1);
+        let max_thumb_start = page_height - thumb_height;
+        scroll.min(max_scroll) * max_thumb_start / max_scroll
+    };
+
+    lines
+        .into_iter()
+        .enumerate()
+        .map(|(idx, mut line)| {
+            let row = idx.saturating_sub(scroll);
+            let in_view = idx >= scroll && row < page_height;
+            let in_thumb = in_view && row >= thumb_start && row < thumb_start + thumb_height;
+            let gutter = if in_thumb { "█ " } else { "│ " };
+            let style = if in_thumb {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            line.spans.insert(0, Span::styled(gutter, style));
+            line
+        })
+        .collect()
 }
 
 fn diff_file_keys(patch_lines: &[String]) -> Vec<String> {
@@ -7839,7 +7887,7 @@ fn diff_file_at_scroll(spans: &[DiffFileSpan], scroll: usize) -> Option<String> 
         .map(|span| span.key.clone())
 }
 
-fn diff_line(line: String) -> Line<'static> {
+fn diff_line_for_file(line: String, file_key: Option<&str>) -> Line<'static> {
     let style = if line.starts_with('+') && !line.starts_with("+++") {
         Style::default().fg(Color::LightGreen)
     } else if line.starts_with('-') && !line.starts_with("---") {
@@ -7851,7 +7899,305 @@ fn diff_line(line: String) -> Line<'static> {
     } else {
         Style::default()
     };
-    Line::from(Span::styled(line, style))
+    if line.starts_with("diff --git")
+        || line.starts_with("index ")
+        || line.starts_with("@@")
+        || line.starts_with("--- ")
+        || line.starts_with("+++ ")
+    {
+        return Line::from(Span::styled(line, style));
+    }
+
+    let (prefix, code, base_style) = if let Some(rest) = line.strip_prefix('+') {
+        ("+", rest, Style::default().fg(Color::LightGreen))
+    } else if let Some(rest) = line.strip_prefix('-') {
+        ("-", rest, Style::default().fg(Color::LightRed))
+    } else {
+        ("", line.as_str(), Style::default())
+    };
+    let mut spans = Vec::new();
+    if !prefix.is_empty() {
+        spans.push(Span::styled(
+            prefix.to_string(),
+            base_style.add_modifier(Modifier::BOLD),
+        ));
+    }
+    spans.extend(syntax_highlight_code(code, file_key, base_style));
+    Line::from(spans)
+}
+
+fn syntax_highlight_code(
+    code: &str,
+    file_key: Option<&str>,
+    base_style: Style,
+) -> Vec<Span<'static>> {
+    let language = file_key.and_then(diff_language_for_file);
+    let mut spans = Vec::new();
+    let mut idx = 0;
+    let bytes = code.as_bytes();
+    while idx < code.len() {
+        let rest = &code[idx..];
+        if let Some(comment_prefix) = comment_prefix_at(rest, language) {
+            spans.push(Span::styled(
+                rest.to_string(),
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::ITALIC),
+            ));
+            idx += comment_prefix.len().max(rest.len());
+        } else if matches!(bytes[idx], b'\'' | b'"' | b'`') {
+            let quote = bytes[idx] as char;
+            let end = quoted_token_end(rest, quote);
+            spans.push(Span::styled(
+                rest[..end].to_string(),
+                Style::default().fg(Color::Yellow),
+            ));
+            idx += end;
+        } else if bytes[idx].is_ascii_digit() {
+            let end = rest
+                .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == '.'))
+                .unwrap_or(rest.len());
+            spans.push(Span::styled(
+                rest[..end].to_string(),
+                Style::default().fg(Color::Cyan),
+            ));
+            idx += end;
+        } else if is_ident_start(bytes[idx]) {
+            let end = rest
+                .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                .unwrap_or(rest.len());
+            let token = &rest[..end];
+            let style = if is_code_keyword(token, language) {
+                Style::default()
+                    .fg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD)
+            } else if is_type_like_token(token) {
+                Style::default().fg(Color::LightBlue)
+            } else {
+                base_style
+            };
+            spans.push(Span::styled(token.to_string(), style));
+            idx += end;
+        } else {
+            let ch = rest.chars().next().unwrap_or_default();
+            let len = ch.len_utf8();
+            let style = if "{}[]();,.<>:=*&|!?".contains(ch) {
+                Style::default().fg(Color::DarkGray)
+            } else {
+                base_style
+            };
+            spans.push(Span::styled(ch.to_string(), style));
+            idx += len;
+        }
+    }
+    spans
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DiffLanguage {
+    Rust,
+    JsLike,
+    Shell,
+    Python,
+    Other,
+}
+
+fn diff_language_for_file(file_key: &str) -> Option<DiffLanguage> {
+    let ext = file_key.rsplit('.').next()?;
+    Some(match ext {
+        "rs" => DiffLanguage::Rust,
+        "js" | "jsx" | "ts" | "tsx" | "css" | "scss" | "json" => DiffLanguage::JsLike,
+        "sh" | "bash" | "zsh" | "fish" => DiffLanguage::Shell,
+        "py" => DiffLanguage::Python,
+        _ => DiffLanguage::Other,
+    })
+}
+
+fn comment_prefix_at(rest: &str, language: Option<DiffLanguage>) -> Option<&'static str> {
+    if rest.starts_with("//")
+        && !matches!(language, Some(DiffLanguage::Shell | DiffLanguage::Python))
+    {
+        Some("//")
+    } else if rest.starts_with('#')
+        && matches!(language, Some(DiffLanguage::Shell | DiffLanguage::Python))
+    {
+        Some("#")
+    } else {
+        None
+    }
+}
+
+fn quoted_token_end(rest: &str, quote: char) -> usize {
+    let mut escaped = false;
+    for (idx, ch) in rest.char_indices().skip(1) {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == quote {
+            return idx + ch.len_utf8();
+        }
+    }
+    rest.len()
+}
+
+fn is_ident_start(byte: u8) -> bool {
+    byte.is_ascii_alphabetic() || byte == b'_'
+}
+
+fn is_code_keyword(token: &str, language: Option<DiffLanguage>) -> bool {
+    match language.unwrap_or(DiffLanguage::Other) {
+        DiffLanguage::Rust => matches!(
+            token,
+            "as" | "async"
+                | "await"
+                | "break"
+                | "const"
+                | "continue"
+                | "crate"
+                | "dyn"
+                | "else"
+                | "enum"
+                | "false"
+                | "fn"
+                | "for"
+                | "if"
+                | "impl"
+                | "in"
+                | "let"
+                | "loop"
+                | "match"
+                | "mod"
+                | "move"
+                | "mut"
+                | "pub"
+                | "ref"
+                | "return"
+                | "self"
+                | "Self"
+                | "static"
+                | "struct"
+                | "super"
+                | "trait"
+                | "true"
+                | "type"
+                | "unsafe"
+                | "use"
+                | "where"
+                | "while"
+        ),
+        DiffLanguage::JsLike => matches!(
+            token,
+            "await"
+                | "break"
+                | "case"
+                | "catch"
+                | "class"
+                | "const"
+                | "continue"
+                | "default"
+                | "else"
+                | "export"
+                | "extends"
+                | "false"
+                | "finally"
+                | "for"
+                | "from"
+                | "function"
+                | "if"
+                | "import"
+                | "interface"
+                | "let"
+                | "new"
+                | "null"
+                | "return"
+                | "switch"
+                | "true"
+                | "try"
+                | "type"
+                | "undefined"
+                | "while"
+        ),
+        DiffLanguage::Shell => matches!(
+            token,
+            "case"
+                | "do"
+                | "done"
+                | "elif"
+                | "else"
+                | "esac"
+                | "fi"
+                | "for"
+                | "function"
+                | "if"
+                | "in"
+                | "then"
+                | "while"
+        ),
+        DiffLanguage::Python => matches!(
+            token,
+            "and"
+                | "as"
+                | "async"
+                | "await"
+                | "break"
+                | "class"
+                | "continue"
+                | "def"
+                | "elif"
+                | "else"
+                | "except"
+                | "False"
+                | "finally"
+                | "for"
+                | "from"
+                | "if"
+                | "import"
+                | "in"
+                | "is"
+                | "lambda"
+                | "None"
+                | "not"
+                | "or"
+                | "pass"
+                | "return"
+                | "True"
+                | "try"
+                | "while"
+                | "with"
+                | "yield"
+        ),
+        DiffLanguage::Other => matches!(
+            token,
+            "class"
+                | "const"
+                | "def"
+                | "else"
+                | "false"
+                | "fn"
+                | "for"
+                | "function"
+                | "if"
+                | "import"
+                | "let"
+                | "return"
+                | "struct"
+                | "true"
+                | "type"
+                | "while"
+        ),
+    }
+}
+
+fn is_type_like_token(token: &str) -> bool {
+    token
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_uppercase())
 }
 
 fn ticket_list_line(
@@ -10440,7 +10786,7 @@ mod tests {
         assert!(text.contains("[+] \nsrc/a.rs\n  7 lines folded"));
         assert!(!text.contains("index 111..222"));
         assert!(!text.contains("-old"));
-        assert!(text.contains("+other"));
+        assert!(text.contains("other"));
     }
 
     #[test]
@@ -10458,7 +10804,41 @@ mod tests {
             review_commit_diff_lines_with_spans(&info, &patch, &BTreeSet::new(), None, Some(3)).0;
 
         assert_eq!(lines[3].spans[0].content.as_ref(), "@@ -1 +1 @@");
-        assert_eq!(lines[3].style.bg, Some(Color::Rgb(0, 0, 95)));
+        assert_eq!(lines[3].style.bg, Some(Color::Rgb(210, 170, 40)));
+        assert_eq!(lines[3].style.fg, Some(Color::Black));
+    }
+
+    #[test]
+    fn diff_gutter_marks_current_viewport() {
+        let lines = (0..10)
+            .map(|idx| Line::raw(format!("line {idx}")))
+            .collect::<Vec<_>>();
+        let lines = add_diff_gutter(lines, 4, 4);
+
+        assert_eq!(lines[4].spans[0].content.as_ref(), "│ ");
+        assert_eq!(lines[5].spans[0].content.as_ref(), "│ ");
+        assert_eq!(lines[6].spans[0].content.as_ref(), "█ ");
+    }
+
+    #[test]
+    fn diff_lines_syntax_highlight_code_tokens() {
+        let line = diff_line_for_file(
+            "+let value = \"hello\" // comment".to_string(),
+            Some("src/main.rs"),
+        );
+
+        assert!(line
+            .spans
+            .iter()
+            .any(|span| span.content.as_ref() == "let" && span.style.fg == Some(Color::Magenta)));
+        assert!(line.spans.iter().any(
+            |span| span.content.as_ref() == "\"hello\"" && span.style.fg == Some(Color::Yellow)
+        ));
+        assert!(line
+            .spans
+            .iter()
+            .any(|span| span.content.as_ref() == "// comment"
+                && span.style.fg == Some(Color::DarkGray)));
     }
 
     #[test]
