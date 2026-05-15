@@ -1242,6 +1242,48 @@ fn writeup_edit_editor_uses_first_line_as_title() {
         .stdout(predicate::str::contains("Original body").not());
 }
 
+#[cfg(unix)]
+#[test]
+fn writeup_edit_editor_preserves_markdown_headings() {
+    let repo = TestRepo::new();
+    let output = repo
+        .ti()
+        .args([
+            "writeup",
+            "new",
+            "--title",
+            "Original title",
+            "--body",
+            "Original body",
+            "--id-only",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let writeup = String::from_utf8(output).unwrap().trim().to_string();
+    let writeup_prefix = &writeup[..6];
+    let editor = editor_script(
+        &repo,
+        "Updated title\n\n# First heading\n\nBody\n\n## Second heading",
+    );
+
+    repo.ti()
+        .env("EDITOR", editor)
+        .args(["writeup", "edit", writeup_prefix])
+        .assert()
+        .success();
+
+    repo.ti()
+        .args(["writeup", "show", writeup_prefix])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# First heading"))
+        .stdout(predicate::str::contains("## Second heading"))
+        .stdout(predicate::str::contains("Original body").not());
+}
+
 #[test]
 fn list_search_filters_title_description_and_comments() {
     let repo = TestRepo::new();

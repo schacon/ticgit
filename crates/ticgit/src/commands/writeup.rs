@@ -210,7 +210,7 @@ fn run_edit(args: EditArgs) -> Result<()> {
         }
         (None, Some(path)) => std::fs::read_to_string(&path)
             .with_context(|| format!("reading writeup body from `{}`", path.display()))?,
-        (None, None) => editor::capture_with_initial("Writeup body", &initial)?
+        (None, None) => editor::capture_markdown_with_initial("Writeup body", &initial)?
             .context("writeup edit cancelled")?,
         (Some(_), Some(_)) => unreachable!("clap enforces conflicts"),
     };
@@ -359,7 +359,7 @@ fn body_from_args(
                 format!("reading writeup body from `{}`", path.display())
             })?))
         }
-        (None, None) => Ok(editor::capture(prompt)?),
+        (None, None) => Ok(editor::capture_markdown(prompt)?),
         (Some(_), Some(_)) => unreachable!("clap enforces conflicts"),
     }
 }

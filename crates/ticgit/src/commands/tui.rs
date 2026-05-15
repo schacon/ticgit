@@ -3936,8 +3936,8 @@ impl App {
         let initial = writeup_edit_body(writeup);
 
         suspend_terminal(terminal)?;
-        let edited = editor::capture_with_initial(
-            "Edit the title on the first line. Remaining non-comment lines become the writeup body.",
+        let edited = editor::capture_markdown_with_initial(
+            "Edit the title on the first line. Remaining lines become the writeup body.",
             &initial,
         );
         resume_terminal(terminal)?;
@@ -3965,8 +3965,8 @@ impl App {
         terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     ) -> Result<()> {
         suspend_terminal(terminal)?;
-        let edited = editor::capture(
-            "Write the title on the first line. Remaining non-comment lines become the writeup body.",
+        let edited = editor::capture_markdown(
+            "Write the title on the first line. Remaining lines become the writeup body.",
         );
         resume_terminal(terminal)?;
 
