@@ -1232,10 +1232,11 @@ impl App {
                         },
                     ]
                 } else if self.active_tab == TuiTab::Reviews {
-                    let view_hint = match self.review_mode {
-                        ReviewMode::Summary => "commits",
-                        ReviewMode::Commits => "commit",
-                        ReviewMode::Commit => "list",
+                    let enter_hint = match (self.review_detail.is_some(), self.review_mode) {
+                        (false, _) => "details",
+                        (true, ReviewMode::Summary) => "commits",
+                        (true, ReviewMode::Commits) => "commit",
+                        (true, ReviewMode::Commit) => "commit",
                     };
                     vec![
                         MenuHint {
@@ -1248,11 +1249,7 @@ impl App {
                         },
                         MenuHint {
                             key: "Enter",
-                            desc: "details",
-                        },
-                        MenuHint {
-                            key: "v",
-                            desc: view_hint,
+                            desc: enter_hint,
                         },
                         MenuHint {
                             key: "+/-",
@@ -3276,11 +3273,7 @@ impl App {
                     Some(("j/k", "move reviews")),
                 ));
                 lines.push(help_columns(
-                    ("Enter", "details"),
-                    Some(("v", "review mode")),
-                ));
-                lines.push(help_columns(
-                    ("v in review", "commit mode"),
+                    ("Enter", "details/commit"),
                     Some(("Esc", "back/close")),
                 ));
                 lines.push(help_columns(
@@ -3551,8 +3544,6 @@ impl App {
             KeyCode::Char('v') => {
                 if self.active_tab == TuiTab::Writeups && self.writeup_detail.is_some() {
                     self.begin_versions();
-                } else if self.active_tab == TuiTab::Reviews && self.review_detail.is_some() {
-                    self.toggle_review_mode();
                 } else if self.active_tab == TuiTab::Issues {
                     self.begin_saved_views();
                 }
@@ -3681,7 +3672,11 @@ impl App {
                 false
             }
             KeyCode::Enter => {
-                if self.active_tab == TuiTab::Writeups
+                if self.active_tab == TuiTab::Reviews && self.review_detail.is_some() {
+                    if matches!(self.review_mode, ReviewMode::Summary | ReviewMode::Commits) {
+                        self.toggle_review_mode();
+                    }
+                } else if self.active_tab == TuiTab::Writeups
                     && self.writeup_detail_focus == WriteupPaneFocus::Toc
                 {
                     self.jump_to_selected_writeup_heading();
@@ -7034,7 +7029,7 @@ fn review_branch_summary_lines(
         Line::from(Span::raw(truncate_display(description, width))),
         Line::raw(""),
         Line::from(Span::styled(
-            "v opens selected commit, Esc returns to review summary",
+            "Enter opens selected commit, Esc returns to review summary",
             Style::default().fg(Color::DarkGray),
         )),
     ]
