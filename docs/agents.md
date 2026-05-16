@@ -123,11 +123,36 @@ Sync ticket metadata when collaborating:
 ti sync
 ```
 
+## Code Reviews
+
+Open a review when a branch is ready for review. Link it to the ticket so the
+review shows up with that work:
+
+```sh
+ti review new --branch <branch-name> --ticket <id>
+ti review show <branch-name>
+```
+
+After adding commits to the branch, update the review metadata so the current
+head and revision list are correct:
+
+```sh
+ti review update <branch-name>
+```
+
+Use the current branch by omitting the branch argument:
+
+```sh
+ti review new --ticket <id>
+ti review update
+```
+
 ## Agent Practices
 
 - Use ticket IDs or unique prefixes.
 - Prefer `--markdown` for reading tickets.
 - Check for a spec before implementing; add one if the path is unclear.
 - Comment when you learn something important or finish a meaningful step.
+- Open or update reviews with `ti review new` and `ti review update` when branch commits change.
 - Mark blockers with `ti state blocked` and dependencies with `ti dep`.
 - Resolve tickets only after implementation and verification are complete.

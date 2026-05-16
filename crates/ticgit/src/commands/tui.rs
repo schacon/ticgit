@@ -30,6 +30,7 @@ use ticgit_lib::{
     Target, Ticket, TicketLifecycle, TicketState, TicketStatus, TicketStore, Writeup,
     WriteupStatus,
 };
+use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -225,6 +226,8 @@ struct App {
     manage_tag_state: ListState,
     link_issue_state: ListState,
     review_commit_state: ListState,
+    review_branch_state: ListState,
+    review_branch_choices: Vec<ReviewBranchChoice>,
     writeup_toc_state: ListState,
     version_state: ListState,
     order_state: ListState,
@@ -341,6 +344,47 @@ struct TicketReview {
     messages: Vec<ReviewMessageView>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReviewBranchChoice {
+    name: String,
+    last_commit_at: Option<OffsetDateTime>,
+    commits_ahead: Option<i64>,
+    author: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ButBranchList {
+    #[serde(default, rename = "appliedStacks")]
+    applied_stacks: Vec<ButAppliedStack>,
+    #[serde(default)]
+    branches: Vec<ButBranch>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ButAppliedStack {
+    #[serde(default)]
+    heads: Vec<ButBranch>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ButBranch {
+    name: String,
+    #[serde(default, rename = "lastCommitAt")]
+    last_commit_at: Option<i64>,
+    #[serde(default, rename = "commitsAhead")]
+    commits_ahead: Option<i64>,
+    #[serde(default, rename = "lastAuthor")]
+    last_author: Option<ButAuthor>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ButAuthor {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    email: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 struct ReviewMessageView {
     author: String,
@@ -393,6 +437,7 @@ enum Mode {
     SaveView,
     LinkIssueSearch,
     UnlinkIssueSelect,
+    ReviewBranchPicker,
     Versions,
     Input(InputKind),
     State,
@@ -541,6 +586,8 @@ impl App {
             manage_tag_state: ListState::default(),
             link_issue_state: ListState::default(),
             review_commit_state: ListState::default(),
+            review_branch_state: ListState::default(),
+            review_branch_choices: Vec::new(),
             writeup_toc_state: ListState::default(),
             version_state: ListState::default(),
             order_state: ListState::default(),
@@ -768,6 +815,7 @@ impl App {
             Mode::SaveView => self.draw_save_view_modal(frame),
             Mode::LinkIssueSearch => self.draw_link_issue_search_modal(frame),
             Mode::UnlinkIssueSelect => self.draw_unlink_issue_select_modal(frame),
+            Mode::ReviewBranchPicker => self.draw_review_branch_picker_modal(frame),
             Mode::Versions => self.draw_versions_modal(frame),
             Mode::Input(kind) => self.draw_input_modal(frame, kind),
             Mode::State => self.draw_state_modal(frame),
@@ -1020,6 +1068,24 @@ impl App {
                     MenuHint {
                         key: "Enter",
                         desc: "unlink",
+                    },
+                    MenuHint {
+                        key: "Esc",
+                        desc: "cancel",
+                    },
+                ],
+            ),
+            Mode::ReviewBranchPicker => (
+                "new review",
+                None,
+                vec![
+                    MenuHint {
+                        key: "j/k",
+                        desc: "branch",
+                    },
+                    MenuHint {
+                        key: "Enter",
+                        desc: "create",
                     },
                     MenuHint {
                         key: "Esc",
@@ -1333,6 +1399,10 @@ impl App {
                             MenuHint {
                                 key: "Enter",
                                 desc: enter_hint,
+                            },
+                            MenuHint {
+                                key: "n",
+                                desc: "new",
                             },
                             MenuHint {
                                 key: "e",
@@ -1677,7 +1747,7 @@ impl App {
         };
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(tabs_title(self.active_tab, &title))
+            .title(tabs_title(self.active_tab, ""))
             .border_style(
                 if self.writeup_detail.is_some()
                     && self.writeup_detail_focus == WriteupPaneFocus::List
@@ -1691,19 +1761,28 @@ impl App {
         frame.render_widget(block, area);
         let areas = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(2), Constraint::Min(0)])
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Min(0),
+            ])
             .split(inner);
         frame.render_widget(
-            Paragraph::new(writeup_overview_lines(
-                &self.writeups,
-                self.show_all_writeups,
-            ))
-            .wrap(Wrap { trim: false }),
+            Paragraph::new(title).alignment(Alignment::Right).style(
+                Style::default()
+                    .fg(Color::LightCyan)
+                    .bg(Color::Rgb(24, 24, 56))
+                    .add_modifier(Modifier::BOLD),
+            ),
             areas[0],
         );
         let row_width =
-            usize::from(areas[1].width).saturating_sub(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL));
+            usize::from(areas[2].width).saturating_sub(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL));
         let compact = self.writeup_detail.is_some();
+        frame.render_widget(
+            Paragraph::new(writeup_table_header(row_width, compact)),
+            areas[1],
+        );
 
         let items: Vec<ListItem<'_>> = if self.visible_writeups.is_empty() {
             vec![ListItem::new(Line::from(Span::styled(
@@ -1733,22 +1812,7 @@ impl App {
             )
             .highlight_symbol(HIGHLIGHT_SYMBOL)
             .highlight_spacing(HighlightSpacing::Always);
-        frame.render_stateful_widget(list, areas[1], &mut self.writeup_state);
-        if self.writeups.len() < 5 && areas[1].height > 8 {
-            let ad_height = 3.min(areas[1].height);
-            let ad_area = Rect {
-                x: areas[1].x,
-                y: areas[1].y + areas[1].height.saturating_sub(ad_height) / 2,
-                width: areas[1].width,
-                height: ad_height,
-            };
-            frame.render_widget(
-                Paragraph::new(writeup_ad_lines())
-                    .alignment(Alignment::Center)
-                    .wrap(Wrap { trim: false }),
-                ad_area,
-            );
-        }
+        frame.render_stateful_widget(list, areas[2], &mut self.writeup_state);
     }
 
     fn draw_review_list(&mut self, frame: &mut Frame<'_>, area: Rect) {
@@ -2794,6 +2858,62 @@ impl App {
         frame.render_stateful_widget(list, area, &mut self.link_issue_state);
     }
 
+    fn draw_review_branch_picker_modal(&mut self, frame: &mut Frame<'_>) {
+        let area = centered_rect(78, 22, frame.area());
+        let selected = self
+            .review_branch_state
+            .selected()
+            .unwrap_or(0)
+            .min(self.review_branch_choices.len().saturating_sub(1));
+        if self.review_branch_choices.is_empty() {
+            self.review_branch_state.select(None);
+        } else {
+            self.review_branch_state.select(Some(selected));
+        }
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1), Constraint::Length(1)])
+            .split(area);
+        let row_width = usize::from(chunks[0].width)
+            .saturating_sub(2)
+            .saturating_sub(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL));
+        let items: Vec<ListItem<'_>> = if self.review_branch_choices.is_empty() {
+            vec![ListItem::new(Line::from(Span::styled(
+                "No branches without open reviews.",
+                Style::default().fg(Color::DarkGray),
+            )))]
+        } else {
+            self.review_branch_choices
+                .iter()
+                .map(|choice| ListItem::new(review_branch_choice_line(choice, row_width)))
+                .collect()
+        };
+        let list = List::new(items)
+            .block(Block::default().borders(Borders::ALL).title("Pick branch"))
+            .highlight_style(
+                Style::default()
+                    .bg(Color::Rgb(0, 0, 95))
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol(HIGHLIGHT_SYMBOL)
+            .highlight_spacing(HighlightSpacing::Always);
+        let help = Paragraph::new(Line::from(vec![
+            Span::styled("Enter", Style::default().fg(Color::Yellow)),
+            Span::raw(" create  "),
+            Span::styled("j/k", Style::default().fg(Color::Yellow)),
+            Span::raw(" move  "),
+            Span::styled("Esc", Style::default().fg(Color::Yellow)),
+            Span::raw(" cancel"),
+        ]))
+        .style(Style::default().bg(Color::DarkGray));
+
+        frame.render_widget(Clear, area);
+        frame.render_stateful_widget(list, chunks[0], &mut self.review_branch_state);
+        frame.render_widget(help, chunks[1]);
+    }
+
     fn draw_versions_modal(&mut self, frame: &mut Frame<'_>) {
         let Some(writeup) = self.selected_writeup().cloned() else {
             return;
@@ -3497,6 +3617,14 @@ impl App {
                 ));
                 lines.push(help_columns(("Esc", "cancel"), None));
             }
+            Mode::ReviewBranchPicker => {
+                help_section(&mut lines, "New Review");
+                lines.push(help_columns(
+                    ("j/k", "move branch"),
+                    Some(("Enter", "create review")),
+                ));
+                lines.push(help_columns(("Esc", "cancel"), None));
+            }
             Mode::Versions => {
                 help_section(&mut lines, "Versions");
                 lines.push(help_columns(
@@ -3726,6 +3854,9 @@ impl App {
                 help_section(&mut lines, "Views");
                 lines.push(help_columns(("b", "board view"), Some(("d", "stats view"))));
                 lines.push(help_columns(("U", "subissues"), None));
+
+                help_section(&mut lines, "Reviews");
+                lines.push(help_columns(("n", "new branch review"), None));
             }
         }
 
@@ -3807,6 +3938,10 @@ impl App {
             }
             Mode::UnlinkIssueSelect => {
                 self.handle_unlink_issue_select_key(key)?;
+                false
+            }
+            Mode::ReviewBranchPicker => {
+                self.handle_review_branch_picker_key(key)?;
                 false
             }
             Mode::Versions => {
@@ -4013,6 +4148,8 @@ impl App {
                     }
                 } else if self.active_tab == TuiTab::Writeups {
                     self.create_writeup_in_editor(terminal)?;
+                } else if self.active_tab == TuiTab::Reviews {
+                    self.begin_review_branch_picker()?;
                 }
                 false
             }
@@ -4544,6 +4681,28 @@ impl App {
         Ok(())
     }
 
+    fn handle_review_branch_picker_key(&mut self, key: KeyEvent) -> Result<()> {
+        match key.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Normal;
+                self.review_branch_choices.clear();
+                self.review_branch_state.select(None);
+                self.status = Some("Cancelled.".to_string());
+            }
+            KeyCode::Down | KeyCode::Char('j') => self.next_review_branch_choice(),
+            KeyCode::Up | KeyCode::Char('k') => self.previous_review_branch_choice(),
+            KeyCode::Enter => {
+                if self.create_review_from_selected_branch()? {
+                    self.mode = Mode::Normal;
+                    self.review_branch_choices.clear();
+                    self.review_branch_state.select(None);
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     fn begin_create(&mut self) {
         self.new_ticket = NewTicketDraft::default();
         self.mode = Mode::Create;
@@ -4555,6 +4714,22 @@ impl App {
             ..Default::default()
         };
         self.mode = Mode::Create;
+    }
+
+    fn begin_review_branch_picker(&mut self) -> Result<()> {
+        if self.selected_review_ticket().is_none() {
+            self.status = Some("Select the ticket to review first.".to_string());
+            return Ok(());
+        }
+        self.review_branch_choices = load_review_branch_choices(&self.open_review_branch_names())?;
+        if self.review_branch_choices.is_empty() {
+            self.review_branch_state.select(None);
+            self.status = Some("No branches without open reviews.".to_string());
+            return Ok(());
+        }
+        self.review_branch_state.select(Some(0));
+        self.mode = Mode::ReviewBranchPicker;
+        Ok(())
     }
 
     fn begin_tag_filter(&mut self) {
@@ -6365,6 +6540,26 @@ impl App {
         self.sync_open_review_detail();
     }
 
+    fn next_review_branch_choice(&mut self) {
+        if self.review_branch_choices.is_empty() {
+            return;
+        }
+        let selected = self.review_branch_state.selected().unwrap_or(0);
+        self.review_branch_state
+            .select(Some((selected + 1) % self.review_branch_choices.len()));
+    }
+
+    fn previous_review_branch_choice(&mut self) {
+        if self.review_branch_choices.is_empty() {
+            return;
+        }
+        let selected = self.review_branch_state.selected().unwrap_or(0);
+        let previous = selected
+            .checked_sub(1)
+            .unwrap_or_else(|| self.review_branch_choices.len().saturating_sub(1));
+        self.review_branch_state.select(Some(previous));
+    }
+
     fn review_commit_count(&self) -> usize {
         self.review_detail
             .and_then(|idx| self.all_tickets.get(idx))
@@ -7019,6 +7214,41 @@ impl App {
         self.review_diff_render_cache.clear();
     }
 
+    fn create_review_from_selected_branch(&mut self) -> Result<bool> {
+        let Some(ticket) = self.selected_review_ticket().cloned() else {
+            self.status = Some("Select the ticket to review first.".to_string());
+            return Ok(false);
+        };
+        let Some(choice) = self
+            .review_branch_state
+            .selected()
+            .and_then(|idx| self.review_branch_choices.get(idx))
+            .cloned()
+        else {
+            self.status = Some("Select a branch first.".to_string());
+            return Ok(false);
+        };
+
+        let branch_id = create_review_for_ticket(&self.store, &ticket, &choice.name)?;
+        self.status = Some(format!("Created review for {}.", choice.name));
+        self.clear_review_caches();
+        self.reload_all(Some(ticket.id), None)?;
+        if let Some(idx) = self
+            .all_tickets
+            .iter()
+            .position(|item| item.id == ticket.id)
+        {
+            self.review_detail = Some(idx);
+            self.review_mode = ReviewMode::Summary;
+            self.review_commit_state.select(None);
+        }
+        self.select_review_ticket_by_id(ticket.id);
+        if let Some(review) = self.ticket_reviews.get_mut(&ticket.id) {
+            review.branch_id = branch_id;
+        }
+        Ok(true)
+    }
+
     fn refresh_data(&mut self) -> Result<()> {
         let selected_id = self.selected_ticket().map(|ticket| ticket.id);
         let selected_writeup_id = self.selected_writeup().map(|writeup| writeup.id);
@@ -7498,6 +7728,15 @@ impl App {
             .and_then(|selected| self.review_ticket_indices().get(selected).copied())
             .map(|idx| &self.all_tickets[idx])
     }
+
+    fn open_review_branch_names(&self) -> BTreeSet<String> {
+        self.ticket_reviews
+            .values()
+            .filter(|review| !matches!(review.status.as_str(), "closed" | "merged"))
+            .filter_map(|review| review.branch_name.as_deref())
+            .map(str::to_string)
+            .collect()
+    }
 }
 
 impl NewTicketDraft {
@@ -7781,6 +8020,164 @@ fn tabs_title(active: TuiTab, title: &str) -> String {
         " reviews "
     };
     format!("{issues} {writeups} {reviews}  {title}")
+}
+
+fn load_review_branch_choices(
+    open_review_branches: &BTreeSet<String>,
+) -> Result<Vec<ReviewBranchChoice>> {
+    let output = Command::new("but")
+        .args(["branch", "list", "--json"])
+        .output()
+        .with_context(|| "running but branch list --json")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "but branch list --json failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    let branch_list: ButBranchList =
+        serde_json::from_slice(&output.stdout).with_context(|| "parsing but branch list --json")?;
+    let mut branches = branch_list.branches;
+    for stack in branch_list.applied_stacks {
+        branches.extend(stack.heads);
+    }
+
+    let mut choices = branches
+        .into_iter()
+        .filter(|branch| !open_review_branches.contains(&branch.name))
+        .map(|branch| ReviewBranchChoice {
+            name: branch.name,
+            last_commit_at: branch
+                .last_commit_at
+                .and_then(|millis| OffsetDateTime::from_unix_timestamp(millis / 1000).ok()),
+            commits_ahead: branch.commits_ahead,
+            author: branch_author_display(branch.last_author),
+        })
+        .collect::<Vec<_>>();
+    choices.sort_by(|a, b| {
+        b.last_commit_at
+            .cmp(&a.last_commit_at)
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    let mut seen = BTreeSet::new();
+    choices.retain(|choice| seen.insert(choice.name.clone()));
+    Ok(choices)
+}
+
+fn branch_author_display(author: Option<ButAuthor>) -> String {
+    author
+        .and_then(|author| author.name.or(author.email))
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn create_review_for_ticket(
+    store: &TicketStore,
+    ticket: &Ticket,
+    branch_name: &str,
+) -> Result<String> {
+    let branch_id = ensure_review_branch_id(store, branch_name)?;
+    let base_ref = default_review_base_ref();
+    let base_sha =
+        resolve_git_ref(&base_ref).unwrap_or_else(|_| resolve_git_ref("HEAD").unwrap_or_default());
+    let head_sha = resolve_git_ref(branch_name).or_else(|_| resolve_git_ref("HEAD"))?;
+    let target = store.session().target(&Target::branch(&branch_id));
+    let ticket_id = ticket.id.to_string();
+    let description = ticket.description.clone().unwrap_or_default();
+    let now = now_rfc3339()?;
+
+    target.set_add("issue:id", &ticket_id)?;
+    target.set("title", ticket.title.as_str())?;
+    target.set("description", description.as_str())?;
+    target.set("status", "open")?;
+    target.set("base:sha", base_sha.as_str())?;
+    target.set("head:sha", head_sha.as_str())?;
+    target.set("review:created-at", now.as_str())?;
+    target.set("review:created-by", store.email())?;
+    target.set("code:branch", branch_name)?;
+    if let Some(url) = remote_url()? {
+        target.set("code:url", url.as_str())?;
+    }
+    refresh_review_revisions(store, &branch_id, &base_sha, &head_sha)?;
+
+    let project = store.session().target(&Target::project());
+    project.set(
+        &keys::ticket_field(&ticket.id, "branch-id"),
+        branch_id.as_str(),
+    )?;
+    project.set_add("review:branches", branch_id.as_str())?;
+    Ok(branch_id)
+}
+
+fn ensure_review_branch_id(store: &TicketStore, branch_name: &str) -> Result<String> {
+    let branch_target = store.session().target(&Target::branch(branch_name));
+    if let Some(branch_id) = meta_string(branch_target.get_value("branch-id")?) {
+        return Ok(branch_id);
+    }
+
+    let timestamp = OffsetDateTime::now_utc().unix_timestamp();
+    let branch_id = format!("{branch_name}@{timestamp}");
+    branch_target.set("branch-id", branch_id.as_str())?;
+    Ok(branch_id)
+}
+
+fn refresh_review_revisions(
+    store: &TicketStore,
+    branch_id: &str,
+    base_sha: &str,
+    head_sha: &str,
+) -> Result<()> {
+    let target = store.session().target(&Target::branch(branch_id));
+    target.remove("review:revisions")?;
+    for sha in review_revision_list(base_sha, head_sha)? {
+        target.list_push("review:revisions", &sha)?;
+    }
+    Ok(())
+}
+
+fn review_revision_list(base_sha: &str, head_sha: &str) -> Result<Vec<String>> {
+    if base_sha.is_empty() || head_sha.is_empty() {
+        return Ok(Vec::new());
+    }
+    let range = format!("{base_sha}..{head_sha}");
+    let output = Command::new("git")
+        .args(["rev-list", &range])
+        .output()
+        .with_context(|| "running git rev-list")?;
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
+fn default_review_base_ref() -> String {
+    for candidate in ["origin/main", "origin/master", "main", "master"] {
+        if resolve_git_ref(candidate).is_ok() {
+            return candidate.to_string();
+        }
+    }
+    "HEAD".into()
+}
+
+fn remote_url() -> Result<Option<String>> {
+    let output = Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .output()
+        .with_context(|| "running git remote get-url origin")?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Ok((!url.is_empty()).then_some(url))
+}
+
+fn now_rfc3339() -> Result<String> {
+    Ok(OffsetDateTime::now_utc().format(&Rfc3339)?)
 }
 
 fn load_ticket_reviews(
@@ -9368,7 +9765,10 @@ fn review_ticket_lines(
         .and_then(|review| review.branch_name.as_deref())
         .or_else(|| review.map(|review| review.branch_id.as_str()))
         .unwrap_or("-");
-    let mut first = vec![
+    let branch_width = width / 4;
+    let fixed_width = LIST_ID_WIDTH + 1 + 2 + 1 + 4 + 1 + 4 + 1 + branch_width + 1;
+    let title_width = width.saturating_sub(fixed_width).max(1);
+    let mut spans = vec![
         Span::styled(
             fit_display(&short_id, LIST_ID_WIDTH),
             Style::default()
@@ -9391,24 +9791,66 @@ fn review_ticket_lines(
         ),
         Span::raw(" "),
         Span::styled(
-            fit_display(branch, width.saturating_sub(19)),
+            fit_display(branch, branch_width),
             Style::default().fg(Color::LightBlue),
         ),
+        Span::raw(" "),
+        Span::styled(
+            fit_display(title, title_width),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
     ];
-    let first_width = spans_width(&first);
-    if first_width < width {
-        first.push(Span::raw(" ".repeat(width - first_width)));
+    let used = spans_width(&spans);
+    if used < width {
+        spans.push(Span::raw(" ".repeat(width - used)));
     }
-    vec![
-        Line::from(first),
-        Line::from(vec![
-            Span::raw("  "),
-            Span::styled(
-                fit_display(title, width.saturating_sub(2)),
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
-        ]),
-    ]
+    vec![Line::from(spans)]
+}
+
+fn review_branch_choice_line(choice: &ReviewBranchChoice, width: usize) -> Line<'static> {
+    let updated = choice
+        .last_commit_at
+        .map(|at| relative_time(at, OffsetDateTime::now_utc()))
+        .unwrap_or_else(|| "-".to_string());
+    let ahead = choice
+        .commits_ahead
+        .map(|ahead| format!("{ahead} ahead"))
+        .unwrap_or_else(|| "-".to_string());
+    let date_width = 4;
+    let ahead_width = 8;
+    let author_width = 18.min(width / 4);
+    let fixed_width = date_width + 1 + ahead_width + 1 + author_width + 1;
+    let branch_width = width.saturating_sub(fixed_width).max(1);
+    let mut spans = vec![
+        Span::styled(
+            fit_display(&updated, date_width),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            fit_display(&ahead, ahead_width),
+            Style::default().fg(Color::Magenta),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            fit_display(&choice.author, author_width),
+            Style::default().fg(Color::Gray),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            fit_display(&choice.name, branch_width),
+            Style::default()
+                .fg(Color::LightBlue)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ];
+    let used = spans_width(&spans);
+    if used < width {
+        spans.push(Span::raw(" ".repeat(width - used)));
+    }
+    Line::from(spans)
 }
 
 fn review_commit_line(
@@ -10049,72 +10491,53 @@ fn writeup_list_line(writeup: &Writeup, width: usize, compact: bool) -> Line<'st
     )
 }
 
-fn writeup_overview_lines(writeups: &[Writeup], show_all: bool) -> Vec<Line<'static>> {
-    let open = writeups
-        .iter()
-        .filter(|writeup| writeup.status == WriteupStatus::Open)
-        .count();
-    let closed = writeups.len().saturating_sub(open);
-    let versions = writeups
-        .iter()
-        .map(|writeup| writeup.versions.len())
-        .sum::<usize>();
-    let linked = writeups
-        .iter()
-        .filter(|writeup| !writeup.tickets.is_empty())
-        .count();
-    let tagged = writeups
-        .iter()
-        .filter(|writeup| !writeup.tags.is_empty())
-        .count();
-    let latest = writeups
-        .iter()
-        .map(writeup_recent_at)
-        .max()
-        .map(|at| relative_time(at, OffsetDateTime::now_utc()))
-        .unwrap_or_else(|| "-".to_string());
-    let scope = if show_all { "all" } else { "open" };
-    vec![
-        Line::from(vec![
-            Span::styled("Open ", Style::default().fg(Color::DarkGray)),
-            Span::styled(open.to_string(), Style::default().fg(Color::LightGreen)),
-            Span::raw("  "),
-            Span::styled("Closed ", Style::default().fg(Color::DarkGray)),
-            Span::styled(closed.to_string(), Style::default().fg(Color::DarkGray)),
-            Span::raw("  "),
-            Span::styled("Total ", Style::default().fg(Color::DarkGray)),
-            Span::styled(writeups.len().to_string(), Style::default().fg(Color::Cyan)),
-            Span::raw("  "),
-            Span::styled("Versions ", Style::default().fg(Color::DarkGray)),
-            Span::styled(versions.to_string(), Style::default().fg(Color::Magenta)),
-        ]),
-        Line::from(vec![
-            Span::styled("Linked ", Style::default().fg(Color::DarkGray)),
-            Span::styled(linked.to_string(), Style::default().fg(Color::Yellow)),
-            Span::raw("  "),
-            Span::styled("Tagged ", Style::default().fg(Color::DarkGray)),
-            Span::styled(tagged.to_string(), Style::default().fg(Color::LightBlue)),
-            Span::raw("  "),
-            Span::styled("Latest ", Style::default().fg(Color::DarkGray)),
-            Span::styled(latest, Style::default().fg(Color::Gray)),
-            Span::raw("  "),
-            Span::styled("Scope ", Style::default().fg(Color::DarkGray)),
-            Span::styled(scope, Style::default().fg(Color::Gray)),
-        ]),
-    ]
-}
-
-fn writeup_ad_lines() -> Vec<Line<'static>> {
-    vec![
-        Line::from(Span::styled(
-            "Writeups are rough project notes for specs, design thoughts, and review plans.",
-            Style::default().fg(Color::DarkGray),
-        )),
-        Line::from(Span::styled(
-            "Press n to start one, then link or promote it when it becomes actionable.",
-            Style::default().fg(Color::DarkGray),
-        )),
-    ]
+fn writeup_table_header(width: usize, compact: bool) -> Line<'static> {
+    let meta = vec![
+        ("Dt", LIST_AGE_WIDTH),
+        ("P", LIST_PRIORITY_WIDTH),
+        ("V", LIST_STATE_WIDTH),
+        ("St", LIST_STATE_WIDTH),
+    ];
+    let fixed =
+        LIST_ID_WIDTH + 2 + meta.iter().map(|(_, width)| *width).sum::<usize>() + meta.len();
+    let title_width = width.saturating_sub(fixed).max(1);
+    let mut spans = vec![
+        Span::raw(" ".repeat(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL))),
+        Span::styled(
+            fit_display("Id", LIST_ID_WIDTH),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+    ];
+    for (label, column_width) in meta {
+        spans.push(Span::styled(
+            fit_display(label, column_width),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::raw(" "));
+    }
+    spans.push(Span::styled(
+        fit_display("Title", title_width),
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
+    ));
+    let used = spans_width(&spans);
+    if !compact && used + 4 < width {
+        spans.push(Span::styled(
+            fit_display("Tags", width - used),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ));
+    } else if used < width {
+        spans.push(Span::raw(" ".repeat(width - used)));
+    }
+    Line::from(spans)
 }
 
 struct DashboardStats {
@@ -12430,33 +12853,6 @@ mod tests {
     }
 
     #[test]
-    fn writeup_overview_lines_summarize_counts() {
-        let mut linked = test_writeup(uuid::Uuid::from_u128(1), WriteupStatus::Open);
-        linked.tickets.insert(uuid::Uuid::from_u128(10));
-        linked.tags.insert("design".to_string());
-        linked.versions.push(ticgit_lib::WriteupVersion {
-            author: "test@example.com".to_string(),
-            at: OffsetDateTime::UNIX_EPOCH,
-            body: "notes".to_string(),
-        });
-        let closed = test_writeup(uuid::Uuid::from_u128(2), WriteupStatus::Closed);
-
-        let text = writeup_overview_lines(&[linked, closed], false)
-            .iter()
-            .flat_map(|line| line.spans.iter())
-            .map(|span| span.content.as_ref())
-            .collect::<String>();
-
-        assert!(text.contains("Open 1"));
-        assert!(text.contains("Closed 1"));
-        assert!(text.contains("Total 2"));
-        assert!(text.contains("Versions 1"));
-        assert!(text.contains("Linked 1"));
-        assert!(text.contains("Tagged 1"));
-        assert!(text.contains("Scope open"));
-    }
-
-    #[test]
     fn review_ticket_lines_include_metadata_and_title() {
         let ticket = test_ticket(uuid::Uuid::from_u128(1), None, &[]);
         let review = TicketReview {
@@ -12474,6 +12870,10 @@ mod tests {
             .map(|span| span.content.as_ref())
             .collect::<String>();
 
+        assert_eq!(
+            review_ticket_lines(&ticket, Some(&review), "12h", 80).len(),
+            1
+        );
         assert!(text.contains("000"));
         assert!(text.contains("CR"));
         assert!(text.contains("12h"));
@@ -12505,21 +12905,6 @@ mod tests {
             comments: Vec::new(),
             created_at: OffsetDateTime::UNIX_EPOCH,
             created_by: "test@example.com".to_string(),
-        }
-    }
-
-    fn test_writeup(id: uuid::Uuid, status: WriteupStatus) -> Writeup {
-        Writeup {
-            id,
-            title: format!("Writeup {id}"),
-            status,
-            priority: None,
-            created_at: OffsetDateTime::UNIX_EPOCH,
-            created_by: "test@example.com".to_string(),
-            authors: BTreeSet::new(),
-            tags: BTreeSet::new(),
-            tickets: BTreeSet::new(),
-            versions: Vec::new(),
         }
     }
 }
