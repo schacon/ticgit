@@ -14,7 +14,7 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
@@ -1671,9 +1671,10 @@ impl App {
         } else {
             format!("{scope} matching {filter} ({count})")
         };
-        let title = tabs_title(self.active_tab, &title);
-
-        let block = Block::default().borders(Borders::ALL).title(title);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(tabs_title(self.active_tab, ""))
+            .title(view_state_title(title));
         let inner = block.inner(area);
         let row_width =
             usize::from(inner.width).saturating_sub(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL));
@@ -1748,6 +1749,7 @@ impl App {
         let block = Block::default()
             .borders(Borders::ALL)
             .title(tabs_title(self.active_tab, ""))
+            .title(view_state_title(title))
             .border_style(
                 if self.writeup_detail.is_some()
                     && self.writeup_detail_focus == WriteupPaneFocus::List
@@ -1761,27 +1763,14 @@ impl App {
         frame.render_widget(block, area);
         let areas = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(1),
-                Constraint::Length(1),
-                Constraint::Min(0),
-            ])
+            .constraints([Constraint::Length(1), Constraint::Min(0)])
             .split(inner);
-        frame.render_widget(
-            Paragraph::new(title).alignment(Alignment::Right).style(
-                Style::default()
-                    .fg(Color::LightCyan)
-                    .bg(Color::Rgb(24, 24, 56))
-                    .add_modifier(Modifier::BOLD),
-            ),
-            areas[0],
-        );
         let row_width =
-            usize::from(areas[2].width).saturating_sub(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL));
+            usize::from(areas[1].width).saturating_sub(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL));
         let compact = self.writeup_detail.is_some();
         frame.render_widget(
             Paragraph::new(writeup_table_header(row_width, compact)),
-            areas[1],
+            areas[0],
         );
 
         let items: Vec<ListItem<'_>> = if self.visible_writeups.is_empty() {
@@ -1812,7 +1801,7 @@ impl App {
             )
             .highlight_symbol(HIGHLIGHT_SYMBOL)
             .highlight_spacing(HighlightSpacing::Always);
-        frame.render_stateful_widget(list, areas[2], &mut self.writeup_state);
+        frame.render_stateful_widget(list, areas[1], &mut self.writeup_state);
     }
 
     fn draw_review_list(&mut self, frame: &mut Frame<'_>, area: Rect) {
@@ -1825,7 +1814,8 @@ impl App {
         };
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(tabs_title(self.active_tab, &title));
+            .title(tabs_title(self.active_tab, ""))
+            .title(view_state_title(title));
         let row_width = usize::from(block.inner(area).width)
             .saturating_sub(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL));
         let items: Vec<ListItem<'_>> = if indices.is_empty() {
@@ -8020,6 +8010,17 @@ fn tabs_title(active: TuiTab, title: &str) -> String {
         " reviews "
     };
     format!("{issues} {writeups} {reviews}  {title}")
+}
+
+fn view_state_title(title: String) -> Line<'static> {
+    Line::from(Span::styled(
+        title,
+        Style::default()
+            .fg(Color::LightCyan)
+            .bg(Color::Rgb(24, 24, 56))
+            .add_modifier(Modifier::BOLD),
+    ))
+    .right_aligned()
 }
 
 fn load_review_branch_choices(
