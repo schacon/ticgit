@@ -385,6 +385,34 @@ struct ButAuthor {
     email: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ButBranchShow {
+    #[serde(default)]
+    commits: Vec<ButBranchCommit>,
+    #[serde(default, rename = "baseCommit")]
+    base_commit: Option<ButBranchBaseCommit>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ButBranchCommit {
+    sha: String,
+    #[serde(default)]
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ButBranchBaseCommit {
+    sha: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReviewBranchSnapshot {
+    base_sha: String,
+    head_sha: String,
+    commits: Vec<String>,
+    title: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 struct ReviewMessageView {
     author: String,
@@ -4707,10 +4735,6 @@ impl App {
     }
 
     fn begin_review_branch_picker(&mut self) -> Result<()> {
-        if self.selected_review_ticket().is_none() {
-            self.status = Some("Select the ticket to review first.".to_string());
-            return Ok(());
-        }
         self.review_branch_choices = load_review_branch_choices(&self.open_review_branch_names())?;
         if self.review_branch_choices.is_empty() {
             self.review_branch_state.select(None);
@@ -7205,10 +7229,6 @@ impl App {
     }
 
     fn create_review_from_selected_branch(&mut self) -> Result<bool> {
-        let Some(ticket) = self.selected_review_ticket().cloned() else {
-            self.status = Some("Select the ticket to review first.".to_string());
-            return Ok(false);
-        };
         let Some(choice) = self
             .review_branch_state
             .selected()
@@ -7219,8 +7239,31 @@ impl App {
             return Ok(false);
         };
 
-        let branch_id = create_review_for_ticket(&self.store, &ticket, &choice.name)?;
-        self.status = Some(format!("Created review for {}.", choice.name));
+        let snapshot = load_review_branch_snapshot(&choice.name)?;
+        let title = review_ticket_title(&choice.name, &snapshot);
+        let ticket = self.store.create(
+            &title,
+            NewTicketOpts {
+                comment: None,
+                tags: Vec::new(),
+                assigned: None,
+                parent: None,
+                ..Default::default()
+            },
+        )?;
+        self.store
+            .set_lifecycle(&ticket.id, TicketStatus::Open, TicketState::Review)?;
+        self.store.set_description(
+            &ticket.id,
+            Some(&review_ticket_description(&choice.name, &snapshot)),
+        )?;
+        let ticket = self.store.load(&ticket.id)?;
+        let branch_id = create_review_for_ticket(&self.store, &ticket, &choice.name, &snapshot)?;
+        self.status = Some(format!(
+            "Created review ticket {} for {}.",
+            ticket.short_id(),
+            choice.name
+        ));
         self.clear_review_caches();
         self.reload_all(Some(ticket.id), None)?;
         if let Some(idx) = self
@@ -8072,16 +8115,81 @@ fn branch_author_display(author: Option<ButAuthor>) -> String {
         .unwrap_or_else(|| "-".to_string())
 }
 
+fn load_review_branch_snapshot(branch_name: &str) -> Result<ReviewBranchSnapshot> {
+    let output = Command::new("but")
+        .args(["show", branch_name, "--json"])
+        .output()
+        .with_context(|| format!("running but show {branch_name} --json"))?;
+    if output.status.success() {
+        return parse_review_branch_snapshot(branch_name, &output.stdout);
+    }
+
+    let base_sha = review_base_sha(branch_name)?;
+    let head_sha = resolve_git_ref(branch_name).or_else(|_| resolve_git_ref("HEAD"))?;
+    let commits = review_revision_list(&base_sha, &head_sha)?;
+    Ok(ReviewBranchSnapshot {
+        base_sha,
+        head_sha: head_sha.clone(),
+        commits,
+        title: review_commit_info(&head_sha).subject,
+    })
+}
+
+fn parse_review_branch_snapshot(branch_name: &str, json: &[u8]) -> Result<ReviewBranchSnapshot> {
+    let show: ButBranchShow =
+        serde_json::from_slice(json).with_context(|| "parsing but show --json")?;
+    let base_sha = show
+        .base_commit
+        .map(|base| base.sha)
+        .filter(|sha| !sha.is_empty())
+        .unwrap_or_else(|| {
+            review_base_sha(branch_name)
+                .unwrap_or_else(|_| resolve_git_ref("HEAD").unwrap_or_default())
+        });
+    let head = show.commits.first();
+    let head_sha = head
+        .map(|commit| commit.sha.clone())
+        .filter(|sha| !sha.is_empty())
+        .unwrap_or_else(|| resolve_git_ref(branch_name).unwrap_or_default());
+    let commits = show
+        .commits
+        .iter()
+        .map(|commit| commit.sha.clone())
+        .filter(|sha| !sha.is_empty())
+        .collect::<Vec<_>>();
+    Ok(ReviewBranchSnapshot {
+        base_sha,
+        head_sha,
+        commits,
+        title: head
+            .map(|commit| commit.message.clone())
+            .filter(|message| !message.is_empty())
+            .unwrap_or_else(|| branch_name.to_string()),
+    })
+}
+
+fn review_ticket_title(branch_name: &str, snapshot: &ReviewBranchSnapshot) -> String {
+    first_non_empty_line(&snapshot.title)
+        .map(str::to_string)
+        .filter(|title| !title.is_empty())
+        .unwrap_or_else(|| format!("Review {branch_name}"))
+}
+
+fn review_ticket_description(branch_name: &str, snapshot: &ReviewBranchSnapshot) -> String {
+    format!(
+        "Review branch `{branch_name}`.\n\nBase: `{}`\nHead: `{}`",
+        short_hash(&snapshot.base_sha),
+        short_hash(&snapshot.head_sha)
+    )
+}
+
 fn create_review_for_ticket(
     store: &TicketStore,
     ticket: &Ticket,
     branch_name: &str,
+    snapshot: &ReviewBranchSnapshot,
 ) -> Result<String> {
-    let branch_id = ensure_review_branch_id(store, branch_name)?;
-    let base_ref = default_review_base_ref();
-    let base_sha =
-        resolve_git_ref(&base_ref).unwrap_or_else(|_| resolve_git_ref("HEAD").unwrap_or_default());
-    let head_sha = resolve_git_ref(branch_name).or_else(|_| resolve_git_ref("HEAD"))?;
+    let branch_id = create_review_branch_id(store, branch_name)?;
     let target = store.session().target(&Target::branch(&branch_id));
     let ticket_id = ticket.id.to_string();
     let description = ticket.description.clone().unwrap_or_default();
@@ -8091,15 +8199,19 @@ fn create_review_for_ticket(
     target.set("title", ticket.title.as_str())?;
     target.set("description", description.as_str())?;
     target.set("status", "open")?;
-    target.set("base:sha", base_sha.as_str())?;
-    target.set("head:sha", head_sha.as_str())?;
+    target.set("base:sha", snapshot.base_sha.as_str())?;
+    target.set("head:sha", snapshot.head_sha.as_str())?;
     target.set("review:created-at", now.as_str())?;
     target.set("review:created-by", store.email())?;
     target.set("code:branch", branch_name)?;
     if let Some(url) = remote_url()? {
         target.set("code:url", url.as_str())?;
+        if url.starts_with("http://") || url.starts_with("https://") {
+            let code = format!("{url}:{branch_name}");
+            store.set_code(&ticket.id, Some(&code))?;
+        }
     }
-    refresh_review_revisions(store, &branch_id, &base_sha, &head_sha)?;
+    refresh_review_revisions_from_commits(store, &branch_id, &snapshot.commits)?;
 
     let project = store.session().target(&Target::project());
     project.set(
@@ -8110,28 +8222,23 @@ fn create_review_for_ticket(
     Ok(branch_id)
 }
 
-fn ensure_review_branch_id(store: &TicketStore, branch_name: &str) -> Result<String> {
+fn create_review_branch_id(store: &TicketStore, branch_name: &str) -> Result<String> {
     let branch_target = store.session().target(&Target::branch(branch_name));
-    if let Some(branch_id) = meta_string(branch_target.get_value("branch-id")?) {
-        return Ok(branch_id);
-    }
-
     let timestamp = OffsetDateTime::now_utc().unix_timestamp();
     let branch_id = format!("{branch_name}@{timestamp}");
     branch_target.set("branch-id", branch_id.as_str())?;
     Ok(branch_id)
 }
 
-fn refresh_review_revisions(
+fn refresh_review_revisions_from_commits(
     store: &TicketStore,
     branch_id: &str,
-    base_sha: &str,
-    head_sha: &str,
+    commits: &[String],
 ) -> Result<()> {
     let target = store.session().target(&Target::branch(branch_id));
     target.remove("review:revisions")?;
-    for sha in review_revision_list(base_sha, head_sha)? {
-        target.list_push("review:revisions", &sha)?;
+    for sha in commits {
+        target.list_push("review:revisions", sha)?;
     }
     Ok(())
 }
@@ -8154,6 +8261,21 @@ fn review_revision_list(base_sha: &str, head_sha: &str) -> Result<Vec<String>> {
         .filter(|line| !line.is_empty())
         .map(str::to_string)
         .collect())
+}
+
+fn review_base_sha(branch_name: &str) -> Result<String> {
+    let base_ref = default_review_base_ref();
+    let output = Command::new("git")
+        .args(["merge-base", &base_ref, branch_name])
+        .output()
+        .with_context(|| format!("running git merge-base {base_ref} {branch_name}"))?;
+    if output.status.success() {
+        let sha = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !sha.is_empty() {
+            return Ok(sha);
+        }
+    }
+    resolve_git_ref(&base_ref).or_else(|_| resolve_git_ref("HEAD"))
 }
 
 fn default_review_base_ref() -> String {
@@ -12881,6 +13003,39 @@ mod tests {
         assert!(text.contains("2c"));
         assert!(text.contains("review-cli"));
         assert!(text.contains("Review CLI changes"));
+    }
+
+    #[test]
+    fn parse_review_branch_snapshot_uses_gitbutler_base_and_commits() {
+        let json = br#"{
+            "branch": "feature",
+            "commits": [
+                {"sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "message": "Add branch picker"},
+                {"sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "message": "Prepare review"}
+            ],
+            "baseCommit": {
+                "sha": "0000000000000000000000000000000000000000"
+            }
+        }"#;
+
+        let snapshot = parse_review_branch_snapshot("feature", json).unwrap();
+
+        assert_eq!(
+            snapshot.base_sha,
+            "0000000000000000000000000000000000000000"
+        );
+        assert_eq!(
+            snapshot.head_sha,
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        );
+        assert_eq!(
+            snapshot.commits,
+            vec![
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+            ]
+        );
+        assert_eq!(snapshot.title, "Add branch picker");
     }
 
     fn test_ticket(id: uuid::Uuid, parent: Option<uuid::Uuid>, children: &[uuid::Uuid]) -> Ticket {
