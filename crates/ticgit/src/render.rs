@@ -123,6 +123,7 @@ fn tickets_table_with_width(
     now: OffsetDateTime,
     nicks: Option<&NickMap>,
 ) -> String {
+    let width = width.saturating_sub(1).max(1);
     let id_width = ref_lengths.values().copied().max().unwrap_or(6).max(6);
     const STATUS_WIDTH: usize = 6;
     const STATE_WIDTH: usize = 11;
@@ -1059,6 +1060,29 @@ mod tests {
         assert!(!narrow.contains(" 2 "));
         assert!(!narrow.contains("Assgn"));
         assert!(!narrow.contains("Tags"));
+    }
+
+    #[test]
+    fn tickets_table_has_no_blank_line_between_header_and_separator() {
+        let ticket = ticket(
+            "d7f2d8f6-d6ec-3da1-a180-0a33fb090d59",
+            "priority ticket",
+            TicketState::New,
+        );
+        let refs = open_ticket_ref_lengths(&[ticket.clone()]);
+
+        let table = strip_ansi(&tickets_table_with_width(
+            &[ticket],
+            None,
+            &refs,
+            80,
+            OffsetDateTime::UNIX_EPOCH,
+            None,
+        ));
+        let lines = table.lines().collect::<Vec<_>>();
+
+        assert!(lines[0].contains("TicId"));
+        assert!(lines[1].starts_with("---"));
     }
 
     #[test]
