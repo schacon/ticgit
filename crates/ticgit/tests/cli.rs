@@ -82,13 +82,17 @@ fn review_cli_records_branch_review_flow() {
             "main",
             "--ticket",
             &ticket_id,
+            "--title",
+            "Stable review title",
+            "--description",
+            "Stable review description",
             "--reviewer",
             "alice@example.com",
         ])
         .assert()
         .success()
         .stdout(predicate::str::contains("Created review main@"))
-        .stdout(predicate::str::contains("Code review tooling"));
+        .stdout(predicate::str::contains("Stable review title"));
 
     repo.ti()
         .args(["review", "list", "--status", "open"])
@@ -96,7 +100,33 @@ fn review_cli_records_branch_review_flow() {
         .success()
         .stdout(predicate::str::contains("main"))
         .stdout(predicate::str::contains("open"))
-        .stdout(predicate::str::contains("Code review tooling"));
+        .stdout(predicate::str::contains("Stable review title"));
+
+    fs::write(
+        repo.dir.path().join("review.txt"),
+        "updated review content\n",
+    )
+    .expect("write file");
+    git(repo.dir.path(), &["add", "review.txt"]);
+    git(
+        repo.dir.path(),
+        &["commit", "-m", "Last commit message", "--quiet"],
+    );
+    repo.ti()
+        .args(["review", "update", "main"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Updated review main@"));
+
+    repo.ti()
+        .args(["review", "show", "main"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Title: Stable review title"))
+        .stdout(predicate::str::contains(
+            "Description: Stable review description",
+        ))
+        .stdout(predicate::str::contains("Last commit message").not());
 
     repo.ti()
         .args(["review", "add-reviewer", "bob@example.com"])

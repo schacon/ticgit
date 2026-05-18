@@ -1,5 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::fs;
 use std::io::{self, Stdout};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, OnceLock};
@@ -188,6 +190,7 @@ struct App {
     review_commit_info_sender: Sender<ReviewCommitInfoLoad>,
     review_commit_info_receiver: Receiver<ReviewCommitInfoLoad>,
     review_commit_info_inflight: BTreeSet<String>,
+    review_commit_info_queue: VecDeque<String>,
     review_status_cache: HashMap<String, CommitReviewStatus>,
     review_patch_cache: HashMap<String, Vec<String>>,
     review_file_count_cache: HashMap<String, usize>,
@@ -214,6 +217,7 @@ struct App {
     active_view_name: Option<String>,
     saved_view_state: ListState,
     pending_delete_view: Option<String>,
+    pending_close_review: Option<(uuid::Uuid, String)>,
     base_status: Option<TicketStatus>,
     base_state: Option<TicketState>,
     assigned_filter: Option<String>,
@@ -445,7 +449,7 @@ struct CommitReviewStatus {
     signed_off: BTreeSet<String>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 struct ReviewCommitInfo {
     subject: String,
     body: String,
@@ -473,6 +477,7 @@ enum Mode {
     Columns,
     SavedViews,
     ConfirmDeleteView,
+    ConfirmCloseReview,
     SaveView,
     LinkIssueSearch,
     UnlinkIssueSelect,
@@ -588,6 +593,7 @@ impl App {
             review_commit_info_sender,
             review_commit_info_receiver,
             review_commit_info_inflight: BTreeSet::new(),
+            review_commit_info_queue: VecDeque::new(),
             review_status_cache: HashMap::new(),
             review_patch_cache: HashMap::new(),
             review_file_count_cache: HashMap::new(),
@@ -614,6 +620,7 @@ impl App {
             active_view_name: None,
             saved_view_state: ListState::default(),
             pending_delete_view: None,
+            pending_close_review: None,
             base_status: Some(TicketStatus::Open),
             base_state: None,
             assigned_filter: None,
@@ -858,6 +865,7 @@ impl App {
             Mode::Columns => self.draw_columns_modal(frame),
             Mode::SavedViews => self.draw_saved_views_modal(frame),
             Mode::ConfirmDeleteView => self.draw_delete_view_confirm_modal(frame),
+            Mode::ConfirmCloseReview => self.draw_close_review_confirm_modal(frame),
             Mode::SaveView => self.draw_save_view_modal(frame),
             Mode::LinkIssueSearch => self.draw_link_issue_search_modal(frame),
             Mode::UnlinkIssueSelect => self.draw_unlink_issue_select_modal(frame),
@@ -1048,6 +1056,22 @@ impl App {
                     MenuHint {
                         key: "y",
                         desc: "delete",
+                    },
+                    MenuHint {
+                        key: "n/Esc",
+                        desc: "cancel",
+                    },
+                ],
+            ),
+            Mode::ConfirmCloseReview => (
+                "close review",
+                self.pending_close_review
+                    .as_ref()
+                    .map(|(_, branch_id)| branch_id.clone()),
+                vec![
+                    MenuHint {
+                        key: "y",
+                        desc: "close",
                     },
                     MenuHint {
                         key: "n/Esc",
@@ -3383,6 +3407,32 @@ impl App {
         frame.render_widget(modal, area);
     }
 
+    fn draw_close_review_confirm_modal(&self, frame: &mut Frame<'_>) {
+        let area = centered_rect(64, 7, frame.area());
+        let branch = self
+            .pending_close_review
+            .as_ref()
+            .map(|(_, branch_id)| branch_id.as_str())
+            .unwrap_or("<unknown review>");
+        let branch = truncate_display(branch, usize::from(area.width).saturating_sub(24));
+        let lines = vec![
+            Line::from(Span::styled(
+                format!("Close review `{branch}`?"),
+                Style::default().fg(Color::LightRed),
+            )),
+            Line::raw(""),
+            Line::from(Span::styled(
+                "y close   n/Esc cancel",
+                Style::default().fg(Color::Yellow),
+            )),
+        ];
+        let modal = Paragraph::new(lines)
+            .block(Block::default().borders(Borders::ALL).title("Close Review"))
+            .wrap(Wrap { trim: false });
+        frame.render_widget(Clear, area);
+        frame.render_widget(modal, area);
+    }
+
     fn draw_save_view_modal(&self, frame: &mut Frame<'_>) {
         let area = centered_rect(64, 9, frame.area());
         let filter = self.active_filter_display();
@@ -3626,6 +3676,10 @@ impl App {
             Mode::ConfirmDeleteView => {
                 help_section(&mut lines, "Delete View");
                 lines.push(help_columns(("y", "delete"), Some(("n/Esc", "cancel"))));
+            }
+            Mode::ConfirmCloseReview => {
+                help_section(&mut lines, "Close Review");
+                lines.push(help_columns(("y", "close"), Some(("n/Esc", "cancel"))));
             }
             Mode::SaveView => {
                 help_section(&mut lines, "Save View");
@@ -3968,6 +4022,10 @@ impl App {
             }
             Mode::ConfirmDeleteView => {
                 self.handle_delete_view_confirm_key(key)?;
+                false
+            }
+            Mode::ConfirmCloseReview => {
+                self.handle_close_review_confirm_key(key)?;
                 false
             }
             Mode::SaveView => {
@@ -4331,7 +4389,7 @@ impl App {
                 } else if self.active_tab == TuiTab::Issues {
                     self.add_comment_in_editor(terminal)?;
                 } else if self.active_tab == TuiTab::Reviews {
-                    self.close_selected_review()?;
+                    self.begin_close_review_confirm();
                 } else {
                     self.set_selected_writeup_status(WriteupStatus::Closed)?;
                 }
@@ -4549,6 +4607,19 @@ impl App {
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
                 self.pending_delete_view = None;
                 self.mode = Mode::SavedViews;
+                self.status = Some("Cancelled.".to_string());
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_close_review_confirm_key(&mut self, key: KeyEvent) -> Result<()> {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => self.close_pending_review()?,
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                self.pending_close_review = None;
+                self.mode = Mode::Normal;
                 self.status = Some("Cancelled.".to_string());
             }
             _ => {}
@@ -5508,21 +5579,32 @@ impl App {
         });
     }
 
-    fn close_selected_review(&mut self) -> Result<()> {
+    fn begin_close_review_confirm(&mut self) {
         let Some((ticket_id, review)) = self.selected_review_context_for_edit() else {
+            self.status = Some("Select a review first.".to_string());
+            return;
+        };
+        self.pending_close_review = Some((ticket_id, review.branch_id));
+        self.mode = Mode::ConfirmCloseReview;
+    }
+
+    fn close_pending_review(&mut self) -> Result<()> {
+        let Some((ticket_id, branch_id)) = self.pending_close_review.take() else {
+            self.mode = Mode::Normal;
             self.status = Some("Select a review first.".to_string());
             return Ok(());
         };
         self.store
             .session()
-            .target(&Target::branch(&review.branch_id))
+            .target(&Target::branch(&branch_id))
             .set("status", "closed")?;
         self.store
             .set_lifecycle(&ticket_id, TicketStatus::Closed, TicketState::Resolved)?;
+        self.mode = Mode::Normal;
         self.clear_review_caches();
         self.reload_all(Some(ticket_id), None)?;
         self.select_review_ticket_by_id(ticket_id);
-        self.status = Some(format!("Closed review {}.", review.branch_id));
+        self.status = Some(format!("Closed review {}.", branch_id));
         Ok(())
     }
 
@@ -7245,7 +7327,13 @@ impl App {
         if let Some(info) = self.review_commit_cache.get(sha) {
             return info.clone();
         }
+        if let Some(info) = self.read_review_commit_info_cache(sha) {
+            self.review_commit_cache
+                .insert(sha.to_string(), info.clone());
+            return info;
+        }
         let info = review_commit_info(sha);
+        self.write_review_commit_info_cache(sha, &info);
         self.review_commit_cache
             .insert(sha.to_string(), info.clone());
         info
@@ -7255,6 +7343,11 @@ impl App {
         if let Some(info) = self.review_commit_cache.get(sha) {
             return info.updated.clone();
         }
+        if let Some(info) = self.read_review_commit_info_cache(sha) {
+            let updated = info.updated.clone();
+            self.review_commit_cache.insert(sha.to_string(), info);
+            return updated;
+        }
         self.queue_review_commit_info_load(sha);
         "-".to_string()
     }
@@ -7262,14 +7355,37 @@ impl App {
     fn queue_review_commit_info_load(&mut self, sha: &str) {
         if self.review_commit_cache.contains_key(sha)
             || self.review_commit_info_inflight.contains(sha)
+            || self
+                .review_commit_info_queue
+                .iter()
+                .any(|queued| queued == sha)
         {
             return;
         }
-        self.review_commit_info_inflight.insert(sha.to_string());
+        if let Some(info) = self.read_review_commit_info_cache(sha) {
+            self.review_commit_cache.insert(sha.to_string(), info);
+            return;
+        }
+        self.review_commit_info_queue.push_back(sha.to_string());
+        self.start_next_review_commit_info_load();
+    }
+
+    fn start_next_review_commit_info_load(&mut self) {
+        if !self.review_commit_info_inflight.is_empty() {
+            return;
+        }
+        let Some(sha) = self.review_commit_info_queue.pop_front() else {
+            return;
+        };
         let sender = self.review_commit_info_sender.clone();
-        let sha = sha.to_string();
+        let cache_path = self.review_commit_info_cache_path(&sha);
+        self.review_commit_info_inflight.insert(sha.clone());
         thread::spawn(move || {
-            let info = review_commit_info(&sha);
+            let info = read_review_commit_info_cache_file(&cache_path).unwrap_or_else(|| {
+                let info = review_commit_info(&sha);
+                write_review_commit_info_cache_file(&cache_path, &info);
+                info
+            });
             let _ = sender.send(ReviewCommitInfoLoad { sha, info });
         });
     }
@@ -7278,7 +7394,25 @@ impl App {
         while let Ok(load) = self.review_commit_info_receiver.try_recv() {
             self.review_commit_info_inflight.remove(&load.sha);
             self.review_commit_cache.insert(load.sha, load.info);
+            self.start_next_review_commit_info_load();
         }
+    }
+
+    fn review_commit_info_cache_path(&self, sha: &str) -> PathBuf {
+        self.store
+            .session()
+            .repo_git_dir()
+            .join("ticgit")
+            .join("meta")
+            .join(format!("{sha}.json"))
+    }
+
+    fn read_review_commit_info_cache(&self, sha: &str) -> Option<ReviewCommitInfo> {
+        read_review_commit_info_cache_file(&self.review_commit_info_cache_path(sha))
+    }
+
+    fn write_review_commit_info_cache(&self, sha: &str, info: &ReviewCommitInfo) {
+        write_review_commit_info_cache_file(&self.review_commit_info_cache_path(sha), info);
     }
 
     fn commit_review_status_cached(&mut self, sha: &str) -> CommitReviewStatus {
@@ -8619,6 +8753,24 @@ fn resolve_git_ref(reference: &str) -> Result<String> {
 
 fn short_hash(value: &str) -> &str {
     value.get(..7).unwrap_or(value)
+}
+
+fn read_review_commit_info_cache_file(path: &Path) -> Option<ReviewCommitInfo> {
+    let bytes = fs::read(path).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+fn write_review_commit_info_cache_file(path: &Path, info: &ReviewCommitInfo) {
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    if fs::create_dir_all(parent).is_err() {
+        return;
+    }
+    let Ok(bytes) = serde_json::to_vec(info) else {
+        return;
+    };
+    let _ = fs::write(path, bytes);
 }
 
 fn review_commit_info(sha: &str) -> ReviewCommitInfo {

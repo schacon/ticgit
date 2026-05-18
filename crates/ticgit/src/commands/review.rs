@@ -413,6 +413,8 @@ fn update(args: UpdateArgs) -> Result<()> {
     let store = open_store()?;
     let review = resolve_review(&store, args.review.as_deref())?;
     let target = store.session().target(&Target::branch(&review.branch_id));
+    let title = string_value(target.get_value("title")?);
+    let description = string_value(target.get_value("description")?);
     let branch =
         string_value(target.get_value("code:branch")?).unwrap_or_else(|| review.branch_id.clone());
     let head = match args.head {
@@ -422,6 +424,12 @@ fn update(args: UpdateArgs) -> Result<()> {
     let base = string_value(target.get_value("base:sha")?).unwrap_or_default();
     target.set("head:sha", head.as_str())?;
     refresh_revisions(&store, &review.branch_id, &base, &head)?;
+    if let Some(title) = title {
+        target.set("title", title.as_str())?;
+    }
+    if let Some(description) = description {
+        target.set("description", description.as_str())?;
+    }
     println!(
         "Updated review {} to {}",
         review.branch_id,
