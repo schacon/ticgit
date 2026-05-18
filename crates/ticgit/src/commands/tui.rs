@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::{self, Stdout};
 use std::process::Command;
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -185,6 +185,9 @@ struct App {
     visible_writeups: Vec<usize>,
     ticket_reviews: HashMap<uuid::Uuid, TicketReview>,
     review_commit_cache: HashMap<String, ReviewCommitInfo>,
+    review_commit_info_sender: Sender<ReviewCommitInfoLoad>,
+    review_commit_info_receiver: Receiver<ReviewCommitInfoLoad>,
+    review_commit_info_inflight: BTreeSet<String>,
     review_status_cache: HashMap<String, CommitReviewStatus>,
     review_patch_cache: HashMap<String, Vec<String>>,
     review_file_count_cache: HashMap<String, usize>,
@@ -352,6 +355,12 @@ struct ReviewBranchChoice {
     last_commit_at: Option<OffsetDateTime>,
     commits_ahead: Option<i64>,
     author: String,
+}
+
+#[derive(Debug, Clone)]
+struct ReviewCommitInfoLoad {
+    sha: String,
+    info: ReviewCommitInfo,
 }
 
 #[derive(Debug, Deserialize)]
@@ -566,6 +575,7 @@ impl App {
             .unwrap_or(DETAIL_WIDTH_PERCENT_DEFAULT)
             .clamp(DETAIL_WIDTH_PERCENT_MIN, DETAIL_WIDTH_PERCENT_MAX);
         let show_subissues_preference = project_settings.show_subissues.unwrap_or(false);
+        let (review_commit_info_sender, review_commit_info_receiver) = mpsc::channel();
         let mut app = Self {
             store,
             all_tickets: Vec::new(),
@@ -575,6 +585,9 @@ impl App {
             visible_writeups: Vec::new(),
             ticket_reviews: HashMap::new(),
             review_commit_cache: HashMap::new(),
+            review_commit_info_sender,
+            review_commit_info_receiver,
+            review_commit_info_inflight: BTreeSet::new(),
             review_status_cache: HashMap::new(),
             review_patch_cache: HashMap::new(),
             review_file_count_cache: HashMap::new(),
@@ -738,6 +751,7 @@ impl App {
     fn run(&mut self, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> Result<()> {
         loop {
             self.poll_sync()?;
+            self.poll_review_commit_info_loads();
             terminal.draw(|frame| self.draw(frame))?;
 
             if !event::poll(Duration::from_millis(250))? {
@@ -1860,7 +1874,7 @@ impl App {
                     let updated = review
                         .as_ref()
                         .and_then(|review| review.head_sha.as_deref())
-                        .map(|sha| self.review_commit_info_cached(sha).updated)
+                        .map(|sha| self.review_commit_updated_or_queue(sha))
                         .filter(|updated| !updated.is_empty())
                         .unwrap_or_else(|| "-".to_string());
                     ListItem::new(review_ticket_lines(
@@ -2119,12 +2133,24 @@ impl App {
             let rows_available = usize::from(area.height)
                 .saturating_sub(lines.len() + 3)
                 .max(1);
-            for (idx, sha) in commits.iter().take(rows_available).enumerate() {
+            let visible_commits = commits
+                .iter()
+                .take(rows_available)
+                .map(String::as_str)
+                .collect::<Vec<_>>();
+            for sha in &visible_commits {
+                self.queue_review_commit_info_load(sha);
+            }
+            let loading = visible_commits
+                .iter()
+                .filter(|sha| !self.review_commit_cache.contains_key(**sha))
+                .count();
+            for (idx, sha) in visible_commits.iter().enumerate() {
                 lines.push(review_commit_summary_line(
                     idx + 1,
-                    sha,
-                    self.review_commit_cache.get(sha),
-                    self.review_status_cache.get(sha),
+                    *sha,
+                    self.review_commit_cache.get(*sha),
+                    self.review_status_cache.get(*sha),
                     width,
                 ));
             }
@@ -2133,6 +2159,12 @@ impl App {
                 lines.push(Line::from(Span::styled(
                     format!("... and {omitted} more commits"),
                     Style::default().fg(Color::DarkGray),
+                )));
+            }
+            if loading > 0 {
+                lines.push(Line::from(Span::styled(
+                    format!("Loading commit metadata for {loading} visible commits..."),
+                    Style::default().fg(Color::Yellow),
                 )));
             }
         }
@@ -7217,6 +7249,36 @@ impl App {
         self.review_commit_cache
             .insert(sha.to_string(), info.clone());
         info
+    }
+
+    fn review_commit_updated_or_queue(&mut self, sha: &str) -> String {
+        if let Some(info) = self.review_commit_cache.get(sha) {
+            return info.updated.clone();
+        }
+        self.queue_review_commit_info_load(sha);
+        "-".to_string()
+    }
+
+    fn queue_review_commit_info_load(&mut self, sha: &str) {
+        if self.review_commit_cache.contains_key(sha)
+            || self.review_commit_info_inflight.contains(sha)
+        {
+            return;
+        }
+        self.review_commit_info_inflight.insert(sha.to_string());
+        let sender = self.review_commit_info_sender.clone();
+        let sha = sha.to_string();
+        thread::spawn(move || {
+            let info = review_commit_info(&sha);
+            let _ = sender.send(ReviewCommitInfoLoad { sha, info });
+        });
+    }
+
+    fn poll_review_commit_info_loads(&mut self) {
+        while let Ok(load) = self.review_commit_info_receiver.try_recv() {
+            self.review_commit_info_inflight.remove(&load.sha);
+            self.review_commit_cache.insert(load.sha, load.info);
+        }
     }
 
     fn commit_review_status_cached(&mut self, sha: &str) -> CommitReviewStatus {
