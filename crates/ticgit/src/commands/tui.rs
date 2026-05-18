@@ -2064,16 +2064,6 @@ impl App {
             return;
         };
         let commits = review_commits(&review);
-        let commit_data = commits
-            .iter()
-            .map(|sha| {
-                (
-                    sha.clone(),
-                    self.review_commit_info_cached(sha),
-                    self.commit_review_status_cached(sha),
-                )
-            })
-            .collect::<Vec<_>>();
         let changed_file_count = self.review_changed_file_count_cached(&commits);
         let mut lines = vec![
             Line::from(Span::styled(
@@ -2126,11 +2116,24 @@ impl App {
             )));
         } else {
             let width = usize::from(area.width).saturating_sub(2);
-            let versions = review_commit_versions(&commit_data);
-            for ((sha, info, status), version) in commit_data.iter().zip(versions) {
-                lines.push(review_commit_line(
-                    version, sha, &review, info, status, width,
+            let rows_available = usize::from(area.height)
+                .saturating_sub(lines.len() + 3)
+                .max(1);
+            for (idx, sha) in commits.iter().take(rows_available).enumerate() {
+                lines.push(review_commit_summary_line(
+                    idx + 1,
+                    sha,
+                    self.review_commit_cache.get(sha),
+                    self.review_status_cache.get(sha),
+                    width,
                 ));
+            }
+            let omitted = commits.len().saturating_sub(rows_available);
+            if omitted > 0 {
+                lines.push(Line::from(Span::styled(
+                    format!("... and {omitted} more commits"),
+                    Style::default().fg(Color::DarkGray),
+                )));
             }
         }
 
@@ -9091,20 +9094,30 @@ fn review_changes_display(shortstat: &str) -> String {
 fn review_change_spans(stats: &ReviewShortstat, width: usize) -> Vec<Span<'static>> {
     let insertions = format!("+{}", stats.insertions);
     let deletions = format!("-{}", stats.deletions);
-    let insertions_width = UnicodeWidthStr::width(insertions.as_str());
-    let deletions_width = UnicodeWidthStr::width(deletions.as_str());
-    let total_width = insertions_width + 1 + deletions_width;
-    if total_width > width {
+    if width < 3 {
         return vec![Span::styled(
             fit_display(&format!("{insertions} {deletions}"), width),
             Style::default().fg(Color::LightGreen),
         )];
     }
+    let deletion_width = (width / 2).max(2);
+    let insertion_width = width.saturating_sub(deletion_width + 1).max(1);
     vec![
-        Span::raw(" ".repeat(width - total_width)),
-        Span::styled(insertions, Style::default().fg(Color::LightGreen)),
+        Span::styled(
+            format!(
+                "{:>insertion_width$}",
+                fit_display(&insertions, insertion_width)
+            ),
+            Style::default().fg(Color::LightGreen),
+        ),
         Span::raw(" "),
-        Span::styled(deletions, Style::default().fg(Color::LightRed)),
+        Span::styled(
+            format!(
+                "{:>deletion_width$}",
+                fit_display(&deletions, deletion_width)
+            ),
+            Style::default().fg(Color::LightRed),
+        ),
     ]
 }
 
@@ -10154,6 +10167,7 @@ fn review_branch_choice_line(choice: &ReviewBranchChoice, width: usize) -> Line<
     Line::from(spans)
 }
 
+#[cfg(test)]
 fn review_commit_line(
     version: usize,
     sha: &str,
@@ -10166,7 +10180,7 @@ fn review_commit_line(
     let version_width = 4;
     let updated_width = 4;
     let files_width = 4;
-    let changes_width = 10;
+    let changes_width = 11;
     let status_width = 5;
     let fixed_width = hash_width
         + 1
@@ -10204,6 +10218,101 @@ fn review_commit_line(
         Span::raw(" "),
         Span::styled(
             format!("{:>updated_width$}", fit_display(&updated, updated_width)),
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            format!("{:>files_width$}", format!("{}f", stats.files)),
+            Style::default().fg(Color::Magenta),
+        ),
+        Span::raw(" "),
+    ];
+    spans.extend(review_change_spans(&stats, changes_width));
+    spans.push(Span::raw(" "));
+    push_commit_count(
+        &mut spans,
+        "rv",
+        review_count,
+        Color::LightBlue,
+        status_width,
+    );
+    spans.push(Span::raw(" "));
+    push_commit_count(
+        &mut spans,
+        "ap",
+        approval_count,
+        Color::LightGreen,
+        status_width,
+    );
+    Line::from(spans)
+}
+
+fn review_commit_summary_line(
+    position: usize,
+    sha: &str,
+    info: Option<&ReviewCommitInfo>,
+    status: Option<&CommitReviewStatus>,
+    width: usize,
+) -> Line<'static> {
+    let hash_width = 7;
+    let version_width = 4;
+    let updated_width = 4;
+    let files_width = 4;
+    let changes_width = 11;
+    let status_width = 5;
+    let fixed_width = hash_width
+        + 1
+        + version_width
+        + 1
+        + updated_width
+        + 1
+        + files_width
+        + 1
+        + changes_width
+        + 1
+        + status_width * 2
+        + 1;
+    let subject_width = width.saturating_sub(fixed_width).max(12);
+    let version = format!("v{position}");
+    let subject = info
+        .map(|info| info.subject.as_str())
+        .filter(|subject| !subject.is_empty())
+        .unwrap_or("metadata not loaded");
+    let updated = info
+        .map(|info| info.updated.as_str())
+        .filter(|updated| !updated.is_empty())
+        .unwrap_or("-");
+    let stats = info
+        .map(|info| review_shortstat_counts(&info.shortstat))
+        .unwrap_or_default();
+    let review_count = status
+        .map(|status| status.reviewed.len())
+        .unwrap_or_default();
+    let approval_count = status
+        .map(|status| status.approvals.len())
+        .unwrap_or_default();
+    let mut spans = vec![
+        Span::styled(
+            short_hash(sha).to_string(),
+            Style::default().fg(Color::Cyan),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            format!("{version:>version_width$}"),
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            fit_display(subject, subject_width),
+            if info.is_some() {
+                Style::default()
+            } else {
+                Style::default().fg(Color::DarkGray)
+            },
+        ),
+        Span::raw(" "),
+        Span::styled(
+            format!("{:>updated_width$}", fit_display(updated, updated_width)),
             Style::default().fg(Color::DarkGray),
         ),
         Span::raw(" "),
@@ -12644,7 +12753,8 @@ mod tests {
         assert!(text.contains("Add parser checks"));
         assert!(text.contains("7m"));
         assert!(text.contains("3f"));
-        assert!(text.contains("+102 -2"));
+        assert!(text.contains("+102"));
+        assert!(text.contains("-2"));
         assert!(text.contains("rv:2"));
         assert!(text.contains("ap:1"));
         assert!(!text.contains("so:"));
@@ -12655,7 +12765,7 @@ mod tests {
         assert!(line
             .spans
             .iter()
-            .any(|span| span.content.as_ref() == "-2" && span.style.fg == Some(Color::LightRed)));
+            .any(|span| span.content.trim() == "-2" && span.style.fg == Some(Color::LightRed)));
     }
 
     #[test]
