@@ -157,6 +157,13 @@ struct ReviewMessage {
     lines: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+struct ReviewRevisionChange {
+    sha: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    change_id: Option<String>,
+}
+
 #[derive(Debug)]
 struct ReviewRef {
     branch_id: String,
@@ -521,9 +528,45 @@ fn refresh_revisions(
     head_sha: &str,
 ) -> Result<()> {
     let target = store.session().target(&Target::branch(branch_id));
+    let previous = target
+        .list_entries("review:revisions")
+        .unwrap_or_default()
+        .into_iter()
+        .map(|entry| entry.value)
+        .collect::<Vec<_>>();
+    let commits = revision_list(base_sha, head_sha)?;
     target.remove("review:revisions")?;
-    for sha in revision_list(base_sha, head_sha)? {
+    for sha in &commits {
         target.list_push("review:revisions", &sha)?;
+    }
+    append_revision_change_history(store, branch_id, &previous)?;
+    append_revision_change_history(store, branch_id, &commits)?;
+    Ok(())
+}
+
+fn append_revision_change_history(
+    store: &ticgit_lib::TicketStore,
+    branch_id: &str,
+    commits: &[String],
+) -> Result<()> {
+    let target = store.session().target(&Target::branch(branch_id));
+    let mut seen = target
+        .list_entries("review:revision-history")
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|entry| serde_json::from_str::<ReviewRevisionChange>(&entry.value).ok())
+        .map(|entry| entry.sha)
+        .collect::<std::collections::BTreeSet<_>>();
+    for sha in commits.iter().rev() {
+        if seen.insert(sha.clone()) {
+            target.list_push(
+                "review:revision-history",
+                &serde_json::to_string(&ReviewRevisionChange {
+                    sha: sha.clone(),
+                    change_id: commit_change_id(sha),
+                })?,
+            )?;
+        }
     }
     Ok(())
 }
@@ -554,6 +597,20 @@ fn current_branch() -> Result<String> {
         bail!("cannot default review to detached HEAD; pass --branch or a review id")
     }
     Ok(branch)
+}
+
+fn commit_change_id(sha: &str) -> Option<String> {
+    let output = Command::new("git")
+        .args(["cat-file", "-p", sha])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .take_while(|line| !line.is_empty())
+        .find_map(|line| line.strip_prefix("change-id ").map(str::to_string))
 }
 
 fn default_base_ref() -> String {
