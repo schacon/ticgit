@@ -187,6 +187,7 @@ struct App {
     review_commit_cache: HashMap<String, ReviewCommitInfo>,
     review_status_cache: HashMap<String, CommitReviewStatus>,
     review_patch_cache: HashMap<String, Vec<String>>,
+    review_file_count_cache: HashMap<String, usize>,
     review_diff_render_cache: HashMap<String, ReviewDiffRender>,
     review_diff_scroll: u16,
     review_diff_page_height: u16,
@@ -576,6 +577,7 @@ impl App {
             review_commit_cache: HashMap::new(),
             review_status_cache: HashMap::new(),
             review_patch_cache: HashMap::new(),
+            review_file_count_cache: HashMap::new(),
             review_diff_render_cache: HashMap::new(),
             review_diff_scroll: 0,
             review_diff_page_height: 20,
@@ -2072,7 +2074,7 @@ impl App {
                 )
             })
             .collect::<Vec<_>>();
-        let changed_files = self.review_changed_files(&commits);
+        let changed_file_count = self.review_changed_file_count_cached(&commits);
         let mut lines = vec![
             Line::from(Span::styled(
                 review.title.clone(),
@@ -2104,19 +2106,10 @@ impl App {
             lines.push(Line::raw(description));
         }
 
-        if !changed_files.is_empty() {
-            lines.push(Line::raw(""));
-            lines.push(Line::from(Span::styled(
-                "Files",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            )));
-            lines.extend(review_changed_file_lines(
-                &changed_files,
-                usize::from(area.width).saturating_sub(2),
-            ));
-        }
+        lines.push(field_line(
+            "Files",
+            &format!("{changed_file_count} changed"),
+        ));
 
         lines.push(Line::raw(""));
         lines.push(Line::from(Span::styled(
@@ -7265,24 +7258,27 @@ impl App {
         render
     }
 
-    fn review_changed_files(&mut self, commits: &[String]) -> Vec<String> {
-        let mut seen = BTreeSet::new();
-        let mut files = Vec::new();
-        for sha in commits {
-            let patch_lines = self.commit_patch_lines_cached(sha);
-            for file in diff_file_keys(&patch_lines) {
-                if seen.insert(file.clone()) {
-                    files.push(file);
-                }
-            }
+    fn review_changed_file_count_cached(&mut self, commits: &[String]) -> usize {
+        let Some(head) = commits.first() else {
+            return 0;
+        };
+        let Some(oldest) = commits.last() else {
+            return 0;
+        };
+        let key = format!("{oldest}..{head}");
+        if let Some(count) = self.review_file_count_cache.get(&key) {
+            return *count;
         }
-        files
+        let count = review_changed_file_count(oldest, head);
+        self.review_file_count_cache.insert(key, count);
+        count
     }
 
     fn clear_review_caches(&mut self) {
         self.review_commit_cache.clear();
         self.review_status_cache.clear();
         self.review_patch_cache.clear();
+        self.review_file_count_cache.clear();
         self.review_diff_render_cache.clear();
     }
 
@@ -8651,6 +8647,18 @@ fn commit_patch_lines(sha: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn review_changed_file_count(oldest: &str, head: &str) -> usize {
+    let base = format!("{oldest}^");
+    let output = Command::new("git")
+        .args(["diff", "--name-only", "--find-renames", &base, head])
+        .output();
+    output
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).lines().count())
+        .unwrap_or_default()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DiffFileSpan {
     key: String,
@@ -8849,41 +8857,6 @@ fn review_summary_table_line<const N: usize>(
     Line::from(spans)
 }
 
-fn review_changed_file_lines(files: &[String], width: usize) -> Vec<Line<'static>> {
-    if files.is_empty() {
-        return Vec::new();
-    }
-    let mut lines = Vec::new();
-    let mut current = String::new();
-    for file in files {
-        let part = if current.is_empty() {
-            file.clone()
-        } else {
-            format!(", {file}")
-        };
-        if !current.is_empty()
-            && UnicodeWidthStr::width(current.as_str()) + UnicodeWidthStr::width(part.as_str())
-                > width
-        {
-            lines.push(Line::from(Span::styled(
-                truncate_display(&current, width),
-                Style::default().fg(Color::DarkGray),
-            )));
-            current.clear();
-            current.push_str(file);
-        } else {
-            current.push_str(&part);
-        }
-    }
-    if !current.is_empty() {
-        lines.push(Line::from(Span::styled(
-            truncate_display(&current, width),
-            Style::default().fg(Color::DarkGray),
-        )));
-    }
-    lines
-}
-
 #[cfg(test)]
 fn review_commit_meter(count: usize) -> String {
     let filled = count.min(12);
@@ -8952,60 +8925,114 @@ fn review_commit_table_line(
     let status_label = review_commit_verdict(review, sha, status);
     let stats = review_shortstat_counts(&info.shortstat);
     let (review_count, approval_count) = review_commit_counts(review, sha, status);
-    let mut columns = vec![
-        (status_label.0, status_label.1, 18),
-        (
-            format!("v{version}"),
-            Style::default().fg(Color::DarkGray),
-            5,
-        ),
-        (
-            info.subject.clone(),
-            Style::default().add_modifier(Modifier::BOLD),
-            30,
-        ),
-        (
-            format!("{}f", stats.files),
-            Style::default().fg(Color::LightGreen),
-            6,
-        ),
-        (
-            format!("+{} -{}", stats.insertions, stats.deletions),
-            Style::default().fg(Color::LightGreen),
-            12,
-        ),
-        (
-            info.updated.clone(),
-            Style::default().fg(Color::DarkGray),
-            12,
-        ),
-        (
-            review_count.to_string(),
-            Style::default().fg(Color::LightBlue),
-            6,
-        ),
-        (
-            approval_count.to_string(),
-            Style::default().fg(Color::LightGreen),
-            6,
-        ),
-    ];
     let mut spans = Vec::new();
     let mut used = 0;
-    for (idx, (value, style, column_width)) in columns.drain(..).enumerate() {
-        if idx > 0 {
-            spans.push(Span::raw(" "));
-            used += 1;
-        }
-        let remaining = width.saturating_sub(used);
-        if remaining == 0 {
-            break;
-        }
-        let column_width = column_width.min(remaining);
-        spans.push(Span::styled(fit_display(&value, column_width), style));
-        used += column_width;
-    }
+    push_review_table_column(
+        &mut spans,
+        &mut used,
+        width,
+        &status_label.0,
+        status_label.1,
+        18,
+    );
+    push_review_table_column(
+        &mut spans,
+        &mut used,
+        width,
+        &format!("v{version}"),
+        Style::default().fg(Color::DarkGray),
+        5,
+    );
+    push_review_table_column(
+        &mut spans,
+        &mut used,
+        width,
+        &info.subject,
+        Style::default().add_modifier(Modifier::BOLD),
+        30,
+    );
+    push_review_table_column(
+        &mut spans,
+        &mut used,
+        width,
+        &format!("{}f", stats.files),
+        Style::default().fg(Color::Magenta),
+        6,
+    );
+    push_review_changes_column(&mut spans, &mut used, width, &stats, 12);
+    push_review_table_column(
+        &mut spans,
+        &mut used,
+        width,
+        &info.updated,
+        Style::default().fg(Color::DarkGray),
+        12,
+    );
+    push_review_table_column(
+        &mut spans,
+        &mut used,
+        width,
+        &review_count.to_string(),
+        Style::default().fg(Color::LightBlue),
+        6,
+    );
+    push_review_table_column(
+        &mut spans,
+        &mut used,
+        width,
+        &approval_count.to_string(),
+        Style::default().fg(Color::LightGreen),
+        6,
+    );
     Line::from(spans)
+}
+
+fn push_review_table_column(
+    spans: &mut Vec<Span<'static>>,
+    used: &mut usize,
+    width: usize,
+    value: &str,
+    style: Style,
+    column_width: usize,
+) {
+    if !spans.is_empty() {
+        if *used >= width {
+            return;
+        }
+        spans.push(Span::raw(" "));
+        *used += 1;
+    }
+    let remaining = width.saturating_sub(*used);
+    if remaining == 0 {
+        return;
+    }
+    let column_width = column_width.min(remaining);
+    spans.push(Span::styled(fit_display(value, column_width), style));
+    *used += column_width;
+}
+
+fn push_review_changes_column(
+    spans: &mut Vec<Span<'static>>,
+    used: &mut usize,
+    width: usize,
+    stats: &ReviewShortstat,
+    column_width: usize,
+) {
+    if !spans.is_empty() {
+        if *used >= width {
+            return;
+        }
+        spans.push(Span::raw(" "));
+        *used += 1;
+    }
+    let remaining = width.saturating_sub(*used);
+    if remaining == 0 {
+        return;
+    }
+    let column_width = column_width.min(remaining);
+    let change_spans = review_change_spans(stats, column_width);
+    *used += spans_width(&change_spans);
+    spans.extend(change_spans);
 }
 
 fn review_commit_verdict(
@@ -9059,6 +9086,26 @@ fn review_changes_display(shortstat: &str) -> String {
             stats.files, stats.insertions, stats.deletions
         )
     }
+}
+
+fn review_change_spans(stats: &ReviewShortstat, width: usize) -> Vec<Span<'static>> {
+    let insertions = format!("+{}", stats.insertions);
+    let deletions = format!("-{}", stats.deletions);
+    let insertions_width = UnicodeWidthStr::width(insertions.as_str());
+    let deletions_width = UnicodeWidthStr::width(deletions.as_str());
+    let total_width = insertions_width + 1 + deletions_width;
+    if total_width > width {
+        return vec![Span::styled(
+            fit_display(&format!("{insertions} {deletions}"), width),
+            Style::default().fg(Color::LightGreen),
+        )];
+    }
+    vec![
+        Span::raw(" ".repeat(width - total_width)),
+        Span::styled(insertions, Style::default().fg(Color::LightGreen)),
+        Span::raw(" "),
+        Span::styled(deletions, Style::default().fg(Color::LightRed)),
+    ]
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -10162,20 +10209,11 @@ fn review_commit_line(
         Span::raw(" "),
         Span::styled(
             format!("{:>files_width$}", format!("{}f", stats.files)),
-            Style::default().fg(Color::LightGreen),
+            Style::default().fg(Color::Magenta),
         ),
         Span::raw(" "),
-        Span::styled(
-            format!(
-                "{:>changes_width$}",
-                fit_display(
-                    &format!("+{} -{}", stats.insertions, stats.deletions),
-                    changes_width
-                )
-            ),
-            Style::default().fg(Color::LightGreen),
-        ),
     ];
+    spans.extend(review_change_spans(&stats, changes_width));
     spans.push(Span::raw(" "));
     push_commit_count(
         &mut spans,
@@ -12610,6 +12648,14 @@ mod tests {
         assert!(text.contains("rv:2"));
         assert!(text.contains("ap:1"));
         assert!(!text.contains("so:"));
+        assert!(line
+            .spans
+            .iter()
+            .any(|span| span.content.trim() == "3f" && span.style.fg == Some(Color::Magenta)));
+        assert!(line
+            .spans
+            .iter()
+            .any(|span| span.content.as_ref() == "-2" && span.style.fg == Some(Color::LightRed)));
     }
 
     #[test]
