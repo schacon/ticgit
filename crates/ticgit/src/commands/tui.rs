@@ -206,6 +206,7 @@ struct App {
     view: ViewMode,
     active_tab: TuiTab,
     show_all_writeups: bool,
+    show_all_reviews: bool,
     active_view_name: Option<String>,
     saved_view_state: ListState,
     pending_delete_view: Option<String>,
@@ -594,6 +595,7 @@ impl App {
             view: ViewMode::List,
             active_tab: TuiTab::Issues,
             show_all_writeups: false,
+            show_all_reviews: false,
             active_view_name: None,
             saved_view_state: ListState::default(),
             pending_delete_view: None,
@@ -1433,6 +1435,14 @@ impl App {
                                 desc: "new",
                             },
                             MenuHint {
+                                key: "a",
+                                desc: "all/open",
+                            },
+                            MenuHint {
+                                key: "c/o",
+                                desc: "close/open",
+                            },
+                            MenuHint {
                                 key: "e",
                                 desc: "edit",
                             },
@@ -1703,9 +1713,8 @@ impl App {
             .borders(Borders::ALL)
             .title(tabs_title(self.active_tab, ""))
             .title(view_state_title(title));
-        let inner = block.inner(area);
         let row_width =
-            usize::from(inner.width).saturating_sub(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL));
+            table_row_width(area, &block).saturating_sub(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL));
         let compact = self.detail.is_some();
         let columns = issue_columns_for_width(&self.issue_columns, row_width);
         let widths = issue_column_widths(&columns, row_width);
@@ -1735,25 +1744,17 @@ impl App {
             })
             .collect();
 
-        frame.render_widget(block, area);
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(0)])
-            .split(inner);
-        frame.render_widget(
-            Paragraph::new(issue_table_header(&columns, &widths, row_width)),
-            chunks[0],
+        let body = render_table_list_frame(
+            frame,
+            area,
+            block,
+            issue_table_header(&columns, &widths, row_width),
         );
         let list = List::new(items)
-            .highlight_style(
-                Style::default()
-                    .bg(Color::Rgb(0, 0, 95))
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            )
+            .highlight_style(list_highlight_style())
             .highlight_symbol(HIGHLIGHT_SYMBOL)
             .highlight_spacing(HighlightSpacing::Always);
-        frame.render_stateful_widget(list, chunks[1], &mut self.list_state);
+        frame.render_stateful_widget(list, body, &mut self.list_state);
     }
 
     fn draw_issue_view(&mut self, frame: &mut Frame<'_>, area: Rect) {
@@ -1787,19 +1788,11 @@ impl App {
                     Style::default()
                 },
             );
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
-        let areas = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(0)])
-            .split(inner);
         let row_width =
-            usize::from(areas[1].width).saturating_sub(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL));
+            table_row_width(area, &block).saturating_sub(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL));
         let compact = self.writeup_detail.is_some();
-        frame.render_widget(
-            Paragraph::new(writeup_table_header(row_width, compact)),
-            areas[0],
-        );
+        let body =
+            render_table_list_frame(frame, area, block, writeup_table_header(row_width, compact));
 
         let items: Vec<ListItem<'_>> = if self.visible_writeups.is_empty() {
             vec![ListItem::new(Line::from(Span::styled(
@@ -1821,34 +1814,39 @@ impl App {
         };
 
         let list = List::new(items)
-            .highlight_style(
-                Style::default()
-                    .bg(Color::Rgb(0, 0, 95))
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            )
+            .highlight_style(list_highlight_style())
             .highlight_symbol(HIGHLIGHT_SYMBOL)
             .highlight_spacing(HighlightSpacing::Always);
-        frame.render_stateful_widget(list, areas[1], &mut self.writeup_state);
+        frame.render_stateful_widget(list, body, &mut self.writeup_state);
     }
 
     fn draw_review_list(&mut self, frame: &mut Frame<'_>, area: Rect) {
         let indices = self.review_ticket_indices();
         let count = indices.len();
-        let title = if self.filter.is_empty() {
-            format!("Open reviews ({count})")
+        let scope = if self.show_all_reviews {
+            "All reviews"
         } else {
-            format!("Open reviews matching \"{}\" ({count})", self.filter)
+            "Open reviews"
+        };
+        let title = if self.filter.is_empty() {
+            format!("{scope} ({count})")
+        } else {
+            format!("{scope} matching \"{}\" ({count})", self.filter)
         };
         let block = Block::default()
             .borders(Borders::ALL)
             .title(tabs_title(self.active_tab, ""))
             .title(view_state_title(title));
-        let row_width = usize::from(block.inner(area).width)
-            .saturating_sub(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL));
+        let row_width =
+            table_row_width(area, &block).saturating_sub(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL));
+        let body = render_table_list_frame(frame, area, block, review_table_header(row_width));
         let items: Vec<ListItem<'_>> = if indices.is_empty() {
             vec![ListItem::new(Line::from(Span::styled(
-                "No open tickets with connected review branches.",
+                if self.show_all_reviews {
+                    "No tickets with connected review branches."
+                } else {
+                    "No open tickets with connected review branches. Press a to show all."
+                },
                 Style::default().fg(Color::DarkGray),
             )))]
         } else {
@@ -1874,16 +1872,10 @@ impl App {
         };
 
         let list = List::new(items)
-            .block(block)
-            .highlight_style(
-                Style::default()
-                    .bg(Color::Rgb(0, 0, 95))
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            )
+            .highlight_style(list_highlight_style())
             .highlight_symbol(HIGHLIGHT_SYMBOL)
             .highlight_spacing(HighlightSpacing::Always);
-        frame.render_stateful_widget(list, area, &mut self.review_state);
+        frame.render_stateful_widget(list, body, &mut self.review_state);
     }
 
     fn draw_dashboard(&self, frame: &mut Frame<'_>, area: Rect) {
@@ -3784,7 +3776,11 @@ impl App {
                         ("Enter", "details/commit"),
                         Some(("Esc", "back/close")),
                     ));
-                    lines.push(help_columns(("e", "edit title/body"), None));
+                    lines.push(help_columns(
+                        ("a", "show all/open"),
+                        Some(("e", "edit title/body")),
+                    ));
+                    lines.push(help_columns(("c", "close"), Some(("o", "reopen"))));
                     if self.review_mode == ReviewMode::Commits {
                         lines.push(help_columns(
                             ("c", "comment"),
@@ -4306,6 +4302,8 @@ impl App {
                     self.add_review_comment_in_editor(terminal)?;
                 } else if self.active_tab == TuiTab::Issues {
                     self.add_comment_in_editor(terminal)?;
+                } else if self.active_tab == TuiTab::Reviews {
+                    self.close_selected_review()?;
                 } else {
                     self.set_selected_writeup_status(WriteupStatus::Closed)?;
                 }
@@ -4354,6 +4352,8 @@ impl App {
                     self.previous_review_commit();
                 } else if self.active_tab == TuiTab::Issues {
                     self.begin_order();
+                } else if self.active_tab == TuiTab::Reviews {
+                    self.reopen_selected_review()?;
                 } else {
                     self.set_selected_writeup_status(WriteupStatus::Open)?;
                 }
@@ -4364,6 +4364,8 @@ impl App {
                     && matches!(self.review_mode, ReviewMode::Commits | ReviewMode::Commit)
                 {
                     self.approve_selected_review_commit_in_editor(terminal)?;
+                } else if self.active_tab == TuiTab::Reviews {
+                    self.toggle_review_scope();
                 } else if self.active_tab == TuiTab::Writeups {
                     self.toggle_writeup_scope();
                 }
@@ -5464,6 +5466,60 @@ impl App {
         });
     }
 
+    fn toggle_review_scope(&mut self) {
+        let selected_id = self.selected_review_ticket().map(|ticket| ticket.id);
+        self.show_all_reviews = !self.show_all_reviews;
+        self.sync_review_selection();
+        if let Some(id) = selected_id {
+            self.select_review_ticket_by_id(id);
+        }
+        self.status = Some(if self.show_all_reviews {
+            "Showing all reviews.".to_string()
+        } else {
+            "Showing open reviews.".to_string()
+        });
+    }
+
+    fn close_selected_review(&mut self) -> Result<()> {
+        let Some((ticket_id, review)) = self.selected_review_context_for_edit() else {
+            self.status = Some("Select a review first.".to_string());
+            return Ok(());
+        };
+        self.store
+            .session()
+            .target(&Target::branch(&review.branch_id))
+            .set("status", "closed")?;
+        self.store
+            .set_lifecycle(&ticket_id, TicketStatus::Closed, TicketState::Resolved)?;
+        self.clear_review_caches();
+        self.reload_all(Some(ticket_id), None)?;
+        self.select_review_ticket_by_id(ticket_id);
+        self.status = Some(format!("Closed review {}.", review.branch_id));
+        Ok(())
+    }
+
+    fn reopen_selected_review(&mut self) -> Result<()> {
+        let Some((ticket_id, review)) = self.selected_review_context_for_edit() else {
+            self.status = Some("Select a review first.".to_string());
+            return Ok(());
+        };
+        self.store
+            .session()
+            .target(&Target::branch(&review.branch_id))
+            .set("status", "open")?;
+        self.store
+            .set_lifecycle(&ticket_id, TicketStatus::Open, TicketState::Review)?;
+        self.clear_review_caches();
+        self.reload_all(Some(ticket_id), None)?;
+        self.select_review_ticket_by_id(ticket_id);
+        self.review_detail = self
+            .all_tickets
+            .iter()
+            .position(|ticket| ticket.id == ticket_id);
+        self.status = Some(format!("Reopened review {}.", review.branch_id));
+        Ok(())
+    }
+
     fn linked_writeups(&self, ticket_id: uuid::Uuid) -> Vec<&Writeup> {
         self.writeups
             .iter()
@@ -6513,9 +6569,11 @@ impl App {
             .iter()
             .enumerate()
             .filter_map(|(idx, ticket)| {
-                if ticket.status == TicketStatus::Open
-                    && self.ticket_reviews.contains_key(&ticket.id)
-                    && (needle.is_empty() || ticket_matches(ticket, &needle))
+                let review = self.ticket_reviews.get(&ticket.id)?;
+                if (self.show_all_reviews || review_is_open(ticket, review))
+                    && (needle.is_empty()
+                        || ticket_matches(ticket, &needle)
+                        || review_matches(review, &needle))
                     && ticket_matches_tag_filter(
                         ticket,
                         &self.tag_filter,
@@ -7956,6 +8014,55 @@ fn menu_hint_spans(hint: MenuHint) -> Vec<Span<'static>> {
 
 fn append_menu_separator(spans: &mut Vec<Span<'static>>) {
     spans.push(Span::raw("  "));
+}
+
+fn table_row_width(area: Rect, block: &Block<'_>) -> usize {
+    usize::from(block.inner(area).width)
+}
+
+fn render_table_list_frame(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    block: Block<'_>,
+    header: Line<'static>,
+) -> Rect {
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .split(inner);
+    frame.render_widget(Paragraph::new(header), chunks[0]);
+    chunks[1]
+}
+
+fn list_highlight_style() -> Style {
+    Style::default()
+        .bg(Color::Rgb(0, 0, 95))
+        .fg(Color::White)
+        .add_modifier(Modifier::BOLD)
+}
+
+fn table_header_line(columns: &[(&'static str, usize)], width: usize) -> Line<'static> {
+    let mut spans = vec![Span::raw(
+        " ".repeat(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL)),
+    )];
+    for (idx, (label, column_width)) in columns.iter().enumerate() {
+        if idx > 0 {
+            spans.push(Span::raw(" "));
+        }
+        spans.push(Span::styled(
+            fit_display(label, *column_width),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    let used = spans_width(&spans);
+    if used < width {
+        spans.push(Span::raw(" ".repeat(width - used)));
+    }
+    Line::from(spans)
 }
 
 fn parse_optional_i64(raw: &str, label: &str) -> Result<Option<i64>> {
@@ -9937,6 +10044,23 @@ fn review_ticket_lines(
     vec![Line::from(spans)]
 }
 
+fn review_table_header(width: usize) -> Line<'static> {
+    let branch_width = width / 4;
+    let fixed_width = LIST_ID_WIDTH + 1 + 2 + 1 + 4 + 1 + 4 + 1 + branch_width + 1;
+    let title_width = width.saturating_sub(fixed_width).max(1);
+    table_header_line(
+        &[
+            ("Id", LIST_ID_WIDTH),
+            ("St", 2),
+            ("Dt", 4),
+            ("C", 4),
+            ("Branch", branch_width),
+            ("Title", title_width),
+        ],
+        width,
+    )
+}
+
 fn review_branch_choice_line(choice: &ReviewBranchChoice, width: usize) -> Line<'static> {
     let updated = choice
         .last_commit_at
@@ -10105,6 +10229,20 @@ fn review_status_abbrev(status: &str) -> &'static str {
         "open" | "" => "OP",
         _ => "??",
     }
+}
+
+fn review_is_open(ticket: &Ticket, review: &TicketReview) -> bool {
+    ticket.status == TicketStatus::Open && !matches!(review.status.as_str(), "closed" | "merged")
+}
+
+fn review_matches(review: &TicketReview, needle: &str) -> bool {
+    review.title.to_ascii_lowercase().contains(needle)
+        || review.description.to_ascii_lowercase().contains(needle)
+        || review.branch_id.to_ascii_lowercase().contains(needle)
+        || review
+            .branch_name
+            .as_deref()
+            .is_some_and(|branch| branch.to_ascii_lowercase().contains(needle))
 }
 
 fn issue_title_prefix(
@@ -10349,25 +10487,12 @@ fn issue_column_widths(columns: &[IssueColumn], width: usize) -> Vec<usize> {
 }
 
 fn issue_table_header(columns: &[IssueColumn], widths: &[usize], width: usize) -> Line<'static> {
-    let mut spans = vec![Span::raw(
-        " ".repeat(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL)),
-    )];
-    for (idx, (column, column_width)) in columns.iter().zip(widths).enumerate() {
-        if idx > 0 {
-            spans.push(Span::raw(" "));
-        }
-        spans.push(Span::styled(
-            fit_display(column.label(), *column_width),
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        ));
-    }
-    let used = spans_width(&spans);
-    if used < width {
-        spans.push(Span::raw(" ".repeat(width - used)));
-    }
-    Line::from(spans)
+    let columns = columns
+        .iter()
+        .zip(widths)
+        .map(|(column, width)| (column.label(), *width))
+        .collect::<Vec<_>>();
+    table_header_line(&columns, width)
 }
 
 fn ticket_table_line(
@@ -10631,43 +10756,16 @@ fn writeup_table_header(width: usize, compact: bool) -> Line<'static> {
     let fixed =
         LIST_ID_WIDTH + 2 + meta.iter().map(|(_, width)| *width).sum::<usize>() + meta.len();
     let title_width = width.saturating_sub(fixed).max(1);
-    let mut spans = vec![
-        Span::raw(" ".repeat(UnicodeWidthStr::width(HIGHLIGHT_SYMBOL))),
-        Span::styled(
-            fit_display("Id", LIST_ID_WIDTH),
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("  "),
-    ];
-    for (label, column_width) in meta {
-        spans.push(Span::styled(
-            fit_display(label, column_width),
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        ));
-        spans.push(Span::raw(" "));
-    }
-    spans.push(Span::styled(
-        fit_display("Title", title_width),
-        Style::default()
-            .fg(Color::DarkGray)
-            .add_modifier(Modifier::BOLD),
-    ));
-    let used = spans_width(&spans);
+    let mut columns = vec![("Id", LIST_ID_WIDTH)];
+    columns.extend(meta);
+    columns.push(("Title", title_width));
+    let used = UnicodeWidthStr::width(HIGHLIGHT_SYMBOL)
+        + columns.iter().map(|(_, width)| *width).sum::<usize>()
+        + columns.len().saturating_sub(1);
     if !compact && used + 4 < width {
-        spans.push(Span::styled(
-            fit_display("Tags", width - used),
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        ));
-    } else if used < width {
-        spans.push(Span::raw(" ".repeat(width - used)));
+        columns.push(("Tags", width - used - 1));
     }
-    Line::from(spans)
+    table_header_line(&columns, width)
 }
 
 struct DashboardStats {
@@ -12436,6 +12534,40 @@ mod tests {
         assert!(title.contains(" writeups "));
         assert!(title.contains("[reviews]"));
         assert!(title.contains("Open reviews"));
+    }
+
+    #[test]
+    fn review_table_header_matches_review_row_fields() {
+        let text = review_table_header(80)
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(text.contains("Id"));
+        assert!(text.contains("St"));
+        assert!(text.contains("Dt"));
+        assert!(text.contains("C"));
+        assert!(text.contains("Branch"));
+        assert!(text.contains("Title"));
+    }
+
+    #[test]
+    fn review_open_filter_uses_ticket_and_review_status() {
+        let mut ticket = test_ticket(uuid::Uuid::from_u128(1), None, &[]);
+        let mut review = TicketReview {
+            status: "open".to_string(),
+            ..Default::default()
+        };
+
+        assert!(review_is_open(&ticket, &review));
+        review.status = "closed".to_string();
+        assert!(!review_is_open(&ticket, &review));
+        review.status = "merged".to_string();
+        assert!(!review_is_open(&ticket, &review));
+        review.status = "open".to_string();
+        ticket.status = TicketStatus::Closed;
+        assert!(!review_is_open(&ticket, &review));
     }
 
     #[test]
