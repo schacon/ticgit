@@ -670,6 +670,7 @@ impl App {
         self.closed_at = load_closed_times(&self.store.session().repo_git_dir(), &tickets);
         self.all_tickets = tickets.clone();
         self.ticket_reviews = load_ticket_reviews(&self.store, &tickets).unwrap_or_default();
+        self.review_status_cache = load_review_status_cache(&self.store, &self.ticket_reviews);
         self.tickets = query::apply(
             tickets,
             &Filter {
@@ -3932,6 +3933,7 @@ impl App {
                         Some(("e", "edit title/body")),
                     ));
                     lines.push(help_columns(("c", "close"), Some(("o", "reopen"))));
+                    lines.push(help_columns(("u", "update head"), None));
                     if self.review_mode == ReviewMode::Commits {
                         lines.push(help_columns(
                             ("c", "comment"),
@@ -4282,7 +4284,9 @@ impl App {
                 false
             }
             KeyCode::Char('u') => {
-                if self.active_tab == TuiTab::Writeups && self.writeup_detail.is_some() {
+                if self.active_tab == TuiTab::Reviews && self.review_mode == ReviewMode::Summary {
+                    self.update_selected_review_from_branch()?;
+                } else if self.active_tab == TuiTab::Writeups && self.writeup_detail.is_some() {
                     self.begin_unlink_issue_select();
                 }
                 false
@@ -5759,6 +5763,59 @@ impl App {
             .iter()
             .position(|ticket| ticket.id == ticket_id);
         self.status = Some(format!("Reopened review {}.", review.branch_id));
+        Ok(())
+    }
+
+    fn update_selected_review_from_branch(&mut self) -> Result<()> {
+        let Some((ticket_id, review)) = self.selected_review_context_for_edit() else {
+            self.status = Some("Select a review first.".to_string());
+            return Ok(());
+        };
+        let branch_name = review
+            .branch_name
+            .clone()
+            .unwrap_or_else(|| review.branch_id.clone());
+        let snapshot = load_review_branch_snapshot(&branch_name)?;
+        if snapshot.head_sha.is_empty() {
+            self.status = Some(format!("Could not resolve head for {branch_name}."));
+            return Ok(());
+        }
+        if review.head_sha.as_deref() == Some(snapshot.head_sha.as_str()) {
+            self.review_status_cache = load_review_status_cache(&self.store, &self.ticket_reviews);
+            self.status = Some(format!(
+                "Review {} is already at {}.",
+                review.branch_id,
+                short_hash(&snapshot.head_sha)
+            ));
+            return Ok(());
+        }
+
+        let target = self
+            .store
+            .session()
+            .target(&Target::branch(&review.branch_id));
+        let base_is_empty = meta_string(target.get_value("base:sha").ok().flatten())
+            .is_none_or(|base| base.is_empty());
+        if base_is_empty && !snapshot.base_sha.is_empty() {
+            target.set("base:sha", snapshot.base_sha.as_str())?;
+        }
+        target.set("head:sha", snapshot.head_sha.as_str())?;
+        refresh_review_revisions_from_commits(&self.store, &review.branch_id, &snapshot.commits)?;
+
+        self.clear_review_caches();
+        self.reload_all(Some(ticket_id), None)?;
+        self.select_review_ticket_by_id(ticket_id);
+        if self.review_detail.is_some() {
+            self.review_detail = self
+                .all_tickets
+                .iter()
+                .position(|ticket| ticket.id == ticket_id);
+        }
+        self.status = Some(format!(
+            "Updated review {} to {}.",
+            review.branch_id,
+            short_hash(&snapshot.head_sha)
+        ));
         Ok(())
     }
 
@@ -8840,6 +8897,28 @@ fn review_commits(review: &TicketReview) -> Vec<String> {
         return review.revisions.clone();
     }
     review.head_sha.iter().cloned().collect()
+}
+
+fn review_status_cache_shas<'a>(
+    reviews: impl IntoIterator<Item = &'a TicketReview>,
+) -> BTreeSet<String> {
+    reviews
+        .into_iter()
+        .flat_map(review_commits)
+        .collect::<BTreeSet<_>>()
+}
+
+fn load_review_status_cache(
+    store: &TicketStore,
+    reviews: &HashMap<uuid::Uuid, TicketReview>,
+) -> HashMap<String, CommitReviewStatus> {
+    review_status_cache_shas(reviews.values())
+        .into_iter()
+        .map(|sha| {
+            let status = commit_review_status(store, &sha);
+            (sha, status)
+        })
+        .collect()
 }
 
 fn commit_review_status(store: &TicketStore, sha: &str) -> CommitReviewStatus {
@@ -13299,6 +13378,30 @@ mod tests {
         assert_eq!(
             review_commits(&review),
             vec!["1111111".to_string(), "2222222".to_string()]
+        );
+    }
+
+    #[test]
+    fn review_status_cache_shas_include_revisions_and_heads() {
+        let reviews = [
+            TicketReview {
+                head_sha: Some("head-ignored".to_string()),
+                revisions: vec!["new".to_string(), "old".to_string()],
+                ..Default::default()
+            },
+            TicketReview {
+                head_sha: Some("head".to_string()),
+                ..Default::default()
+            },
+            TicketReview {
+                revisions: vec!["old".to_string()],
+                ..Default::default()
+            },
+        ];
+
+        assert_eq!(
+            review_status_cache_shas(reviews.iter()),
+            BTreeSet::from(["head".to_string(), "new".to_string(), "old".to_string()])
         );
     }
 
