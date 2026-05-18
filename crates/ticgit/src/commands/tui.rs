@@ -2155,8 +2155,9 @@ impl App {
         } else {
             let width = usize::from(area.width).saturating_sub(2);
             let rows_available = usize::from(area.height)
-                .saturating_sub(lines.len() + 3)
+                .saturating_sub(lines.len() + 4)
                 .max(1);
+            lines.push(review_commit_summary_header(width));
             let visible_commits = commits
                 .iter()
                 .take(rows_available)
@@ -9190,7 +9191,7 @@ fn review_commit_table_line(
         &mut used,
         width,
         &review_count.to_string(),
-        Style::default().fg(Color::LightBlue),
+        review_count_style(review_count, Color::LightBlue),
         6,
     );
     push_review_table_column(
@@ -9198,7 +9199,7 @@ fn review_commit_table_line(
         &mut used,
         width,
         &approval_count.to_string(),
-        Style::default().fg(Color::LightGreen),
+        review_count_style(approval_count, Color::LightGreen),
         6,
     );
     Line::from(spans)
@@ -10395,7 +10396,7 @@ fn review_commit_line(
     let updated_width = 4;
     let files_width = 4;
     let changes_width = 11;
-    let status_width = 5;
+    let count_width = 3;
     let fixed_width = hash_width
         + 1
         + version_width
@@ -10406,7 +10407,7 @@ fn review_commit_line(
         + 1
         + changes_width
         + 1
-        + status_width * 2
+        + count_width * 2
         + 1;
     let subject_width = width.saturating_sub(fixed_width).max(12);
     let version = format!("v{version}");
@@ -10443,21 +10444,93 @@ fn review_commit_line(
     ];
     spans.extend(review_change_spans(&stats, changes_width));
     spans.push(Span::raw(" "));
-    push_commit_count(
-        &mut spans,
-        "rv",
-        review_count,
-        Color::LightBlue,
-        status_width,
-    );
+    push_commit_count(&mut spans, review_count, Color::LightBlue, count_width);
     spans.push(Span::raw(" "));
-    push_commit_count(
-        &mut spans,
-        "ap",
-        approval_count,
-        Color::LightGreen,
-        status_width,
-    );
+    push_commit_count(&mut spans, approval_count, Color::LightGreen, count_width);
+    Line::from(spans)
+}
+
+fn review_commit_summary_header(width: usize) -> Line<'static> {
+    let hash_width = 7;
+    let version_width = 4;
+    let updated_width = 4;
+    let files_width = 4;
+    let changes_width = 11;
+    let count_width = 3;
+    let fixed_width = hash_width
+        + 1
+        + version_width
+        + 1
+        + updated_width
+        + 1
+        + files_width
+        + 1
+        + changes_width
+        + 1
+        + count_width * 2
+        + 1;
+    let subject_width = width.saturating_sub(fixed_width).max(12);
+    let mut spans = vec![
+        Span::styled(
+            fit_display("Commit", hash_width),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            fit_display("Ver", version_width),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            fit_display("Title", subject_width),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            format!("{:>updated_width$}", "Dt"),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            format!("{:>files_width$}", "F"),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            fit_display("+/-", changes_width),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            format!("{:>count_width$}", "rv"),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            format!("{:>count_width$}", "ap"),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ];
+    let used = spans_width(&spans);
+    if used < width {
+        spans.push(Span::raw(" ".repeat(width - used)));
+    }
     Line::from(spans)
 }
 
@@ -10473,7 +10546,7 @@ fn review_commit_summary_line(
     let updated_width = 4;
     let files_width = 4;
     let changes_width = 11;
-    let status_width = 5;
+    let count_width = 3;
     let fixed_width = hash_width
         + 1
         + version_width
@@ -10484,7 +10557,7 @@ fn review_commit_summary_line(
         + 1
         + changes_width
         + 1
-        + status_width * 2
+        + count_width * 2
         + 1;
     let subject_width = width.saturating_sub(fixed_width).max(12);
     let version = format!("v{position}");
@@ -10538,36 +10611,26 @@ fn review_commit_summary_line(
     ];
     spans.extend(review_change_spans(&stats, changes_width));
     spans.push(Span::raw(" "));
-    push_commit_count(
-        &mut spans,
-        "rv",
-        review_count,
-        Color::LightBlue,
-        status_width,
-    );
+    push_commit_count(&mut spans, review_count, Color::LightBlue, count_width);
     spans.push(Span::raw(" "));
-    push_commit_count(
-        &mut spans,
-        "ap",
-        approval_count,
-        Color::LightGreen,
-        status_width,
-    );
+    push_commit_count(&mut spans, approval_count, Color::LightGreen, count_width);
     Line::from(spans)
 }
 
-fn push_commit_count(
-    spans: &mut Vec<Span<'static>>,
-    label: &'static str,
-    count: usize,
-    color: Color,
-    width: usize,
-) {
-    let value = fit_display(&format!("{label}:{count}"), width);
+fn push_commit_count(spans: &mut Vec<Span<'static>>, count: usize, color: Color, width: usize) {
     spans.push(Span::styled(
-        format!("{value:>width$}"),
-        Style::default().fg(color),
+        format!("{count:>width$}"),
+        review_count_style(count, color),
     ));
+}
+
+fn review_count_style(count: usize, color: Color) -> Style {
+    let style = Style::default().fg(color);
+    if count == 0 {
+        style.add_modifier(Modifier::DIM)
+    } else {
+        style
+    }
 }
 
 fn review_status_style(status: &str) -> Style {
@@ -12969,8 +13032,8 @@ mod tests {
         assert!(text.contains("3f"));
         assert!(text.contains("+102"));
         assert!(text.contains("-2"));
-        assert!(text.contains("rv:2"));
-        assert!(text.contains("ap:1"));
+        assert!(!text.contains("rv:"));
+        assert!(!text.contains("ap:"));
         assert!(!text.contains("so:"));
         assert!(line
             .spans
@@ -12980,6 +13043,43 @@ mod tests {
             .spans
             .iter()
             .any(|span| span.content.trim() == "-2" && span.style.fg == Some(Color::LightRed)));
+        assert!(line
+            .spans
+            .iter()
+            .any(|span| span.content.trim() == "2" && span.style.fg == Some(Color::LightBlue)));
+        assert!(line
+            .spans
+            .iter()
+            .any(|span| span.content.trim() == "1" && span.style.fg == Some(Color::LightGreen)));
+    }
+
+    #[test]
+    fn review_commit_summary_header_labels_review_count_columns() {
+        let header = review_commit_summary_header(100);
+        let text = header
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(text.contains("rv"));
+        assert!(text.contains("ap"));
+    }
+
+    #[test]
+    fn review_commit_count_zero_values_are_dimmed() {
+        let line = review_commit_summary_line(1, "abcdef123456", None, None, 100);
+
+        assert!(line.spans.iter().any(|span| {
+            span.content.trim() == "0"
+                && span.style.fg == Some(Color::LightBlue)
+                && span.style.add_modifier.contains(Modifier::DIM)
+        }));
+        assert!(line.spans.iter().any(|span| {
+            span.content.trim() == "0"
+                && span.style.fg == Some(Color::LightGreen)
+                && span.style.add_modifier.contains(Modifier::DIM)
+        }));
     }
 
     #[test]
