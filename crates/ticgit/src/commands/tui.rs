@@ -477,6 +477,7 @@ enum Mode {
     SavedViews,
     ConfirmDeleteView,
     ConfirmCloseReview,
+    ConfirmApproveReview,
     SaveView,
     LinkIssueSearch,
     UnlinkIssueSelect,
@@ -864,6 +865,7 @@ impl App {
             Mode::SavedViews => self.draw_saved_views_modal(frame),
             Mode::ConfirmDeleteView => self.draw_delete_view_confirm_modal(frame),
             Mode::ConfirmCloseReview => self.draw_close_review_confirm_modal(frame),
+            Mode::ConfirmApproveReview => self.draw_approve_review_confirm_modal(frame),
             Mode::SaveView => self.draw_save_view_modal(frame),
             Mode::LinkIssueSearch => self.draw_link_issue_search_modal(frame),
             Mode::UnlinkIssueSelect => self.draw_unlink_issue_select_modal(frame),
@@ -1073,6 +1075,24 @@ impl App {
                     },
                     MenuHint {
                         key: "n/Esc",
+                        desc: "cancel",
+                    },
+                ],
+            ),
+            Mode::ConfirmApproveReview => (
+                "approve commit",
+                None,
+                vec![
+                    MenuHint {
+                        key: "a",
+                        desc: "approve",
+                    },
+                    MenuHint {
+                        key: "c",
+                        desc: "comment",
+                    },
+                    MenuHint {
+                        key: "Esc",
                         desc: "cancel",
                     },
                 ],
@@ -3451,6 +3471,32 @@ impl App {
         frame.render_widget(modal, area);
     }
 
+    fn draw_approve_review_confirm_modal(&self, frame: &mut Frame<'_>) {
+        let area = centered_rect(62, 8, frame.area());
+        let lines = vec![
+            Line::from(Span::styled(
+                "Approve selected commit?",
+                Style::default().fg(Color::LightGreen),
+            )),
+            Line::raw(""),
+            Line::raw("Approve immediately, or open the editor to add a comment."),
+            Line::raw(""),
+            Line::from(Span::styled(
+                "a approve   c comment   Esc cancel",
+                Style::default().fg(Color::Yellow),
+            )),
+        ];
+        let modal = Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Approve Commit"),
+            )
+            .wrap(Wrap { trim: false });
+        frame.render_widget(Clear, area);
+        frame.render_widget(modal, area);
+    }
+
     fn draw_save_view_modal(&self, frame: &mut Frame<'_>) {
         let area = centered_rect(64, 9, frame.area());
         let filter = self.active_filter_display();
@@ -3698,6 +3744,11 @@ impl App {
             Mode::ConfirmCloseReview => {
                 help_section(&mut lines, "Close Review");
                 lines.push(help_columns(("y", "close"), Some(("n/Esc", "cancel"))));
+            }
+            Mode::ConfirmApproveReview => {
+                help_section(&mut lines, "Approve Commit");
+                lines.push(help_columns(("a", "approve"), Some(("c", "comment"))));
+                lines.push(help_columns(("Esc", "cancel"), None));
             }
             Mode::SaveView => {
                 help_section(&mut lines, "Save View");
@@ -4044,6 +4095,10 @@ impl App {
             }
             Mode::ConfirmCloseReview => {
                 self.handle_close_review_confirm_key(key)?;
+                false
+            }
+            Mode::ConfirmApproveReview => {
+                self.handle_approve_review_confirm_key(key, terminal)?;
                 false
             }
             Mode::SaveView => {
@@ -4467,7 +4522,7 @@ impl App {
                 if self.active_tab == TuiTab::Reviews
                     && matches!(self.review_mode, ReviewMode::Commits | ReviewMode::Commit)
                 {
-                    self.approve_selected_review_commit_in_editor(terminal)?;
+                    self.begin_approve_review_confirm();
                 } else if self.active_tab == TuiTab::Reviews {
                     self.toggle_review_scope();
                 } else if self.active_tab == TuiTab::Writeups {
@@ -4637,6 +4692,28 @@ impl App {
             KeyCode::Char('y') | KeyCode::Char('Y') => self.close_pending_review()?,
             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
                 self.pending_close_review = None;
+                self.mode = Mode::Normal;
+                self.status = Some("Cancelled.".to_string());
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_approve_review_confirm_key(
+        &mut self,
+        key: KeyEvent,
+        terminal: &mut Terminal<CrosstermBackend<Stdout>>,
+    ) -> Result<()> {
+        match key.code {
+            KeyCode::Char('a') | KeyCode::Char('A') => {
+                self.approve_selected_review_commit_quick()?
+            }
+            KeyCode::Char('c') | KeyCode::Char('C') => {
+                self.mode = Mode::Normal;
+                self.approve_selected_review_commit_in_editor(terminal)?;
+            }
+            KeyCode::Esc => {
                 self.mode = Mode::Normal;
                 self.status = Some("Cancelled.".to_string());
             }
@@ -5451,6 +5528,42 @@ impl App {
             return Ok(());
         }
 
+        self.approve_review_commit(ticket, review, sha, body)
+    }
+
+    fn begin_approve_review_confirm(&mut self) {
+        let Some((_, review)) = self.selected_review_context_owned() else {
+            self.status = Some("Open a review commit first.".to_string());
+            return;
+        };
+        if self.selected_review_commit_sha(&review).is_none() {
+            self.status = Some("Open a review commit first.".to_string());
+            return;
+        };
+        self.mode = Mode::ConfirmApproveReview;
+    }
+
+    fn approve_selected_review_commit_quick(&mut self) -> Result<()> {
+        let Some((ticket, review)) = self.selected_review_context_owned() else {
+            self.mode = Mode::Normal;
+            self.status = Some("Open a review commit first.".to_string());
+            return Ok(());
+        };
+        let Some(sha) = self.selected_review_commit_sha(&review) else {
+            self.mode = Mode::Normal;
+            self.status = Some("Open a review commit first.".to_string());
+            return Ok(());
+        };
+        self.approve_review_commit(ticket, review, sha, "Approved")
+    }
+
+    fn approve_review_commit(
+        &mut self,
+        ticket: Ticket,
+        review: TicketReview,
+        sha: String,
+        body: &str,
+    ) -> Result<()> {
         let email = self.store.email().to_string();
         let commit_target = self.store.session().target(&Target::commit(&sha)?);
         commit_target.set_add("review:approvals", &email)?;
@@ -5472,6 +5585,7 @@ impl App {
                 .target(&Target::branch(&review.branch_id))
                 .set("status", "approved")?;
         }
+        self.mode = Mode::Normal;
         self.reload_after_review_action(ticket.id)?;
         self.status = Some(format!("Approved commit {}.", short_hash(&sha)));
         Ok(())
@@ -9102,9 +9216,9 @@ fn review_authors_display(infos: &[ReviewCommitInfo]) -> String {
 
 fn review_commit_table_header(width: usize) -> Line<'static> {
     let labels = [
-        ("Status", 18),
+        ("Status", 6),
         ("Ver.", 5),
-        ("Name", 30),
+        ("Name", 42),
         ("Files", 6),
         ("+/-", 12),
         ("Updated", 12),
@@ -9163,7 +9277,7 @@ fn review_commit_table_line(
         width,
         &status_label.0,
         status_label.1,
-        18,
+        6,
     );
     push_review_table_column(
         &mut spans,
@@ -9183,13 +9297,13 @@ fn review_commit_table_line(
         } else {
             Style::default().fg(Color::DarkGray)
         },
-        30,
+        42,
     );
     push_review_table_column(
         &mut spans,
         &mut used,
         width,
-        &format!("{}f", stats.files),
+        &stats.files.to_string(),
         Style::default().fg(Color::Magenta),
         6,
     );
@@ -9281,7 +9395,7 @@ fn review_commit_verdict(
         .any(|message| message.message_type == "changes-requested")
     {
         return (
-            "Changes requested".to_string(),
+            "Ch.Req".to_string(),
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
@@ -9294,19 +9408,16 @@ fn review_commit_verdict(
             .any(|message| message.message_type == "approval")
     {
         return (
-            "Approved".to_string(),
+            "Apprv".to_string(),
             Style::default()
                 .fg(Color::LightGreen)
                 .add_modifier(Modifier::BOLD),
         );
     }
     if !status.reviewed.is_empty() {
-        return (
-            "Reviewed".to_string(),
-            Style::default().fg(Color::LightBlue),
-        );
+        return ("Revwd".to_string(), Style::default().fg(Color::LightBlue));
     }
-    ("Pending".to_string(), Style::default().fg(Color::DarkGray))
+    ("Pendg".to_string(), Style::default().fg(Color::DarkGray))
 }
 
 #[cfg(test)]
@@ -9315,10 +9426,7 @@ fn review_changes_display(shortstat: &str) -> String {
     if stats.is_empty() {
         String::new()
     } else {
-        format!(
-            "{}f +{} -{}",
-            stats.files, stats.insertions, stats.deletions
-        )
+        format!("{} +{} -{}", stats.files, stats.insertions, stats.deletions)
     }
 }
 
@@ -10465,7 +10573,7 @@ fn review_commit_line(
         ),
         Span::raw(" "),
         Span::styled(
-            format!("{:>files_width$}", format!("{}f", stats.files)),
+            format!("{:>files_width$}", stats.files),
             Style::default().fg(Color::Magenta),
         ),
         Span::raw(" "),
@@ -10624,7 +10732,7 @@ fn review_commit_summary_line(
         ),
         Span::raw(" "),
         Span::styled(
-            format!("{:>files_width$}", format!("{}f", stats.files)),
+            format!("{:>files_width$}", stats.files),
             Style::default().fg(Color::Magenta),
         ),
         Span::raw(" "),
@@ -13049,7 +13157,7 @@ mod tests {
         assert!(text.contains("  v3"));
         assert!(text.contains("Add parser checks"));
         assert!(text.contains("7m"));
-        assert!(text.contains("3f"));
+        assert!(text.contains("  3"));
         assert!(text.contains("+102"));
         assert!(text.contains("-2"));
         assert!(!text.contains("rv:"));
@@ -13058,7 +13166,7 @@ mod tests {
         assert!(line
             .spans
             .iter()
-            .any(|span| span.content.trim() == "3f" && span.style.fg == Some(Color::Magenta)));
+            .any(|span| span.content.trim() == "3" && span.style.fg == Some(Color::Magenta)));
         assert!(line
             .spans
             .iter()
@@ -13071,6 +13179,45 @@ mod tests {
             .spans
             .iter()
             .any(|span| span.content.trim() == "1" && span.style.fg == Some(Color::LightGreen)));
+    }
+
+    #[test]
+    fn review_commit_verdict_uses_short_labels() {
+        let review = TicketReview {
+            messages: vec![ReviewMessageView {
+                author: "reviewer@example.com".to_string(),
+                body: "please adjust".to_string(),
+                message_type: "changes-requested".to_string(),
+                commit: Some("abcdef123456".to_string()),
+                path: None,
+                lines: None,
+            }],
+            ..Default::default()
+        };
+        let status = CommitReviewStatus::default();
+        assert_eq!(
+            review_commit_verdict(&review, "abcdef123456", &status).0,
+            "Ch.Req"
+        );
+
+        let review = TicketReview::default();
+        let status = CommitReviewStatus {
+            approvals: BTreeSet::from(["approver@example.com".to_string()]),
+            ..Default::default()
+        };
+        assert_eq!(
+            review_commit_verdict(&review, "abcdef123456", &status).0,
+            "Apprv"
+        );
+        assert_eq!(
+            review_commit_verdict(
+                &TicketReview::default(),
+                "abcdef123456",
+                &CommitReviewStatus::default()
+            )
+            .0,
+            "Pendg"
+        );
     }
 
     #[test]
@@ -13188,11 +13335,11 @@ mod tests {
     fn review_changes_display_extracts_insertions_and_deletions() {
         assert_eq!(
             review_changes_display("3 files changed, 102 insertions(+), 2 deletions(-)"),
-            "3f +102 -2"
+            "3 +102 -2"
         );
         assert_eq!(
             review_changes_display("1 file changed, 7 insertions(+)"),
-            "1f +7 -0"
+            "1 +7 -0"
         );
     }
 
