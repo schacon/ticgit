@@ -8117,9 +8117,9 @@ fn branch_author_display(author: Option<ButAuthor>) -> String {
 
 fn load_review_branch_snapshot(branch_name: &str) -> Result<ReviewBranchSnapshot> {
     let output = Command::new("but")
-        .args(["show", branch_name, "--json"])
+        .args(["branch", "show", branch_name, "--json"])
         .output()
-        .with_context(|| format!("running but show {branch_name} --json"))?;
+        .with_context(|| format!("running but branch show {branch_name} --json"))?;
     if output.status.success() {
         return parse_review_branch_snapshot(branch_name, &output.stdout);
     }
@@ -8137,15 +8137,7 @@ fn load_review_branch_snapshot(branch_name: &str) -> Result<ReviewBranchSnapshot
 
 fn parse_review_branch_snapshot(branch_name: &str, json: &[u8]) -> Result<ReviewBranchSnapshot> {
     let show: ButBranchShow =
-        serde_json::from_slice(json).with_context(|| "parsing but show --json")?;
-    let base_sha = show
-        .base_commit
-        .map(|base| base.sha)
-        .filter(|sha| !sha.is_empty())
-        .unwrap_or_else(|| {
-            review_base_sha(branch_name)
-                .unwrap_or_else(|_| resolve_git_ref("HEAD").unwrap_or_default())
-        });
+        serde_json::from_slice(json).with_context(|| "parsing but branch show --json")?;
     let head = show.commits.first();
     let head_sha = head
         .map(|commit| commit.sha.clone())
@@ -8157,6 +8149,15 @@ fn parse_review_branch_snapshot(branch_name: &str, json: &[u8]) -> Result<Review
         .map(|commit| commit.sha.clone())
         .filter(|sha| !sha.is_empty())
         .collect::<Vec<_>>();
+    let base_sha = show
+        .base_commit
+        .map(|base| base.sha)
+        .filter(|sha| !sha.is_empty())
+        .or_else(|| review_base_from_commits(&commits))
+        .unwrap_or_else(|| {
+            review_base_sha(branch_name)
+                .unwrap_or_else(|_| resolve_git_ref("HEAD").unwrap_or_default())
+        });
     Ok(ReviewBranchSnapshot {
         base_sha,
         head_sha,
@@ -8166,6 +8167,12 @@ fn parse_review_branch_snapshot(branch_name: &str, json: &[u8]) -> Result<Review
             .filter(|message| !message.is_empty())
             .unwrap_or_else(|| branch_name.to_string()),
     })
+}
+
+fn review_base_from_commits(commits: &[String]) -> Option<String> {
+    let oldest = commits.last()?.as_str();
+    let parent = format!("{oldest}^");
+    resolve_git_ref(&parent).ok()
 }
 
 fn review_ticket_title(branch_name: &str, snapshot: &ReviewBranchSnapshot) -> String {
@@ -13006,24 +13013,20 @@ mod tests {
     }
 
     #[test]
-    fn parse_review_branch_snapshot_uses_gitbutler_base_and_commits() {
+    fn parse_review_branch_snapshot_uses_gitbutler_branch_show_commits() {
         let json = br#"{
             "branch": "feature",
+            "commitsAhead": 2,
             "commits": [
                 {"sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "message": "Add branch picker"},
                 {"sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "message": "Prepare review"}
             ],
-            "baseCommit": {
-                "sha": "0000000000000000000000000000000000000000"
-            }
+            "unassignedFiles": [],
+            "reviews": []
         }"#;
 
         let snapshot = parse_review_branch_snapshot("feature", json).unwrap();
 
-        assert_eq!(
-            snapshot.base_sha,
-            "0000000000000000000000000000000000000000"
-        );
         assert_eq!(
             snapshot.head_sha,
             "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
