@@ -59,6 +59,7 @@ use crate::commands;
 \x1b[1;36mSync & Setup:\x1b[0m
   sync       Sync ticket metadata with a Git remote
   pull       Pull tickets from a fork or remote URL
+  push       Push ticket metadata to a Git remote
   init       Initialise ticgit on the current repo
   setup      Configure git-meta remote from .git-meta
   update     Update ti to the latest release
@@ -215,6 +216,9 @@ pub enum Command {
     /// Pull tickets from a fork or remote URL.
     Pull(commands::pull::Args),
 
+    /// Push ticket metadata to a Git remote.
+    Push(commands::push::Args),
+
     /// Initialise ticgit metadata on the current repo (idempotent).
     Init,
 
@@ -277,6 +281,7 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
         Some(Command::Users(args)) => commands::users::run(args),
         Some(Command::Sync(args)) => commands::sync::run_sync(args),
         Some(Command::Pull(args)) => commands::pull::run(args),
+        Some(Command::Push(args)) => commands::push::run(args),
         Some(Command::Update(args)) => commands::update::run(args),
     }
 }
