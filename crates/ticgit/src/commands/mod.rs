@@ -23,6 +23,7 @@ pub mod priority;
 pub mod pull;
 pub mod recent;
 pub mod review;
+pub mod serve;
 pub mod setup;
 pub mod show;
 pub mod spec;

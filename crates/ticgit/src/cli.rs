@@ -25,6 +25,7 @@ use crate::commands;
   mine       List tickets assigned to you
   history    Show change history for a ticket
   tui        Browse open tickets in an interactive terminal UI
+  serve      Browse tickets in your web browser
 
 \x1b[1;36mWork on Tickets:\x1b[0m
   checkout, co  Select a ticket as \"current\"
@@ -122,6 +123,9 @@ pub enum Command {
 
     /// Browse open tickets in an interactive terminal UI.
     Tui(commands::tui::Args),
+
+    /// Serve the ticket list over HTTP for browsing in a web browser.
+    Serve(commands::serve::Args),
 
     /// Print or install AI agent integration guidance.
     Agent(commands::agent::Args),
@@ -257,6 +261,7 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Some(Command::History(args)) => commands::history::run(args),
         Some(Command::Tui(args)) => commands::tui::run(args),
+        Some(Command::Serve(args)) => commands::serve::run(args),
         Some(Command::Agent(args)) => commands::agent::run(args),
         Some(Command::Tag(args)) => commands::tag::run(args),
         Some(Command::State(args)) => commands::state::run(args),
