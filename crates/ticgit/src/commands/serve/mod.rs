@@ -4,10 +4,12 @@
 //! title, tags) plus a per-ticket detail page, served over plain HTTP
 //! from a hand-rolled `std::net` listener so we pull in no web stack.
 //!
-//! The ticket pages live in [`tickets`]; this module owns the listener,
-//! the request/response plumbing, and the shared page chrome.
+//! The ticket pages live in [`tickets`] and the writeup pages in
+//! [`writeups`]; this module owns the listener, the request/response
+//! plumbing, and the shared page chrome both use.
 
 mod tickets;
+mod writeups;
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
@@ -213,10 +215,15 @@ fn route(request: &Request) -> Result<Response> {
     match request.path.as_str() {
         "/" => tickets::list_response(request),
         "/tickets.json" => tickets::json_response(request),
+        "/writeups" => writeups::list_response(request),
+        "/writeups.json" => writeups::json_response(request),
         "/favicon.ico" => Ok(Response::empty(204)),
         path => {
             if let Some(reference) = path.strip_prefix("/t/").filter(|r| !r.is_empty()) {
                 return tickets::detail_response(reference);
+            }
+            if let Some(reference) = path.strip_prefix("/w/").filter(|r| !r.is_empty()) {
+                return writeups::detail_response(request, reference);
             }
             Ok(Response::html(
                 404,
@@ -256,6 +263,16 @@ fn repo_name() -> String {
 }
 
 // -- shared chrome ---------------------------------------------------------
+
+/// A jump to the other half of the site (tickets <-> writeups), set off
+/// from the view tabs it sits next to.
+fn section_link(href: &str, label: &str) -> String {
+    format!(
+        "<a class=\"view section\" href=\"{}\">{}</a>",
+        escape(href),
+        escape(label)
+    )
+}
 
 /// Carries the active narrowing through the search form, which would
 /// otherwise drop it on submit.
@@ -353,7 +370,16 @@ dd{margin:2px 0 0}\
 h2{font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim);margin:24px 0 8px}\
 .prose{white-space:pre-wrap;word-wrap:break-word;font:inherit;margin:0;\
 background:var(--chip);border-radius:6px;padding:12px}\
-.comment{margin-bottom:12px}.byline{color:var(--dim);font-size:12px;margin:0 0 4px}";
+.comment{margin-bottom:12px}.byline{color:var(--dim);font-size:12px;margin:0 0 4px}\
+nav .view.section{color:var(--accent)}\
+.links{list-style:none;margin:0;padding:0}\
+.links li{padding:5px 0;border-bottom:1px solid var(--line)}\
+.links code{color:var(--dim);margin-right:8px}\
+.versions{display:flex;gap:4px;flex-wrap:wrap;margin:0 0 10px}\
+.vtab{background:var(--chip);color:var(--dim);border-radius:6px;padding:2px 9px;font-size:12px}\
+.vtab.active{background:var(--accent);color:#fff}\
+td.vers,td.who2{color:var(--dim);white-space:nowrap}\
+.state-open{color:#16a34a}.state-closed{color:var(--dim)}";
 
 fn escape(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
