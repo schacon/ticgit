@@ -4,8 +4,10 @@
 //! title, tags) plus a per-ticket detail page, served over plain HTTP
 //! from a hand-rolled `std::net` listener so we pull in no web stack.
 //!
-//! This module owns the listener, the request/response plumbing, and the
-//! shared page chrome the pages use.
+//! The ticket pages live in [`tickets`]; this module owns the listener,
+//! the request/response plumbing, and the shared page chrome.
+
+mod tickets;
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
@@ -13,8 +15,11 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use ticgit_lib::TicketStore;
+use time::OffsetDateTime;
 
 use crate::commands::open_store;
+use crate::render::{self, NickMap};
 
 /// How long a client gets to send its request line and headers.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -101,6 +106,10 @@ impl Request {
             .filter(|(k, _)| k == key)
             .map(|(_, v)| v.clone())
             .collect()
+    }
+
+    fn flag(&self, key: &str) -> bool {
+        matches!(self.param(key), Some("1" | "true" | "yes" | ""))
     }
 }
 
@@ -202,15 +211,77 @@ fn route(request: &Request) -> Result<Response> {
     }
 
     match request.path.as_str() {
+        "/" => tickets::list_response(request),
+        "/tickets.json" => tickets::json_response(request),
         "/favicon.ico" => Ok(Response::empty(204)),
-        _ => Ok(Response::html(
-            404,
-            error_page("404 - not found", "No page at that address."),
-        )),
+        path => {
+            if let Some(reference) = path.strip_prefix("/t/").filter(|r| !r.is_empty()) {
+                return tickets::detail_response(reference);
+            }
+            Ok(Response::html(
+                404,
+                error_page("404 - not found", "No page at that address."),
+            ))
+        }
     }
 }
 
+/// Per-request context shared by the pages.
+struct Page {
+    repo: String,
+    current_user: String,
+    nicks: NickMap,
+    now: OffsetDateTime,
+}
+
+impl Page {
+    fn new(store: &TicketStore) -> Result<Self> {
+        Ok(Self {
+            repo: repo_name(),
+            current_user: store.email().to_string(),
+            nicks: render::build_nick_map(&store.list_users().unwrap_or_default()),
+            now: OffsetDateTime::now_utc(),
+        })
+    }
+}
+
+fn repo_name() -> String {
+    std::env::current_dir()
+        .ok()
+        .and_then(|dir| {
+            dir.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| "tickets".to_string())
+}
+
 // -- shared chrome ---------------------------------------------------------
+
+/// Carries the active narrowing through the search form, which would
+/// otherwise drop it on submit.
+fn hidden_input(name: &str, value: &str) -> String {
+    format!(
+        "<input type=\"hidden\" name=\"{}\" value=\"{}\">",
+        escape(name),
+        escape(value)
+    )
+}
+
+/// One active filter, linking to itself removed.
+fn filter_chip(label: &str, href: &str) -> String {
+    format!(
+        "<a class=\"chip\" href=\"{}\">{} \u{d7}</a>",
+        escape(href),
+        escape(label)
+    )
+}
+
+/// Stable per-tag colour bucket, mirroring the TUI's tag colouring.
+fn tag_hue(tag: &str) -> usize {
+    tag.bytes().fold(0usize, |acc, byte| {
+        acc.wrapping_mul(31).wrapping_add(byte as usize)
+    }) % 8
+}
 
 fn error_page(title: &str, detail: &str) -> String {
     document(
@@ -246,9 +317,43 @@ a{color:inherit;text-decoration:none}a:hover{text-decoration:underline}\
 header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;\
 padding-bottom:12px;border-bottom:1px solid var(--line);margin-bottom:16px}\
 h1{font-size:18px;margin:0;font-weight:600}\
+header nav{display:flex;gap:4px;margin-left:8px}\
+nav .view{padding:3px 10px;border-radius:999px;color:var(--dim)}\
+nav .view:hover{background:var(--hover);text-decoration:none}\
+nav .view.active{background:var(--accent);color:#fff}\
+header form{margin-left:auto}\
+input[type=search]{font:inherit;padding:5px 10px;border:1px solid var(--line);\
+border-radius:6px;background:var(--bg);color:var(--fg);min-width:200px}\
+.filters{display:flex;gap:6px;flex-wrap:wrap;margin:-4px 0 14px}\
+.chip{background:var(--chip);color:var(--dim);border-radius:999px;padding:2px 10px;font-size:12px}\
+table{width:100%;border-collapse:collapse}\
+th{text-align:left;font-weight:600;color:var(--dim);font-size:12px;\
+text-transform:uppercase;letter-spacing:.04em;padding:6px 8px;border-bottom:1px solid var(--line)}\
+th a{color:inherit}\
+td{padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}\
+tbody tr:hover{background:var(--hover)}\
+td.id a,td.age{color:var(--dim)}\
+td.prio{color:#a855f7}td.age,td.prio,td.id{white-space:nowrap}\
+td.title a{font-weight:500}\
+tr.closed td.title a{color:var(--dim);text-decoration:line-through}\
+td.who{color:var(--dim);white-space:nowrap}td.who.mine{color:#d97706;font-weight:600}\
+.children{color:var(--dim)}\
+.tag{font-size:12px;border-radius:4px;padding:1px 6px;background:var(--chip);white-space:nowrap}\
+.tag-0{color:#2563eb}.tag-1{color:#0891b2}.tag-2{color:#16a34a}.tag-3{color:#ca8a04}\
+.tag-4{color:#c026d3}.tag-5{color:#0ea5e9}.tag-6{color:#65a30d}.tag-7{color:#e11d48}\
+.badge{font-size:12px;border-radius:4px;padding:1px 6px;background:var(--chip)}\
+.state-in-progress{color:#d97706}.state-blocked{color:#dc2626}.state-review{color:#2563eb}\
+.state-resolved{color:#16a34a}.state-wontfix,.state-duplicate,.state-invalid{color:var(--dim)}\
+.count,.empty{color:var(--dim);margin-top:16px}\
 header.detail{display:block}.back{color:var(--dim);font-size:12px}\
+.subtitle{color:var(--dim);margin:6px 0 0}\
+.fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin:0 0 20px}\
+dt{color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.04em}\
+dd{margin:2px 0 0}\
+h2{font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--dim);margin:24px 0 8px}\
 .prose{white-space:pre-wrap;word-wrap:break-word;font:inherit;margin:0;\
-background:var(--chip);border-radius:6px;padding:12px}";
+background:var(--chip);border-radius:6px;padding:12px}\
+.comment{margin-bottom:12px}.byline{color:var(--dim);font-size:12px;margin:0 0 4px}";
 
 fn escape(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
@@ -263,6 +368,10 @@ fn escape(value: &str) -> String {
         }
     }
     out
+}
+
+fn flatten(value: &str) -> String {
+    value.replace(['\n', '\r', '\t'], " ")
 }
 
 // -- responses -------------------------------------------------------------
