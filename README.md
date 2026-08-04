@@ -176,6 +176,34 @@ ti sync
 named git-meta remote is used; otherwise git-meta resolves the default metadata
 remote from Git config.
 
+## GitButler
+
+TicGit is great on its own, but it's even better with
+[GitButler](https://gitbutler.com). GitButler is a wonderful Git client that
+lets you work on several branches at once in a single working directory, so you
+can juggle a pile of tickets without stashing, switching, or losing your place.
+Its `but` CLI is a joy to use, and TicGit is built to take advantage of it.
+
+If `but` is on your `PATH`, TicGit's review commands use it automatically:
+
+```sh
+ti review new --branch <branch-name> --ticket <id>
+ti review show <branch-name>
+ti review update <branch-name>
+```
+
+- Branch pickers are populated from `but branch list`, so every applied virtual
+  branch and stacked head shows up as a review candidate, complete with commit
+  counts, authors, and last-commit times.
+- Review snapshots come from `but branch show`, which knows the real base and
+  commit range of a stacked branch instead of guessing from refs.
+- GitButler's own bookkeeping refs (`gitbutler/*`) are filtered out, so the list
+  only ever offers branches you actually want to review.
+
+None of this is required. When `but` is not installed, TicGit falls back to
+plain `git for-each-ref` and `git rev-list` and everything keeps working. You
+just get a nicer experience with GitButler installed.
+
 ## What It Stores
 
 All TicGit data is written on the git-meta `project` target under the
