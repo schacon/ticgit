@@ -546,14 +546,14 @@ fn version_flags_print_cargo_version() {
 }
 
 #[test]
-fn help_lists_sync_and_pull_but_not_push() {
+fn help_lists_sync_pull_and_push() {
     let mut cmd = assert_cmd::Command::cargo_bin("ti").expect("ti binary");
     cmd.arg("--help")
         .assert()
         .success()
         .stdout(predicate::str::contains("sync"))
         .stdout(predicate::str::contains("pull"))
-        .stdout(predicate::str::contains(" push ").not());
+        .stdout(predicate::str::contains("push"));
 }
 
 #[test]
@@ -655,6 +655,28 @@ fn sync_prints_remote_url_and_ref() {
         .stdout(predicate::str::contains("Remote: origin"))
         .stdout(predicate::str::contains("Ref: refs/meta/main"))
         .stdout(predicate::str::contains(format!("URL: {remote_url}")));
+}
+
+#[test]
+fn push_sends_tickets_to_bare_remote() {
+    let repo = TestRepo::new();
+    let remote = tempfile::tempdir().expect("bare remote tempdir");
+    git(remote.path(), &["init", "--bare", "--quiet"]);
+    let remote_url = remote.path().to_string_lossy().to_string();
+
+    git(repo.dir.path(), &["remote", "add", "origin", &remote_url]);
+    repo.ti().arg("init").assert().success();
+    create_ticket(&repo, "pushed ticket");
+
+    repo.ti()
+        .arg("push")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Remote: origin"))
+        .stdout(predicate::str::contains("Ref: refs/meta/main"))
+        .stdout(predicate::str::contains(format!("URL: {remote_url}")))
+        .stdout(predicate::str::contains("1 ticket(s) synced"))
+        .stdout(predicate::str::contains("Done."));
 }
 
 #[test]

@@ -76,7 +76,7 @@ pub fn run_sync(args: Args) -> Result<()> {
     Ok(())
 }
 
-fn sync_remote(explicit: Option<&str>) -> Result<Option<String>> {
+pub(crate) fn sync_remote(explicit: Option<&str>) -> Result<Option<String>> {
     if let Some(remote) = explicit {
         return Ok(Some(remote.to_string()));
     }
@@ -94,15 +94,15 @@ fn sync_remote(explicit: Option<&str>) -> Result<Option<String>> {
     Ok(remotes.into_iter().next())
 }
 
-fn meta_namespace() -> Result<String> {
+pub(crate) fn meta_namespace() -> Result<String> {
     Ok(git_config_get("meta.namespace")?.unwrap_or_else(|| "meta".to_string()))
 }
 
-fn remote_url(remote: &str) -> Result<String> {
+pub(crate) fn remote_url(remote: &str) -> Result<String> {
     git_output(&["remote", "get-url", remote])
 }
 
-fn ssh_project_web_url(url: &str) -> Option<String> {
+pub(crate) fn ssh_project_web_url(url: &str) -> Option<String> {
     let (host, path) = if let Some(rest) = url.strip_prefix("git@") {
         rest.split_once(':')?
     } else if let Some(rest) = url.strip_prefix("ssh://git@") {
