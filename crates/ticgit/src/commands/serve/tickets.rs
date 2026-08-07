@@ -2,15 +2,15 @@
 //!
 //! The list at `/`, a detail page at `/t/<id>`, and `/tickets.json` for
 //! scripting. Page chrome, escaping and the HTTP types all come from the
-//! parent module.
+//! parent module so both halves of the site look and behave the same.
 
 use anyhow::Result;
-use ticgit_lib::{Filter, SearchFilter, SortOrder, Ticket, TicketLifecycle, TicketStatus};
+use ticgit_lib::{Filter, SearchFilter, SortOrder, Ticket, TicketLifecycle, TicketStatus, Writeup};
 use time::format_description::well_known::Rfc3339;
 
 use super::{
-    document, error_page, escape, filter_chip, flatten, hidden_input, percent_encode, tag_hue,
-    Page, Request, Response,
+    document, error_page, escape, filter_chip, flatten, hidden_input, percent_encode, section_link,
+    tag_hue, Page, Request, Response,
 };
 use crate::commands::open_store;
 use crate::render;
@@ -50,7 +50,15 @@ pub(super) fn detail_response(reference: &str) -> Result<Response> {
     };
     let ticket = store.load(&id)?;
     let page = Page::new(&store)?;
-    Ok(Response::html(200, detail_page(&page, &ticket)))
+    // Writeups point at tickets, not the other way round, so the back
+    // link has to come from a scan of the writeup list.
+    let linked: Vec<Writeup> = store
+        .list_writeups()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|writeup| writeup.tickets.contains(&id))
+        .collect();
+    Ok(Response::html(200, detail_page(&page, &ticket, &linked)))
 }
 
 // -- query -----------------------------------------------------------------
@@ -358,7 +366,7 @@ fn header(page: &Page, query: &ListQuery) -> String {
         ),
     ];
     let current = query.href(None);
-    let nav = views
+    let mut nav = views
         .iter()
         .map(|(label, href)| {
             format!(
@@ -369,6 +377,7 @@ fn header(page: &Page, query: &ListQuery) -> String {
         })
         .collect::<Vec<_>>()
         .join("");
+    nav.push_str(&section_link("/writeups", "Writeups"));
 
     let mut hidden = String::new();
     if let Some(status) = &query.status {
@@ -430,7 +439,7 @@ fn active_filters(query: &ListQuery) -> String {
     format!("<div class=\"filters\">{}</div>", chips.join(""))
 }
 
-fn detail_page(page: &Page, ticket: &Ticket) -> String {
+fn detail_page(page: &Page, ticket: &Ticket, linked_writeups: &[Writeup]) -> String {
     let mut body = String::new();
     body.push_str(&format!(
         "<header class=\"detail\"><a class=\"back\" href=\"/\">\u{2190} all tickets</a>\
@@ -519,6 +528,22 @@ fn detail_page(page: &Page, ticket: &Ticket) -> String {
             escape(spec)
         ));
     }
+    if !linked_writeups.is_empty() {
+        body.push_str(&format!(
+            "<section><h2>Writeups ({})</h2><ul class=\"links\">",
+            linked_writeups.len()
+        ));
+        for writeup in linked_writeups {
+            body.push_str(&format!(
+                "<li><a href=\"/w/{}\"><code>{}</code> {}</a></li>",
+                escape(&writeup.short_id()),
+                escape(&writeup.short_id()),
+                escape(&flatten(&writeup.title)),
+            ));
+        }
+        body.push_str("</ul></section>");
+    }
+
     if !ticket.comments.is_empty() {
         body.push_str(&format!(
             "<section><h2>Comments ({})</h2>",
@@ -707,7 +732,7 @@ mod tests {
             at: OffsetDateTime::UNIX_EPOCH,
             body: "on it".to_string(),
         });
-        let html = detail_page(&page(), &t);
+        let html = detail_page(&page(), &t, &[]);
         assert!(html.contains("fix parser"));
         assert!(html.contains("in-progress"));
         assert!(html.contains("a longer\nexplanation"));
