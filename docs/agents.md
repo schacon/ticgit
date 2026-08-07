@@ -147,6 +147,11 @@ ti review new --ticket <id>
 ti review update
 ```
 
+Reviews work best under [GitButler](https://gitbutler.com): when the `but` CLI
+is installed, TicGit reads branch lists and commit ranges from it, so stacked
+and virtual branches are resolved correctly. Without `but`, TicGit falls back to
+plain Git refs.
+
 ## Agent Practices
 
 - Use ticket IDs or unique prefixes.
